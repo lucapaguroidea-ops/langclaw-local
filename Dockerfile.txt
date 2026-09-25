@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+COPY . .
+
+# Install dependencies with telegram extra
+RUN pip install --no-cache-dir -e ".[telegram,postgres]"
+
+# Run the gateway
+CMD ["python", "-c", "from langclaw import Langclaw; Langclaw().run()"]
