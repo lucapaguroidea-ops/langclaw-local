@@ -677,6 +677,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/control-plane-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Control-Plane API & UIs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/deployment/" class="md-nav__link">
         
   
@@ -3396,37 +3424,37 @@ are available in <code>os.environ</code> for <code>init_chat_model</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>langclaw/config/schema.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-934">934</a></span>
-<span class="normal"><a href="#__codelineno-0-935">935</a></span>
-<span class="normal"><a href="#__codelineno-0-936">936</a></span>
-<span class="normal"><a href="#__codelineno-0-937">937</a></span>
-<span class="normal"><a href="#__codelineno-0-938">938</a></span>
-<span class="normal"><a href="#__codelineno-0-939">939</a></span>
-<span class="normal"><a href="#__codelineno-0-940">940</a></span>
-<span class="normal"><a href="#__codelineno-0-941">941</a></span>
-<span class="normal"><a href="#__codelineno-0-942">942</a></span>
-<span class="normal"><a href="#__codelineno-0-943">943</a></span>
-<span class="normal"><a href="#__codelineno-0-944">944</a></span>
-<span class="normal"><a href="#__codelineno-0-945">945</a></span>
-<span class="normal"><a href="#__codelineno-0-946">946</a></span>
-<span class="normal"><a href="#__codelineno-0-947">947</a></span>
-<span class="normal"><a href="#__codelineno-0-948">948</a></span>
-<span class="normal"><a href="#__codelineno-0-949">949</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-934"><a id="__codelineno-0-934" name="__codelineno-0-934"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
-</span><span id="__span-0-935"><a id="__codelineno-0-935" name="__codelineno-0-935"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
-</span><span id="__span-0-936"><a id="__codelineno-0-936" name="__codelineno-0-936"></a>
-</span><span id="__span-0-937"><a id="__codelineno-0-937" name="__codelineno-0-937"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
-</span><span id="__span-0-938"><a id="__codelineno-0-938" name="__codelineno-0-938"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
-</span><span id="__span-0-939"><a id="__codelineno-0-939" name="__codelineno-0-939"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
-</span><span id="__span-0-940"><a id="__codelineno-0-940" name="__codelineno-0-940"></a>
-</span><span id="__span-0-941"><a id="__codelineno-0-941" name="__codelineno-0-941"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
-</span><span id="__span-0-942"><a id="__codelineno-0-942" name="__codelineno-0-942"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
-</span><span id="__span-0-943"><a id="__codelineno-0-943" name="__codelineno-0-943"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-944"><a id="__codelineno-0-944" name="__codelineno-0-944"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
-</span><span id="__span-0-945"><a id="__codelineno-0-945" name="__codelineno-0-945"></a>
-</span><span id="__span-0-946"><a id="__codelineno-0-946" name="__codelineno-0-946"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-0-947"><a id="__codelineno-0-947" name="__codelineno-0-947"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
-</span><span id="__span-0-948"><a id="__codelineno-0-948" name="__codelineno-0-948"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
-</span><span id="__span-0-949"><a id="__codelineno-0-949" name="__codelineno-0-949"></a>    <span class="k">return</span> <span class="n">config</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-957">957</a></span>
+<span class="normal"><a href="#__codelineno-0-958">958</a></span>
+<span class="normal"><a href="#__codelineno-0-959">959</a></span>
+<span class="normal"><a href="#__codelineno-0-960">960</a></span>
+<span class="normal"><a href="#__codelineno-0-961">961</a></span>
+<span class="normal"><a href="#__codelineno-0-962">962</a></span>
+<span class="normal"><a href="#__codelineno-0-963">963</a></span>
+<span class="normal"><a href="#__codelineno-0-964">964</a></span>
+<span class="normal"><a href="#__codelineno-0-965">965</a></span>
+<span class="normal"><a href="#__codelineno-0-966">966</a></span>
+<span class="normal"><a href="#__codelineno-0-967">967</a></span>
+<span class="normal"><a href="#__codelineno-0-968">968</a></span>
+<span class="normal"><a href="#__codelineno-0-969">969</a></span>
+<span class="normal"><a href="#__codelineno-0-970">970</a></span>
+<span class="normal"><a href="#__codelineno-0-971">971</a></span>
+<span class="normal"><a href="#__codelineno-0-972">972</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-957"><a id="__codelineno-0-957" name="__codelineno-0-957"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
+</span><span id="__span-0-958"><a id="__codelineno-0-958" name="__codelineno-0-958"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
+</span><span id="__span-0-959"><a id="__codelineno-0-959" name="__codelineno-0-959"></a>
+</span><span id="__span-0-960"><a id="__codelineno-0-960" name="__codelineno-0-960"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
+</span><span id="__span-0-961"><a id="__codelineno-0-961" name="__codelineno-0-961"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
+</span><span id="__span-0-962"><a id="__codelineno-0-962" name="__codelineno-0-962"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
+</span><span id="__span-0-963"><a id="__codelineno-0-963" name="__codelineno-0-963"></a>
+</span><span id="__span-0-964"><a id="__codelineno-0-964" name="__codelineno-0-964"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
+</span><span id="__span-0-965"><a id="__codelineno-0-965" name="__codelineno-0-965"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
+</span><span id="__span-0-966"><a id="__codelineno-0-966" name="__codelineno-0-966"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-967"><a id="__codelineno-0-967" name="__codelineno-0-967"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
+</span><span id="__span-0-968"><a id="__codelineno-0-968" name="__codelineno-0-968"></a>
+</span><span id="__span-0-969"><a id="__codelineno-0-969" name="__codelineno-0-969"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-970"><a id="__codelineno-0-970" name="__codelineno-0-970"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
+</span><span id="__span-0-971"><a id="__codelineno-0-971" name="__codelineno-0-971"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
+</span><span id="__span-0-972"><a id="__codelineno-0-972" name="__codelineno-0-972"></a>    <span class="k">return</span> <span class="n">config</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

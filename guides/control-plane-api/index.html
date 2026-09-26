@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://langclaw.dev/guides/tools/">
+        <link rel="canonical" href="https://langclaw.dev/guides/control-plane-api/">
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../cron/">
       
       
-        <link rel="next" href="../channels/">
+        <link rel="next" href="../deployment/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Tools - langclaw</title>
+        <title>Control-Plane API & UIs - langclaw</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tools" class="md-skip">
+        <a href="#control-plane-api-uis" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Tools
+              Control-Plane API & UIs
             
           </span>
         </div>
@@ -511,37 +511,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tools
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
         
   
   
@@ -557,92 +530,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#basic-tool" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic tool
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#error-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Error handling
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#custom-tool-name" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Custom tool name
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bring-an-existing-langchain-tool" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bring an existing LangChain tool
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#built-in-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Built-in tools
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rbac" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        RBAC
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -792,10 +679,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../control-plane-api/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Control-Plane API & UIs
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -811,6 +725,70 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#enable-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enable it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-is-turn-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat is turn-based
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#management-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Management endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-a-ui-with-appsmith" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building a UI with Appsmith
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1190,10 +1168,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#basic-tool" class="md-nav__link">
+  <a href="#enable-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Basic tool
+        Enable it
       
     </span>
   </a>
@@ -1201,10 +1179,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#error-handling" class="md-nav__link">
+  <a href="#chat-is-turn-based" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Error handling
+        Chat is turn-based
       
     </span>
   </a>
@@ -1212,10 +1190,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#custom-tool-name" class="md-nav__link">
+  <a href="#management-endpoints" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom tool name
+        Management endpoints
       
     </span>
   </a>
@@ -1223,32 +1201,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bring-an-existing-langchain-tool" class="md-nav__link">
+  <a href="#building-a-ui-with-appsmith" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bring an existing LangChain tool
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#built-in-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Built-in tools
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rbac" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        RBAC
+        Building a UI with Appsmith
       
     </span>
   </a>
@@ -1323,109 +1279,255 @@
   
 
 
-<h1 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h1>
-<p>Tools are async functions the agent can call. Register them with <code>@app.tool()</code>.</p>
-<h2 id="basic-tool">Basic tool<a class="headerlink" href="#basic-tool" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langclaw</span><span class="w"> </span><span class="kn">import</span> <span class="n">Langclaw</span>
+<h1 id="control-plane-api-uis">Control-Plane API &amp; UIs<a class="headerlink" href="#control-plane-api-uis" title="Permanent link">&para;</a></h1>
+<p>The <strong>API channel</strong> exposes a running gateway over HTTP so a UI (Appsmith,
+Retool, your own web app) or a script can chat with the agent and manage
+workflows, runs, and schedules. It is an ordinary langclaw channel: chat goes
+through the same bus → gateway → agent pipeline as Telegram, and management
+calls go through the gateway's <code>ControlPlane</code>, the same code the <code>/workflows</code>
+chat command uses.</p>
+<h2 id="enable-it">Enable it<a class="headerlink" href="#enable-it" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;langclaw[api]&quot;</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Langclaw</span><span class="p">()</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nd">@app</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_weather</span><span class="p">(</span><span class="n">city</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Get current weather for a city.&quot;&quot;&quot;</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="c1"># real implementation: call a weather API</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;city&quot;</span><span class="p">:</span> <span class="n">city</span><span class="p">,</span> <span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="mi">22</span><span class="p">,</span> <span class="s2">&quot;condition&quot;</span><span class="p">:</span> <span class="s2">&quot;sunny&quot;</span><span class="p">}</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">LANGCLAW__CHANNELS__API__ENABLED</span><span class="o">=</span><span class="nb">true</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nv">LANGCLAW__CHANNELS__API__TOKEN</span><span class="o">=</span>&lt;long<span class="w"> </span>random<span class="w"> </span>secret&gt;<span class="w">   </span><span class="c1"># required</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nv">LANGCLAW__CHANNELS__API__HOST</span><span class="o">=</span>::<span class="w">                      </span><span class="c1"># default 127.0.0.1</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nv">LANGCLAW__CHANNELS__API__PORT</span><span class="o">=</span><span class="m">18790</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nv">LANGCLAW__CHANNELS__API__USER_ID</span><span class="o">=</span>api<span class="w">                  </span><span class="c1"># identity chat turns run as</span>
 </span></code></pre></div>
-<p>The function name becomes the tool name. The docstring becomes the tool description shown to the LLM.</p>
-<h2 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
-<p>Tools must return error dicts — never raise into the agent:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@app</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_data</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Fetch JSON from a URL.&quot;&quot;&quot;</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="k">async</span> <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>            <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>            <span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>            <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>  <span class="c1"># correct</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        <span class="c1"># raise  # wrong — breaks the agent loop</span>
+<p>Every endpoint except <code>GET /healthz</code> requires <code>Authorization: Bearer &lt;token&gt;</code>.
+If the channel is enabled with an empty token, the gateway refuses to start and
+names the missing variable. The token is redacted from all logs.</p>
+<div class="admonition warning">
+<p class="admonition-title">Keep it private</p>
+<p>The token grants full agent access (chat, workflows, schedules). Bind to a
+private network where you can: on Railway, leave the langclaw service
+without a public domain and call it from other services at
+<code>http://&lt;service&gt;.railway.internal:18790</code>.</p>
+</div>
+<h2 id="chat-is-turn-based">Chat is turn-based<a class="headerlink" href="#chat-is-turn-based" title="Permanent link">&para;</a></h2>
+<p>An agent turn with tool calls can take longer than an HTTP client's timeout,
+so chat returns a <strong>turn</strong> you poll:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$URL</span><span class="s2">/v1/chat?wait=25&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">     </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;content&quot;: &quot;Summarise today&#39;</span><span class="se">\&#39;</span><span class="s1">&#39;s news&quot;, &quot;context_id&quot;: &quot;ui&quot;}&#39;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># 200 {&quot;turn_id&quot;: &quot;…&quot;, &quot;status&quot;: &quot;done&quot;, &quot;messages&quot;: [...]}   finished within 25 s</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># 202 {&quot;turn_id&quot;: &quot;…&quot;, &quot;status&quot;: &quot;running&quot;, ...}               still working</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>curl<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$URL</span><span class="s2">/v1/turns/&lt;turn_id&gt;?wait=25&quot;</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
 </span></code></pre></div>
-<h2 id="custom-tool-name">Custom tool name<a class="headerlink" href="#custom-tool-name" title="Permanent link">&para;</a></h2>
-<p>By default the tool name is the function name. To use a different name, pre-wrap
-the function with LangChain's <code>@tool("name")</code> — <code>@app.tool()</code> registers an
-existing <code>BaseTool</code> as-is:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain_core.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">tool</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nd">@app</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nd">@tool</span><span class="p">(</span><span class="s2">&quot;search_web&quot;</span><span class="p">)</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search the web for a query.&quot;&quot;&quot;</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="o">...</span>
-</span></code></pre></div>
-<h2 id="bring-an-existing-langchain-tool">Bring an existing LangChain tool<a class="headerlink" href="#bring-an-existing-langchain-tool" title="Permanent link">&para;</a></h2>
-<p>Any LangChain <code>BaseTool</code> instance drops in via <code>register_tool()</code> (or
-<code>register_tools([...])</code> for several at once) — this is how you reuse the
-LangChain tool ecosystem:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain_community.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">DuckDuckGoSearchRun</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">app</span><span class="o">.</span><span class="n">register_tool</span><span class="p">(</span><span class="n">DuckDuckGoSearchRun</span><span class="p">())</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">app</span><span class="o">.</span><span class="n">register_tools</span><span class="p">([</span><span class="n">tool_a</span><span class="p">,</span> <span class="n">tool_b</span><span class="p">],</span> <span class="n">roles</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;analyst&quot;</span><span class="p">])</span>  <span class="c1"># optional RBAC grant</span>
-</span></code></pre></div>
-<p><code>@app.tool()</code> is sugar for "wrap this function, then register it";
-<code>register_tool()</code> skips the wrapping for tools you already built.</p>
-<h2 id="built-in-tools">Built-in tools<a class="headerlink" href="#built-in-tools" title="Permanent link">&para;</a></h2>
-<p>Langclaw ships built-in tools under <code>langclaw.agents.tools</code>. They're wired automatically when the relevant config is set:</p>
+<ul>
+<li><code>messages</code> holds every output of the turn in order: <code>ai</code> text,
+  <code>tool_progress</code> (tool name and args in <code>metadata</code>), <code>tool_result</code>, or
+  <code>command</code>.</li>
+<li><code>wait</code> (0–120 s) long-polls; omit it to return immediately.</li>
+<li><code>context_id</code> selects the conversation thread (memory is kept per
+  <code>user_id</code> + <code>context_id</code>). <code>agent_name</code> routes to a named agent.</li>
+<li>Content starting with <code>/</code> runs a chat command (<code>/help</code>, <code>/workflows runs</code>…)
+  and returns a completed turn at once.</li>
+<li><code>GET /v1/turns?context_id=ui</code> lists recent turns. Turns are kept in memory
+  (<code>max_turns</code>, default 500), so this list resets on restart. The agent's
+  conversation memory lives in the checkpointer and is unaffected.</li>
+</ul>
+<h2 id="management-endpoints">Management endpoints<a class="headerlink" href="#management-endpoints" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Tool</th>
-<th>Extra required</th>
-<th>Config key</th>
+<th>Method &amp; path</th>
+<th>Does</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>web_search</code></td>
-<td><code>search</code></td>
-<td><code>LANGCLAW__TOOLS__BRAVE_API_KEY</code> (default backend) — see note</td>
+<td><code>GET /v1/status</code></td>
+<td>Version, model, channels, agents, enabled features</td>
 </tr>
 <tr>
-<td><code>web_fetch</code></td>
-<td><code>search</code></td>
-<td>—</td>
+<td><code>GET /v1/workflows</code></td>
+<td>Registered workflows (<code>mode</code>, <code>editable</code>)</td>
 </tr>
 <tr>
-<td><code>read_email</code> / <code>search_emails</code> / <code>send_email</code> / <code>draft_email</code> / <code>reply_email</code> / <code>manage_labels</code></td>
-<td><code>gmail</code></td>
-<td><code>LANGCLAW__TOOLS__GMAIL__ENABLED=true</code> (+ OAuth client)</td>
+<td><code>GET /v1/workflows/{name}</code></td>
+<td>One workflow; saved (JS) workflows include <code>script</code></td>
 </tr>
 <tr>
-<td><code>cron</code></td>
-<td>—</td>
-<td><code>LANGCLAW__CRON__ENABLED=true</code></td>
+<td><code>PUT /v1/workflows/{name}</code></td>
+<td>Create/replace a saved JS workflow: <code>{"script", "description"?, "uses_tools"?}</code></td>
 </tr>
 <tr>
-<td><code>task</code></td>
-<td>—</td>
-<td>subagents registered</td>
+<td><code>DELETE /v1/workflows/{name}</code></td>
+<td>Delete a saved workflow</td>
 </tr>
 <tr>
-<td><code>eval</code></td>
-<td><code>interpreter</code></td>
-<td><code>LANGCLAW__INTERPRETER__ENABLED=true</code></td>
+<td><code>POST /v1/workflows/{name}/runs</code></td>
+<td>Start a run: <code>{"input"?}</code> → <code>202 {"run_id", "turn_id"}</code></td>
+</tr>
+<tr>
+<td><code>GET /v1/runs</code>, <code>GET /v1/runs/{run_id}</code></td>
+<td>Journaled runs (needs <code>workflows.resume_on_startup</code>)</td>
+</tr>
+<tr>
+<td><code>POST /v1/runs/{run_id}/cancel</code></td>
+<td>Cancel a run this gateway started</td>
+</tr>
+<tr>
+<td><code>GET /v1/schedules</code></td>
+<td>Scheduled jobs</td>
+</tr>
+<tr>
+<td><code>POST /v1/schedules</code></td>
+<td><code>{"name", "channel", "user_id", "message" \| "workflow_name", "cron_expr" \| "every_seconds", "chat_id"?, "workflow_input"?}</code></td>
+</tr>
+<tr>
+<td><code>DELETE /v1/schedules/{id}</code></td>
+<td>Remove a scheduled job</td>
 </tr>
 </tbody>
 </table>
-<div class="admonition note">
-<p class="admonition-title"><code>web_search</code> needs a backend key</p>
-<p>The default search backend is <code>brave</code>, which requires <code>LANGCLAW__TOOLS__BRAVE_API_KEY</code>.
-Set <code>LANGCLAW__TOOLS__SEARCH_BACKEND=tavily</code> (with <code>…TAVILY_API_KEY</code>) or
-<code>=duckduckgo</code> (no key required) to switch. Without a usable backend, <code>web_search</code>
-is silently omitted from the toolset.</p>
-</div>
-<h2 id="rbac">RBAC<a class="headerlink" href="#rbac" title="Permanent link">&para;</a></h2>
-<p>Tools participate in the three-axis RBAC system. See the <a href="../rbac/">RBAC guide</a> for role definitions that gate tool access.</p>
+<p>A workflow run started over the API is tracked as a turn: poll
+<code>/v1/turns/{turn_id}</code> for its progress lines and final output.</p>
+<p>Errors are <code>{"error": "..."}</code>: <strong>400</strong> invalid input, <strong>401</strong> bad token,
+<strong>404</strong> not found, <strong>409</strong> feature disabled (the message names the setting to
+turn on), <strong>503</strong> gateway not ready.</p>
+<p>Saved-workflow editing needs <code>LANGCLAW__WORKFLOWS__ENABLED=true</code>,
+<code>LANGCLAW__INTERPRETER__ENABLED=true</code> (plus <code>langclaw[interpreter]</code>) and a
+filesystem-rooted agent backend. Schedules need <code>LANGCLAW__CRON__ENABLED=true</code>.</p>
+<h2 id="building-a-ui-with-appsmith">Building a UI with Appsmith<a class="headerlink" href="#building-a-ui-with-appsmith" title="Permanent link">&para;</a></h2>
+<p>Appsmith runs API queries <strong>server-side</strong>, so it can reach the private
+<code>railway.internal</code> address and the token never reaches the browser.</p>
+<p><strong>1. Datasource.</strong> <em>Data → New datasource → Authenticated API</em>:</p>
+<ul>
+<li>URL: <code>http://langclaw.railway.internal:18790</code> (your service name and port)</li>
+<li>Headers: <code>Authorization</code> = <code>Bearer &lt;your token&gt;</code></li>
+<li>Save. Every query below uses this datasource. In each query's <em>Settings</em>,
+  raise <strong>Query timeout</strong> to <code>30000</code> ms so long-polls fit.</li>
+</ul>
+<p><strong>2. Queries.</strong> Create these on the datasource:</p>
+<table>
+<thead>
+<tr>
+<th>Query</th>
+<th>Method</th>
+<th>Path</th>
+<th>Body</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>getStatus</code></td>
+<td>GET</td>
+<td><code>/v1/status</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>sendChat</code></td>
+<td>POST</td>
+<td><code>/v1/chat?wait=20</code></td>
+<td><code>{"content": {{msgInput.text}}, "context_id": "appsmith"}</code></td>
+</tr>
+<tr>
+<td><code>getTurn</code></td>
+<td>GET</td>
+<td><code>/v1/turns/{{this.params.turn_id}}?wait=20</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>listTurns</code></td>
+<td>GET</td>
+<td><code>/v1/turns?context_id=appsmith</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>listWorkflows</code></td>
+<td>GET</td>
+<td><code>/v1/workflows</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>getWorkflow</code></td>
+<td>GET</td>
+<td><code>/v1/workflows/{{wfTable.selectedRow.name}}</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>saveWorkflow</code></td>
+<td>PUT</td>
+<td><code>/v1/workflows/{{wfName.text}}</code></td>
+<td><code>{"script": {{wfScript.text}}, "description": {{wfDesc.text}}}</code></td>
+</tr>
+<tr>
+<td><code>deleteWorkflow</code></td>
+<td>DELETE</td>
+<td><code>/v1/workflows/{{wfTable.selectedRow.name}}</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>runWorkflow</code></td>
+<td>POST</td>
+<td><code>/v1/workflows/{{wfTable.selectedRow.name}}/runs</code></td>
+<td><code>{"input": {{JSON.parse(wfInput.text \|\| "{}")}}}</code></td>
+</tr>
+<tr>
+<td><code>listSchedules</code></td>
+<td>GET</td>
+<td><code>/v1/schedules</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>addSchedule</code></td>
+<td>POST</td>
+<td><code>/v1/schedules</code></td>
+<td>see step 4</td>
+</tr>
+<tr>
+<td><code>deleteSchedule</code></td>
+<td>DELETE</td>
+<td><code>/v1/schedules/{{schedTable.selectedRow.id}}</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>3. A JS object to follow turns.</strong> Create <code>Turns</code>:</p>
+<div class="language-js highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="c1">// Poll a turn until it finishes (each getTurn long-polls for up to 20 s).</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="nx">follow</span><span class="p">(</span><span class="nx">turn</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="nx">t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">turn</span><span class="p">;</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">let</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mf">30</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">status</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">&quot;done&quot;</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nx">t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">getTurn</span><span class="p">.</span><span class="nx">run</span><span class="p">({</span><span class="w"> </span><span class="nx">turn_id</span><span class="o">:</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">turn_id</span><span class="w"> </span><span class="p">});</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">t</span><span class="p">;</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="nx">send</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">turn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">follow</span><span class="p">(</span><span class="k">await</span><span class="w"> </span><span class="nx">sendChat</span><span class="p">.</span><span class="nx">run</span><span class="p">());</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nx">resetWidget</span><span class="p">(</span><span class="s2">&quot;msgInput&quot;</span><span class="p">);</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">listTurns</span><span class="p">.</span><span class="nx">run</span><span class="p">();</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">turn</span><span class="p">;</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="nx">runSelected</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">started</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">runWorkflow</span><span class="p">.</span><span class="nx">run</span><span class="p">();</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">turn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">follow</span><span class="p">({</span><span class="w"> </span><span class="nx">turn_id</span><span class="o">:</span><span class="w"> </span><span class="nx">started</span><span class="p">.</span><span class="nx">turn_id</span><span class="p">,</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;running&quot;</span><span class="w"> </span><span class="p">});</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">    </span><span class="nx">showAlert</span><span class="p">(</span><span class="nx">turn</span><span class="p">.</span><span class="nx">messages</span><span class="p">.</span><span class="nx">filter</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">type</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s2">&quot;ai&quot;</span><span class="p">).</span><span class="nx">map</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">content</span><span class="p">).</span><span class="nx">join</span><span class="p">(</span><span class="s2">&quot;\n&quot;</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="s2">&quot;done&quot;</span><span class="p">);</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">turn</span><span class="p">;</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="p">};</span>
+</span></code></pre></div>
+<p><strong>4. Pages.</strong></p>
+<ul>
+<li><strong>Chat:</strong> an Input <code>msgInput</code>, a Button (<em>onClick</em> <code>{{Turns.send()}}</code>), and a
+  List bound to <code>{{listTurns.data.turns}}</code> showing <code>currentItem.content</code> (you)
+  and <code>currentItem.messages.filter(m =&gt; m.type === "ai").map(m =&gt; m.content).join("\n\n")</code>
+  (agent). Set <code>listTurns</code> to run on page load.</li>
+<li><strong>Workflows:</strong> a Table <code>wfTable</code> bound to <code>{{listWorkflows.data.workflows}}</code>;
+  Inputs <code>wfName</code>, <code>wfDesc</code>, a multi-line Input <code>wfScript</code> (default
+  <code>{{getWorkflow.data.script}}</code>, with <code>getWorkflow</code> run on row selection), and
+  a JSON Input <code>wfInput</code>; Buttons for Save (<code>saveWorkflow</code>, then <code>listWorkflows</code>),
+  Run (<code>{{Turns.runSelected()}}</code>), and Delete.</li>
+<li><strong>Schedules:</strong> a Table <code>schedTable</code> bound to <code>{{listSchedules.data.schedules}}</code>
+  and a Form whose submit runs <code>addSchedule</code> with the body
+  <code>{{ { name: f_name.text, channel: f_channel.selectedOptionValue, user_id: f_user.text, message: f_message.text, workflow_name: f_workflow.selectedOptionValue, cron_expr: f_cron.text } }}</code>.
+  Fill the channel Select from <code>{{getStatus.data.channels.map(c =&gt; ({label: c, value: c}))}}</code>
+  and the workflow Select from <code>{{listWorkflows.data.workflows.map(w =&gt; ({label: w.name, value: w.name}))}}</code>.</li>
+<li><strong>Status:</strong> Text/JSON widgets bound to <code>{{getStatus.data}}</code>.</li>
+</ul>
 
 
 
