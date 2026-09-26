@@ -22,6 +22,7 @@ client's timeout::
                              → 202 turn (running), or 200 turn if done within wait
     GET  /v1/turns/{id}      → {"turn_id", "status": "running"|"done", "messages": [...]}
     GET  /v1/turns           [?context_id=&limit=]  recent turns (in memory)
+    GET  /v1/history         [?context_id=]  saved conversation (survives restarts)
 
 ``content`` starting with ``/`` runs a chat command (``/help``, ``/workflows``…)
 and returns a completed turn immediately.
@@ -189,6 +190,7 @@ class ApiChannel(BaseChannel):
                 web.post("/v1/chat", self._chat),
                 web.get("/v1/turns", self._list_turns),
                 web.get("/v1/turns/{turn_id}", self._get_turn),
+                web.get("/v1/history", self._history),
                 web.get("/v1/workflows", self._list_workflows),
                 web.get("/v1/workflows/{name}", self._get_workflow),
                 web.put("/v1/workflows/{name}", self._save_workflow),
@@ -326,6 +328,11 @@ class ApiChannel(BaseChannel):
         limit = _parse_int(request.query.get("limit"), default=50, name="limit")
         turns = [t for t in self._turns.values() if context_id in (None, t.context_id)]
         return self._json({"turns": [t.to_dict() for t in turns[-limit:]]})
+
+    async def _history(self, request: web.Request) -> web.Response:
+        context_id = request.query.get("context_id") or "default"
+        messages = await self._require_plane().history(self.name, self._config.user_id, context_id)
+        return self._json({"context_id": context_id, "messages": messages})
 
     async def _get_turn(self, request: web.Request) -> web.Response:
         turn = self._turns.get(request.match_info["turn_id"])

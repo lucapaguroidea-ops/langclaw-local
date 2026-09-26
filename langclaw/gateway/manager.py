@@ -122,7 +122,7 @@ class GatewayManager:
         self._context_schema = context_schema or LangclawContext
         self._context_defaults = context_defaults or {}
         self._context_factory = context_factory
-        self._sessions = SessionManager()
+        self._sessions = SessionManager(checkpointer=checkpointer_backend.get())
         self._command_router = CommandRouter(
             self._sessions,
             self._cron_manager,
@@ -187,6 +187,8 @@ class GatewayManager:
             saved_store=saved_store,
             saved_reload_cb=saved_reload_cb,
             mcp_servers=mcp_servers,
+            sessions=self._sessions,
+            checkpointer=checkpointer_backend.get(),
         )
 
         # Register /workflows whenever the feature is enabled (the app passes a

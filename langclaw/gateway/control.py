@@ -70,6 +70,8 @@ class ControlPlane:
         saved_reload_cb: Reconciles saved files into the registry; called after
             every save/delete so changes go live immediately.
         mcp_servers: Per-server MCP load report (name, transport, tools, error).
+        sessions: The gateway's SessionManager (conversation → thread id).
+        checkpointer: LangGraph saver holding conversation state.
     """
 
     def __init__(
@@ -86,6 +88,8 @@ class ControlPlane:
         saved_store: SavedWorkflowStore | None = None,
         saved_reload_cb: Callable[[], bool] | None = None,
         mcp_servers: Iterable[Mapping[str, Any]] | None = None,
+        sessions: Any | None = None,
+        checkpointer: Any | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -98,6 +102,8 @@ class ControlPlane:
         self._saved_store = saved_store
         self._saved_reload_cb = saved_reload_cb
         self._mcp_servers = [dict(m) for m in (mcp_servers or [])]
+        self._sessions = sessions
+        self._checkpointer = checkpointer
 
     # ------------------------------------------------------------------
     # Status
@@ -122,6 +128,30 @@ class ControlPlane:
             },
             "mcp_servers": self._mcp_servers,
         }
+
+    # ------------------------------------------------------------------
+    # Conversation history
+    # ------------------------------------------------------------------
+
+    async def history(self, channel: str, user_id: str, context_id: str) -> list[dict[str, str]]:
+        """Return a conversation's user/assistant messages from the checkpointer.
+
+        Tool calls and tool results are omitted; empty when the thread has none.
+        """
+        if self._sessions is None or self._checkpointer is None:
+            raise FeatureDisabledError("Conversation history needs a checkpointer.")
+        config = await self._sessions.get_config(channel, user_id, context_id)
+        saved = await self._checkpointer.aget_tuple(config)
+        if saved is None:
+            return []
+        messages = saved.checkpoint.get("channel_values", {}).get("messages", [])
+        out: list[dict[str, str]] = []
+        for m in messages:
+            role = {"human": "user", "ai": "assistant"}.get(getattr(m, "type", ""))
+            text = _message_text(getattr(m, "content", ""))
+            if role and text:
+                out.append({"role": role, "content": text})
+        return out
 
     # ------------------------------------------------------------------
     # Workflows
@@ -345,3 +375,14 @@ class ControlPlane:
             "workflow": record.get("spec_name"),
             "status": record.get("status"),
         }
+
+
+def _message_text(content: Any) -> str:
+    """Flatten LangChain message content (str or content blocks) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+        )
+    return ""

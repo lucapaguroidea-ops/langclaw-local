@@ -71,6 +71,9 @@ class LangclawClient:
     def turns(self, context_id: str) -> list[dict[str, Any]]:
         return self._request("GET", "/v1/turns", params={"context_id": context_id})["turns"]
 
+    def history(self, context_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", "/v1/history", params={"context_id": context_id})["messages"]
+
     def chat_and_wait(self, content: str, *, context_id: str) -> dict[str, Any]:
         turn = self._request(
             "POST",
