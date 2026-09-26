@@ -13,6 +13,7 @@ COPY . .
 RUN pip install --no-cache-dir -e ".[telegram,postgres,search]" \
         langchain-openrouter sqlalchemy asyncpg \
     # crawl4ai drives a headless Chromium; install it and its system libraries.
-    && crawl4ai-setup
+    # (Not `crawl4ai-setup`: it swallows install failures and exits 0.)
+    && python -m playwright install --with-deps chromium
 
 CMD ["langclaw", "gateway"]
