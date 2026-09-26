@@ -1066,6 +1066,12 @@ class Langclaw:
                         if (cfg.workflows.enabled and self._interpreter_active())
                         else None
                     ),
+                    # The same store backs the control plane's workflow editing.
+                    saved_store=(
+                        self._saved_workflow_store()
+                        if (cfg.workflows.enabled and self._interpreter_active())
+                        else None
+                    ),
                 )
 
                 cron_status = "enabled" if cron_manager else "disabled"
@@ -1227,6 +1233,11 @@ class Langclaw:
                     "Matrix enabled but matrix-nio not installed. Run: uv add 'langclaw[matrix]'"
                 )
 
+        if ch_cfg.api.enabled:
+            from langclaw.gateway.api import ApiChannel
+
+            channels.append(ApiChannel(ch_cfg.api))
+
         _check_channel_credentials(channels, ch_cfg)
         channels.extend(self._extra_channels)
         return channels
@@ -1239,6 +1250,7 @@ _CHANNEL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "discord": ("token",),
     "slack": ("bot_token", "app_token"),
     "matrix": ("homeserver_url", "user_id", "access_token", "device_id"),
+    "api": ("token",),
 }
 
 

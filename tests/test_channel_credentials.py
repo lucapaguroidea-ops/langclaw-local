@@ -49,3 +49,21 @@ def test_enabled_telegram_with_token_builds(monkeypatch: pytest.MonkeyPatch) -> 
 
     channels = Langclaw(config=cfg)._build_all_channels()
     assert [ch.name for ch in channels] == ["telegram"]
+
+
+def test_enabled_api_without_token_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _config(monkeypatch, LANGCLAW__CHANNELS__API__ENABLED="true")
+
+    with pytest.raises(ValueError, match="LANGCLAW__CHANNELS__API__TOKEN"):
+        Langclaw(config=cfg)._build_all_channels()
+
+
+def test_enabled_api_with_token_builds(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _config(
+        monkeypatch,
+        LANGCLAW__CHANNELS__API__ENABLED="true",
+        LANGCLAW__CHANNELS__API__TOKEN="a-long-secret-token",
+    )
+
+    channels = Langclaw(config=cfg)._build_all_channels()
+    assert [ch.name for ch in channels] == ["api"]

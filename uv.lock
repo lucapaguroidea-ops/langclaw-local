@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1876,6 +1876,9 @@ all = [
     { name = "tavily-python" },
     { name = "websockets" },
 ]
+api = [
+    { name = "aiohttp" },
+]
 dev = [
     { name = "langchain-quickjs" },
     { name = "pytest" },
@@ -1932,6 +1935,7 @@ websocket = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1949,6 +1953,7 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9" },
+    { name = "aiohttp", marker = "extra == 'api'", specifier = ">=3.9" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.8" },
     { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.10" },
     { name = "anyio", specifier = ">=4.0" },
@@ -1969,7 +1974,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.1.10" },
     { name = "langchain-quickjs", marker = "extra == 'dev'", specifier = ">=0.1.2" },
     { name = "langchain-quickjs", marker = "extra == 'interpreter'", specifier = ">=0.1.2" },
-    { name = "langclaw", extras = ["telegram", "discord", "websocket", "slack", "matrix", "postgres", "rabbitmq", "kafka", "mcp", "search", "gmail", "interpreter"], marker = "extra == 'all'" },
+    { name = "langclaw", extras = ["telegram", "discord", "websocket", "slack", "matrix", "postgres", "rabbitmq", "kafka", "mcp", "search", "gmail", "interpreter", "api"], marker = "extra == 'all'" },
     { name = "langgraph", specifier = ">=0.4" },
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'postgres'" },
     { name = "langgraph-checkpoint-sqlite" },
@@ -1990,10 +1995,11 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "websockets", marker = "extra == 'websocket'", specifier = ">=14" },
 ]
-provides-extras = ["telegram", "telegram-e2e", "discord", "websocket", "slack", "matrix", "postgres", "rabbitmq", "kafka", "mcp", "gmail", "search", "interpreter", "dev", "all"]
+provides-extras = ["telegram", "telegram-e2e", "discord", "websocket", "slack", "matrix", "postgres", "rabbitmq", "kafka", "mcp", "api", "gmail", "search", "interpreter", "dev", "all"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "pre-commit", specifier = ">=4.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },

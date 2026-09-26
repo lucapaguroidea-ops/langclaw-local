@@ -7,10 +7,12 @@ COPY . .
 #   telegram — the Telegram channel
 #   postgres — Postgres checkpointer (conversation memory)
 #   search   — web_search / web_fetch (crawl4ai)
+#   api      — HTTP control-plane API (UIs such as Appsmith)
+#   interpreter — sandboxed JS `eval` + saved (file-authored) workflows
 # Extra packages:
 #   langchain-openrouter — the openrouter:<model> provider
 #   sqlalchemy + asyncpg — Postgres cron data store (scheduled jobs)
-RUN pip install --no-cache-dir -e ".[telegram,postgres,search]" \
+RUN pip install --no-cache-dir -e ".[telegram,postgres,search,api,interpreter]" \
         langchain-openrouter sqlalchemy asyncpg \
     # crawl4ai drives a headless Chromium; install it and its system libraries.
     # (Not `crawl4ai-setup`: it swallows install failures and exits 0.)
