@@ -926,26 +926,49 @@ class Langclaw:
 
         cfg = self._config
 
-        # Configure stdlib logging (used by channel implementations).
-        logging.basicConfig(
-            level=cfg.log_level.upper(),
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
-        )
-        # Configure loguru (used by GatewayManager, middleware, tools).
+        # Every log sink redacts known secrets (tokens, API keys, DSNs): third-party
+        # libraries log request URLs and exception messages that can contain them.
         import sys
 
+        from langclaw.log_redaction import (
+            RedactingFormatter,
+            SecretRedactor,
+            collect_secrets,
+            install_redacting_streams,
+            make_daily_file_writer,
+            make_redacting_sink,
+        )
+
+        redactor = SecretRedactor(collect_secrets(cfg))
+        # Also covers output that bypasses logging, e.g. the CLI's crash traceback.
+        install_redacting_streams(redactor)
+
+        # Configure stdlib logging (used by channel implementations).
+        logging.basicConfig(level=cfg.log_level.upper())
+        for handler in logging.getLogger().handlers:
+            handler.setFormatter(
+                RedactingFormatter(
+                    redactor,
+                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                    datefmt="%H:%M:%S",
+                )
+            )
+        # Configure loguru (used by GatewayManager, middleware, tools).
+        # diagnose=False: tracebacks must not dump local variable values.
         logger.remove()
-        logger.add(sys.stderr, level=cfg.log_level.upper())
+        logger.add(
+            make_redacting_sink(redactor, sys.stderr.write),
+            level=cfg.log_level.upper(),
+            diagnose=False,
+        )
 
         # Write INFO-and-above to date-based log files so agents can self-debug.
-        log_dir = cfg.agents.workspace_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
         logger.add(
-            str(log_dir / "{time:YYYY-MM-DD}.log"),
+            make_redacting_sink(
+                redactor, make_daily_file_writer(cfg.agents.workspace_dir / "logs")
+            ),
             level="INFO",
-            rotation="00:00",
-            retention="30 days",
+            diagnose=False,
             format=(
                 "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} - {message}"
             ),
@@ -1048,7 +1071,7 @@ class Langclaw:
                 cron_status = "enabled" if cron_manager else "disabled"
                 logger.info(
                     "Gateway starting — channels: {}, bus: {}, checkpointer: {}, cron: {}",
-                    [ch.name for ch in channels],
+                    [ch.name for ch in channels if ch.is_enabled()],
                     bus_cfg.backend,
                     cp_cfg.backend,
                     cron_status,
@@ -1204,8 +1227,44 @@ class Langclaw:
                     "Matrix enabled but matrix-nio not installed. Run: uv add 'langclaw[matrix]'"
                 )
 
+        _check_channel_credentials(channels, ch_cfg)
         channels.extend(self._extra_channels)
         return channels
+
+
+# Config fields each built-in channel needs before it can start. Keyed by
+# ``BaseChannel.name``, which is also the channel's section under ``channels``.
+_CHANNEL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "telegram": ("token",),
+    "discord": ("token",),
+    "slack": ("bot_token", "app_token"),
+    "matrix": ("homeserver_url", "user_id", "access_token", "device_id"),
+}
+
+
+def _check_channel_credentials(channels: list[BaseChannel], ch_cfg: Any) -> None:
+    """Raise if a config-enabled channel is missing the credentials it needs.
+
+    Without this, ``GatewayManager`` drops the channel (``is_enabled()`` is
+    False) and the bot silently never connects.
+
+    Raises:
+        ValueError: Naming the channel and each empty ``LANGCLAW__`` env var.
+    """
+    for channel in channels:
+        if channel.is_enabled():
+            continue
+        section = getattr(ch_cfg, channel.name, None)
+        missing = [
+            f"LANGCLAW__CHANNELS__{channel.name.upper()}__{field.upper()}"
+            for field in _CHANNEL_REQUIRED_FIELDS.get(channel.name, ())
+            if not getattr(section, field, "")
+        ]
+        detail = ", ".join(missing) if missing else "its required credentials"
+        raise ValueError(
+            f"Channel {channel.name!r} is enabled but cannot start: set {detail} "
+            f"(or disable it with LANGCLAW__CHANNELS__{channel.name.upper()}__ENABLED=false)."
+        )
 
 
 __all__ = ["Langclaw", "CommandContext"]
