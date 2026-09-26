@@ -376,6 +376,26 @@ def test_factory_raises_clear_hint_when_extra_missing(monkeypatch):
         build_interpreter_middleware(cfg, [_tool("web_search")])
 
 
+def test_factory_raises_clear_hint_for_incompatible_quickjs(monkeypatch):
+    """langchain-quickjs 0.3 replaced ``snapshot_between_turns`` with ``mode``;
+    fail with an actionable message instead of a bare TypeError at startup."""
+    langchain_quickjs = pytest.importorskip("langchain_quickjs")
+
+    from langclaw.config.schema import InterpreterConfig, LangclawConfig
+    from langclaw.interpreter import build_interpreter_middleware
+
+    class NewApiMiddleware:  # the 0.3.x constructor shape
+        def __init__(self, *, memory_limit=0, timeout=5.0, mode=None, ptc=None):
+            pass
+
+    monkeypatch.setattr(langchain_quickjs, "CodeInterpreterMiddleware", NewApiMiddleware)
+
+    cfg = LangclawConfig()
+    cfg.interpreter = InterpreterConfig(enabled=True)
+    with pytest.raises(ImportError, match=r"langchain-quickjs.*<0\.1\.3"):
+        build_interpreter_middleware(cfg, [_tool("web_search")])
+
+
 # ---------------------------------------------------------------------------
 # Wiring — agent builder integration
 # ---------------------------------------------------------------------------
