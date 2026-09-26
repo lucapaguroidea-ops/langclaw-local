@@ -40,6 +40,7 @@ uv run pre-commit run --all-files  # Full pre-commit suite
 | Code interpreter (RLM) | `langclaw/interpreter/__init__.py` (PTC resolver + middleware factory) |
 | Probe harness (E2E feature testing) | `langclaw/testing/` (`probe()` core + `ProbeTransport` + WS/Telegram drivers); `langclaw gateway --probe` (WS-only seam in `app.py:_build_all_channels`) + `langclaw probe` CLI. Design: [docs/PROBE.md](docs/PROBE.md) |
 | Runtime workflow authoring | `langclaw/workflows/saved_store.py` (parse/load) + `app._reload_saved_workflows` + gateway folder-watch |
+| Control-plane HTTP API (UIs) | `langclaw/gateway/control.py` (`ControlPlane`, shared with `/workflows`) + `langclaw/gateway/api.py` (`ApiChannel`). Guide: [docs/guides/control-plane-api.md](docs/guides/control-plane-api.md) |
 | CLI commands | `langclaw/cli/app.py` (Typer) |
 | Agent construction | `langclaw/agents/builder.py` |
 | Gateway orchestration | `langclaw/gateway/manager.py` |

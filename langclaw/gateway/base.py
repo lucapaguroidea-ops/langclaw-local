@@ -24,8 +24,9 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from langclaw.bus.base import BaseMessageBus, OutboundMessage
+    from langclaw.bus.base import BaseMessageBus, InboundMessage, OutboundMessage
     from langclaw.gateway.commands import CommandRouter
+    from langclaw.gateway.control import ControlPlane
 
 
 class BaseChannel(ABC):
@@ -45,6 +46,21 @@ class BaseChannel(ABC):
     def set_command_router(self, router: CommandRouter) -> None:
         """Inject the shared command router (called by GatewayManager)."""
         self._command_router = router
+
+    def set_control_plane(self, plane: ControlPlane) -> None:
+        """Inject the gateway's management surface (called by GatewayManager).
+
+        Default: ignored. Channels that expose management operations — such as
+        the HTTP :class:`~langclaw.gateway.api.ApiChannel` — override this.
+        """
+
+    async def on_turn_complete(self, msg: InboundMessage) -> None:
+        """Called once the gateway has finished handling *msg*.
+
+        A single turn may emit several outbound messages (e.g. text before and
+        after tool calls). Request/response channels override this to know the
+        reply is complete. Default: no-op.
+        """
 
     @abstractmethod
     async def start(self, bus: BaseMessageBus) -> None:

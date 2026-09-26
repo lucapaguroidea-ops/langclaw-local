@@ -337,3 +337,36 @@ async def test_handle_workflow_rejects_duplicate_run_id():
 
     await mgr._handle(_wf_msg("echo", run_id="echo:dup"))
     assert any("already in progress" in m.content for m in channel.sent)
+
+
+# --- turn completion + control plane injection -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_signals_on_turn_complete_after_output():
+    mgr = _make_manager(_make_registry())
+    channel = mgr._channel_map["websocket"]
+    events: list[str] = []
+    original_send = channel.send
+
+    async def send(m):
+        events.append("send")
+        await original_send(m)
+
+    async def on_turn_complete(msg):
+        events.append("complete")
+
+    channel.send = send
+    channel.on_turn_complete = on_turn_complete
+
+    await mgr._handle_turn(_wf_msg("echo"))
+
+    assert events[-1] == "complete"
+    assert "send" in events
+
+
+@pytest.mark.asyncio
+async def test_workflow_command_and_control_plane_share_state():
+    mgr = _make_manager(_make_registry())
+    names = [w["name"] for w in mgr._control_plane.list_workflows()]
+    assert names == ["echo", "boom"]

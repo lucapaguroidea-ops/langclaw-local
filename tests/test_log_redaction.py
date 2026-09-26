@@ -113,3 +113,8 @@ def test_redacting_stream_covers_direct_writes() -> None:
     assert TOKEN not in target.getvalue()
     assert "rejected by the server" in target.getvalue()
     assert stream.getvalue() == target.getvalue()  # other attributes delegate
+
+
+def test_api_token_from_config_is_collected(monkeypatch) -> None:
+    monkeypatch.setenv("LANGCLAW__CHANNELS__API__TOKEN", "api-secret-token-xyz")
+    assert "api-secret-token-xyz" in collect_secrets(LangclawConfig(), environ={})

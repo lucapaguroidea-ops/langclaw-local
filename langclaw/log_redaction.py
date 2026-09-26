@@ -63,6 +63,7 @@ def collect_secrets(
         ch.slack.bot_token,
         ch.slack.app_token,
         ch.matrix.access_token,
+        ch.api.token,
     ]
     secrets = {value for value in candidates if value and len(value) >= _MIN_SECRET_LENGTH}
     return sorted(secrets, key=len, reverse=True)

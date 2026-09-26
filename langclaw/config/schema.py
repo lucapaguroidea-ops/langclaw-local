@@ -274,12 +274,35 @@ class MatrixChannelConfig(BaseModel):
     """
 
 
+class ApiChannelConfig(BaseModel):
+    """HTTP control-plane API: chat, workflows, runs, schedules, status.
+
+    Every request except ``GET /healthz`` needs ``Authorization: Bearer <token>``.
+    Requires ``langclaw[api]``. See ``langclaw/gateway/api.py`` for endpoints.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    """Bind address. Use ``::`` to listen on all interfaces, IPv4 and IPv6
+    (e.g. Railway's private network, which is IPv6)."""
+    port: int = 18790
+    token: str = ""
+    """Shared secret for ``Authorization: Bearer``. Required when enabled."""
+    user_id: str = "api"
+    """Identity API chat turns run as (sessions, RBAC ``user_roles``, cron ownership)."""
+    user_roles: StringDict = Field(default_factory=dict)
+    """Maps the API ``user_id`` to a permission role. Env format: ``api:admin``"""
+    max_turns: int = 500
+    """How many recent chat turns to keep in memory for polling."""
+
+
 class ChannelsConfig(BaseModel):
     telegram: TelegramChannelConfig = Field(default_factory=TelegramChannelConfig)
     discord: DiscordChannelConfig = Field(default_factory=DiscordChannelConfig)
     websocket: WebSocketChannelConfig = Field(default_factory=WebSocketChannelConfig)
     slack: SlackChannelConfig = Field(default_factory=SlackChannelConfig)
     matrix: MatrixChannelConfig = Field(default_factory=MatrixChannelConfig)
+    api: ApiChannelConfig = Field(default_factory=ApiChannelConfig)
 
 
 class BackendConfig(BaseModel):

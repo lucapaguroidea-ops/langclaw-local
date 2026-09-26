@@ -30,6 +30,7 @@ from langclaw.context import LangclawContext
 from langclaw.cron.scheduler import CronManager
 from langclaw.gateway.base import BaseChannel
 from langclaw.gateway.commands import CommandContext, CommandRouter
+from langclaw.gateway.control import ControlPlane, NotFoundError
 from langclaw.gateway.utils import attachments_to_content_blocks, lookup_by_user
 from langclaw.session.manager import SessionManager
 from langclaw.utils import preview_message
@@ -87,6 +88,7 @@ class GatewayManager:
         workflow_run_store: Any | None = None,
         saved_reload_cb: Callable[[], bool] | None = None,
         agent_backend: Any | None = None,
+        saved_store: Any | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -169,6 +171,21 @@ class GatewayManager:
         # Register /agent only when named agents exist (no-op otherwise).
         if self._named_agent_specs:
             self._setup_agent_command()
+
+        # One structured management surface (status, workflows, runs, schedules)
+        # shared by the /workflows command and channels such as the HTTP API.
+        self._control_plane = ControlPlane(
+            config=config,
+            bus=bus,
+            channels=self._channels,
+            agent_names=self._agent_map,
+            cron_manager=cron_manager,
+            workflow_registry=workflow_registry,
+            workflow_run_store=workflow_run_store,
+            live_runs=self._workflow_runs,
+            saved_store=saved_store,
+            saved_reload_cb=saved_reload_cb,
+        )
 
         # Register /workflows whenever the feature is enabled (the app passes a
         # registry — possibly empty — in that case), so the command stays
@@ -490,88 +507,71 @@ class GatewayManager:
             (``origin="workflow"``), mirroring ``/agent <name> <message>``.
           - ``/workflows cancel <run_id>`` — cancel a gateway-started live run.
         """
-        registry = self._workflow_registry
-        run_store = self._workflow_run_store
-        live_runs = self._workflow_runs
-        bus = self._bus
+        plane = self._control_plane
 
         async def _cmd_workflow(ctx: CommandContext) -> str:
             sub = ctx.args[0].lower() if ctx.args else "list"
 
             if sub == "list":
-                specs = list(registry.specs())
-                if not specs:
+                workflows = plane.list_workflows()
+                if not workflows:
                     return "No workflows registered."
                 lines = ["Registered workflows:"]
-                for s in specs:
-                    tag = "" if getattr(s, "mode", "python") == "python" else f" [{s.mode}]"
-                    desc = f" — {s.description}" if s.description else ""
-                    lines.append(f"  {s.name}{tag}{desc}")
+                for w in workflows:
+                    tag = "" if w["mode"] == "python" else f" [{w['mode']}]"
+                    desc = f" — {w['description']}" if w["description"] else ""
+                    lines.append(f"  {w['name']}{tag}{desc}")
                 return "\n".join(lines)
 
             if sub == "runs":
-                if run_store is None:
+                result = await plane.list_runs(limit=20)
+                if not result["journal_enabled"]:
                     return "Run journal not enabled (set workflows.resume_on_startup)."
-                records = await run_store.list_all()
-                if not records:
+                runs = result["runs"]
+                if not runs:
                     return "No workflow runs recorded."
-                # asearch ordering is backend-dependent, so this is a sample of up
-                # to 20 runs, not guaranteed to be the newest 20.
-                shown = records[-20:]
-                lines = [f"Workflow runs ({len(shown)} of {len(records)}):"]
-                for r in shown:
-                    lines.append(
-                        f"  [{r.get('status', '?')}] {r.get('run_id')} ({r.get('spec_name')})"
-                    )
+                # A sample of up to 20 runs; ordering is backend-dependent.
+                lines = [f"Workflow runs ({len(runs)}):"]
+                for r in runs:
+                    lines.append(f"  [{r['status'] or '?'}] {r['run_id']} ({r['workflow']})")
                 return "\n".join(lines)
 
             if sub == "status":
                 if len(ctx.args) < 2:
                     return "Usage: /workflows status <run_id>"
                 run_id = ctx.args[1]
-                live = " (live)" if run_id in live_runs else ""
-                if run_store is not None:
-                    for r in await run_store.list_all():
-                        if r.get("run_id") == run_id:
-                            return f"{run_id}: {r.get('status')}{live}"
-                return f"{run_id}: {'running' + live if live else 'unknown'}"
+                try:
+                    run = await plane.run_status(run_id)
+                except NotFoundError:
+                    return f"{run_id}: unknown"
+                return f"{run_id}: {run['status']}{' (live)' if run['live'] else ''}"
 
             if sub == "run":
                 if len(ctx.args) < 2:
                     return "Usage: /workflows run <name> [json-input]"
                 name = ctx.args[1]
-                if registry.get(name) is None:
-                    return f"Unknown workflow {name!r}."
                 wf_input = " ".join(ctx.args[2:]) if len(ctx.args) > 2 else ""
-                run_id = f"{name}:{uuid.uuid4().hex[:12]}"
-                await bus.publish(
-                    InboundMessage(
+                try:
+                    run_id = await plane.start_workflow(
+                        name,
+                        wf_input,
                         channel=ctx.channel,
                         user_id=ctx.user_id,
                         context_id=ctx.context_id,
                         chat_id=ctx.chat_id,
-                        content=f"run workflow {name}",
-                        origin="workflow",
-                        metadata={
-                            "workflow_name": name,
-                            "workflow_input": wf_input,
-                            "run_id": run_id,
-                        },
                     )
-                )
+                except NotFoundError:
+                    return f"Unknown workflow {name!r}."
                 return f"Started workflow {name!r} (run_id: {run_id})."
 
             if sub == "cancel":
                 if len(ctx.args) < 2:
                     return "Usage: /workflows cancel <run_id>"
                 run_id = ctx.args[1]
-                task = live_runs.get(run_id)
-                if task is None:
-                    return (
-                        f"No live run {run_id} to cancel "
-                        "(only gateway-started runs are cancelable)."
-                    )
-                task.cancel()
+                try:
+                    plane.cancel_run(run_id)
+                except NotFoundError as exc:
+                    return str(exc)
                 return f"Cancelling run {run_id}."
 
             return (
@@ -631,6 +631,9 @@ class GatewayManager:
 
         for channel in self._channels:
             channel.set_command_router(self._command_router)
+            set_control_plane = getattr(channel, "set_control_plane", None)
+            if set_control_plane is not None:
+                set_control_plane(self._control_plane)
 
         try:
             async with asyncio.TaskGroup() as tg:
@@ -668,9 +671,27 @@ class GatewayManager:
         logger.info("Bus worker started.")
         async for msg in self._bus.subscribe():
             asyncio.create_task(
-                self._handle(msg),
+                self._handle_turn(msg),
                 name=f"handle:{msg.channel}:{msg.user_id}",
             )
+
+    async def _handle_turn(self, msg: InboundMessage) -> None:
+        """Run :meth:`_handle`, then tell the channel the turn is over.
+
+        A turn may emit several outbound messages (text before and after tool
+        calls), so request/response channels such as the HTTP API rely on
+        ``on_turn_complete`` to know when the reply is complete.
+        """
+        try:
+            await self._handle(msg)
+        finally:
+            channel = self._channel_map.get(msg.channel)
+            on_turn_complete = getattr(channel, "on_turn_complete", None)
+            if on_turn_complete is not None:
+                try:
+                    await on_turn_complete(msg)
+                except Exception:
+                    logger.exception(f"on_turn_complete failed on channel '{msg.channel}'")
 
     async def _handle_message_chunk(
         self,
