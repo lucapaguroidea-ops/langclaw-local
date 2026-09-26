@@ -130,12 +130,46 @@ def is_allowed(
 ) -> bool:
     """Return True if *user_id* or *username* passes the *allow_from* whitelist.
 
-    An empty *allow_from* list means "allow everyone".
+    An empty *allow_from* list means "allow everyone". Usernames match with
+    or without a leading ``@`` (see :func:`_username_keys`).
     """
     if not allow_from:
         return True
     allowed = set(allow_from)
-    return user_id in allowed or (username is not None and username in allowed)
+    return user_id in allowed or any(key in allowed for key in _username_keys(username))
+
+
+def lookup_by_user(
+    mapping: dict[str, str],
+    user_id: str,
+    username: str | None = None,
+) -> str | None:
+    """Look up *mapping* (e.g. ``user_roles``) by user ID, then by username.
+
+    Usernames match with or without a leading ``@``, mirroring
+    :func:`is_allowed`.
+
+    Returns:
+        The mapped value, or ``None`` when neither key is present.
+    """
+    if user_id in mapping:
+        return mapping[user_id]
+    for key in _username_keys(username):
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _username_keys(username: str | None) -> tuple[str, ...]:
+    """Return the config spellings a *username* may appear under.
+
+    Channels report bare usernames (``alice``) while configs conventionally
+    write ``@alice``; accept both so a documented config never locks users out.
+    """
+    if not username:
+        return ()
+    bare = username.removeprefix("@")
+    return (bare, f"@{bare}")
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ from langclaw.context import LangclawContext
 from langclaw.cron.scheduler import CronManager
 from langclaw.gateway.base import BaseChannel
 from langclaw.gateway.commands import CommandContext, CommandRouter
-from langclaw.gateway.utils import attachments_to_content_blocks
+from langclaw.gateway.utils import attachments_to_content_blocks, lookup_by_user
 from langclaw.session.manager import SessionManager
 from langclaw.utils import preview_message
 from langclaw.workflows.progress import (
@@ -888,12 +888,8 @@ class GatewayManager:
             {},
         )
         logger.debug(f"Checking permissions for user_id {msg.user_id}")
-        role = user_roles.get(msg.user_id)
-        if role is None:
-            username = (msg.metadata or {}).get("username", "")
-            logger.debug(f"No role found for user_id {msg.user_id}, checking username {username}")
-            if username:
-                role = user_roles.get(username)
+        username = (msg.metadata or {}).get("username", "")
+        role = lookup_by_user(user_roles, msg.user_id, username)
         return role if role is not None else perms.default_role
 
     def _make_workflow_progress_sink(
