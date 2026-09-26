@@ -3,16 +3,10 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "watchPatterns": [
-      "langclaw/**",
-      "Dockerfile",
-      "pyproject.toml",
-      "uv.lock",
-      "railway.json"
-    ]
+    "watchPatterns": ["ui/**"]
   },
   "deploy": {
-    "startCommand": "langclaw gateway",
+    "healthcheckPath": "/_stcore/health",
     "restartPolicyType": "ON_FAILURE"
   }
 }
