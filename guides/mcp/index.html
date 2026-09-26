@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://langclaw.dev/blog/langclaw-0-3-0/">
+        <link rel="canonical" href="https://langclaw.dev/guides/mcp/">
       
       
-        <link rel="prev" href="../langclaw-0-2-0/">
+        <link rel="prev" href="../control-plane-api/">
       
       
-        <link rel="next" href="../langclaw-0-4-0/">
+        <link rel="next" href="../deployment/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>langclaw 0.3.0 — durable workflows - langclaw</title>
+        <title>MCP Servers - langclaw</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#langclaw-030-durable-workflows" class="md-skip">
+        <a href="#mcp-servers-tools-without-code" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              langclaw 0.3.0 — durable workflows
+              MCP Servers
             
           </span>
         </div>
@@ -266,11 +266,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../guides/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -306,11 +308,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="../" class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href="../../blog/" class="md-tabs__link">
         
   
   
@@ -334,9 +334,7 @@
           
             
               
-                
-              
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -428,26 +426,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -465,7 +468,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -483,7 +486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -511,7 +514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/tools/" class="md-nav__link">
+      <a href="../tools/" class="md-nav__link">
         
   
   
@@ -539,7 +542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/channels/" class="md-nav__link">
+      <a href="../channels/" class="md-nav__link">
         
   
   
@@ -567,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/workflows/" class="md-nav__link">
+      <a href="../workflows/" class="md-nav__link">
         
   
   
@@ -595,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/subagents/" class="md-nav__link">
+      <a href="../subagents/" class="md-nav__link">
         
   
   
@@ -623,7 +626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/rbac/" class="md-nav__link">
+      <a href="../rbac/" class="md-nav__link">
         
   
   
@@ -651,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/cron/" class="md-nav__link">
+      <a href="../cron/" class="md-nav__link">
         
   
   
@@ -679,7 +682,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/control-plane-api/" class="md-nav__link">
+      <a href="../control-plane-api/" class="md-nav__link">
         
   
   
@@ -704,10 +707,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../guides/mcp/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Servers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -723,6 +753,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-tools-appear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How tools appear
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#behaviour-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behaviour and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -735,7 +818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
         
   
   
@@ -763,7 +846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/probe/" class="md-nav__link">
+      <a href="../probe/" class="md-nav__link">
         
   
   
@@ -819,7 +902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -1050,14 +1133,12 @@
       
   
   
-    
-  
   
     
   
   
-    <li class="md-nav__item md-nav__item--active">
-      <a href="../" class="md-nav__link">
+    <li class="md-nav__item">
+      <a href="../../blog/" class="md-nav__link">
         
   
   
@@ -1085,8 +1166,6 @@
             
             
               
-                
-              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -1106,10 +1185,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#crash-resume" class="md-nav__link">
+  <a href="#configure" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Crash-resume
+        Configure
       
     </span>
   </a>
@@ -1117,10 +1196,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ctxlog-inline-progress" class="md-nav__link">
+  <a href="#how-tools-appear" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ctx.log — inline progress
+        How tools appear
       
     </span>
   </a>
@@ -1128,21 +1207,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#parallel-failure-isolation" class="md-nav__link">
+  <a href="#behaviour-and-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parallel failure isolation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-in-03" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's in 0.3
+        Behaviour and limits
       
     </span>
   </a>
@@ -1158,151 +1226,134 @@
             
           
           
-  <div class="md-content md-content--post" data-md-component="content">
-    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
-      <div class="md-sidebar__scrollwrap">
-        <div class="md-sidebar__inner md-post">
-          <nav class="md-nav md-nav--primary">
-            <div class="md-post__back">
-              <div class="md-nav__title md-nav__container">
-                <a href="../" class="md-nav__link">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-                  <span class="md-ellipsis">
-                    Back to index
-                  </span>
-                </a>
-              </div>
-            </div>
-            
-              <div class="md-post__authors md-typeset">
+            <div class="md-content" data-md-component="content">
+              
                 
-                  <div class="md-profile md-post__profile">
-                    <span class="md-author md-author--long">
-                      <img src="https://github.com/tisu19021997.png" alt="Quang Pham">
-                    </span>
-                    <span class="md-profile__description">
-                      <strong>
-                        
-                          <a href="https://github.com/tisu19021997">Quang Pham</a>
-                        
-                      </strong>
-                      <br>
-                      Builder of langclaw
-                    </span>
-                  </div>
-                
-              </div>
-            
-            <ul class="md-post__meta md-nav__list">
-              <li class="md-nav__item md-nav__item--section">
-                <div class="md-post__title">
-                  <span class="md-ellipsis">
-                    Metadata
-                  </span>
-                </div>
-                <nav class="md-nav">
-                  <ul class="md-nav__list">
-                    <li class="md-nav__item">
-                      <div class="md-nav__link">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"/></svg>
-                        <time datetime="2026-06-01 00:00:00+00:00" class="md-ellipsis">June 1, 2026</time>
-                      </div>
-                    </li>
-                    
-                    
-                      <li class="md-nav__item">
-                        <div class="md-nav__link">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 3v15h3V3zm3 2 4 13 3-1-4-13zM5 5v13h3V5zM3 19v2h18v-2z"/></svg>
-                          <span class="md-ellipsis">
-                            in
-                            
-                              <a href="../category/release/">Release</a></span>
-                        </div>
-                      </li>
-                    
-                    
-                      
-                      <li class="md-nav__item">
-                        <div class="md-nav__link">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"/></svg>
-                          <span class="md-ellipsis">
-                            
-                              2 min read
-                            
-                          </span>
-                        </div>
-                      </li>
-                    
-                  </ul>
-                </nav>
-              </li>
-            </ul>
-            
-          </nav>
-          
-        </div>
-      </div>
-    </div>
-    <article class="md-content__inner md-typeset">
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
       
         
   
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
 
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Guides
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
 
 
   
   
 
 
-<h1 id="langclaw-030-durable-workflows">langclaw 0.3.0 — durable workflows<a class="headerlink" href="#langclaw-030-durable-workflows" title="Permanent link">&para;</a></h1>
-<p>0.3.0 makes workflows properly durable: steps survive crashes, incomplete runs resume on restart, and fan-out failures are isolated rather than fatal.</p>
-<!-- more -->
-
-<h2 id="crash-resume">Crash-resume<a class="headerlink" href="#crash-resume" title="Permanent link">&para;</a></h2>
-<p>Each step in a <code>@app.workflow</code> is now a memoized, serializable unit backed by a <code>RunStore</code>. If the process dies mid-run — between <code>ctx.parallel</code> branches, mid-synthesis, anywhere — the run picks up from the last completed step on next startup.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nd">@app</span><span class="o">.</span><span class="n">workflow</span><span class="p">(</span><span class="s2">&quot;digest&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">DigestInput</span><span class="p">,</span> <span class="n">max_concurrency</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">digest</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">inp</span><span class="p">:</span> <span class="n">DigestInput</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">ctx</span><span class="o">.</span><span class="n">phase</span><span class="p">(</span><span class="s2">&quot;fetch&quot;</span><span class="p">)</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="c1"># If the process crashes here, this fan-out won&#39;t re-run on resume.</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">items</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">parallel</span><span class="p">([</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        <span class="k">lambda</span> <span class="n">c</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">:</span> <span class="n">c</span><span class="o">.</span><span class="n">tool</span><span class="p">(</span><span class="s2">&quot;web_fetch&quot;</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">)</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">inp</span><span class="o">.</span><span class="n">sources</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="p">])</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">ctx</span><span class="o">.</span><span class="n">phase</span><span class="p">(</span><span class="s2">&quot;summarize&quot;</span><span class="p">)</span>  <span class="c1"># resumes here if fetch already completed</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="o">...</span>
+<h1 id="mcp-servers-tools-without-code">MCP Servers (Tools Without Code)<a class="headerlink" href="#mcp-servers-tools-without-code" title="Permanent link">&para;</a></h1>
+<p>Connect any <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server and
+its tools become agent tools, with no Python needed. Useful for services that
+already publish an MCP server (GitHub, Notion, Linear, databases, internal APIs).</p>
+<h2 id="configure">Configure<a class="headerlink" href="#configure" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;langclaw[mcp]&quot;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># JSON map of server name → connection</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nv">LANGCLAW__MCP__SERVERS</span><span class="o">=</span><span class="s1">&#39;{</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s1">  &quot;docs&quot;:   {&quot;url&quot;: &quot;https://example.com/mcp&quot;, &quot;headers&quot;: {&quot;Authorization&quot;: &quot;Bearer &lt;token&gt;&quot;}},</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s1">  &quot;search&quot;: {&quot;transport&quot;: &quot;sse&quot;, &quot;url&quot;: &quot;https://search.example.com/sse&quot;},</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s1">  &quot;local&quot;:  {&quot;transport&quot;: &quot;stdio&quot;, &quot;command&quot;: &quot;npx&quot;, &quot;args&quot;: [&quot;-y&quot;, &quot;some-mcp-server&quot;],</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s1">             &quot;env&quot;: {&quot;API_KEY&quot;: &quot;&lt;key&gt;&quot;}}</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="s1">}&#39;</span>
 </span></code></pre></div>
-<p>Opt into startup resume with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">LANGCLAW__WORKFLOWS__RESUME_ON_STARTUP</span><span class="o">=</span><span class="nb">true</span>
-</span></code></pre></div>
-<p>On startup, langclaw scans the <code>RunStore</code> for incomplete runs and re-triggers them before the gateway starts accepting new messages.</p>
-<h2 id="ctxlog-inline-progress"><code>ctx.log</code> — inline progress<a class="headerlink" href="#ctxlog-inline-progress" title="Permanent link">&para;</a></h2>
-<p>A lightweight log line to narrate what's happening inside a phase, without starting a new one:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">ctx</span><span class="o">.</span><span class="n">phase</span><span class="p">(</span><span class="s2">&quot;verify&quot;</span><span class="p">)</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">for</span> <span class="n">claim</span> <span class="ow">in</span> <span class="n">claims</span><span class="p">:</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">ctx</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;checking: </span><span class="si">{</span><span class="n">claim</span><span class="p">[:</span><span class="mi">60</span><span class="p">]</span><span class="si">}</span><span class="s2">…&quot;</span><span class="p">)</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tool</span><span class="p">(</span><span class="s2">&quot;web_search&quot;</span><span class="p">,</span> <span class="n">query</span><span class="o">=</span><span class="n">claim</span><span class="p">)</span>
-</span></code></pre></div>
-<p>Both <code>ctx.phase</code> and <code>ctx.log</code> stream live to the originating channel as the workflow runs.</p>
-<h2 id="parallel-failure-isolation">Parallel failure isolation<a class="headerlink" href="#parallel-failure-isolation" title="Permanent link">&para;</a></h2>
-<p><code>ctx.parallel</code> now accepts <code>return_exceptions=True</code> — a single failing branch returns an <code>Exception</code> in place instead of sinking the entire fan-out:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">parallel</span><span class="p">(</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="p">[</span><span class="k">lambda</span> <span class="n">c</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">:</span> <span class="n">c</span><span class="o">.</span><span class="n">subagent</span><span class="p">(</span><span class="s2">&quot;scout&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">contenders</span><span class="p">],</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">return_exceptions</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">contenders</span><span class="p">,</span> <span class="n">results</span><span class="p">):</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">):</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: research failed, skipping&quot;</span><span class="p">)</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        <span class="k">continue</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="o">...</span>
-</span></code></pre></div>
-<h2 id="whats-in-03">What's in 0.3<a class="headerlink" href="#whats-in-03" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>transport</code></td>
+<td><code>streamable_http</code></td>
+<td><code>streamable_http</code>, <code>sse</code>, <code>websocket</code>, or <code>stdio</code></td>
+</tr>
+<tr>
+<td><code>url</code></td>
+<td></td>
+<td>Server URL (network transports)</td>
+</tr>
+<tr>
+<td><code>headers</code></td>
+<td><code>{}</code></td>
+<td>HTTP headers, e.g. auth (not sent over <code>websocket</code>)</td>
+</tr>
+<tr>
+<td><code>command</code> / <code>args</code> / <code>env</code></td>
+<td></td>
+<td>Process to launch for <code>stdio</code></td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td><code>true</code></td>
+<td>Keep a server configured but off</td>
+</tr>
+</tbody>
+</table>
+<p>Server names must be <code>[a-z0-9_]+</code>: they become part of tool names.</p>
+<h2 id="how-tools-appear">How tools appear<a class="headerlink" href="#how-tools-appear" title="Permanent link">&para;</a></h2>
+<p>A server <code>docs</code> with a tool <code>search</code> is exposed as <strong><code>mcp_docs_search</code></strong>. The
+<code>mcp_</code> prefix is reserved, so MCP tools never collide with built-in or
+developer tools. With RBAC enabled, grant them like any tool
+(<code>"tools": ["mcp_docs_search"]</code>).</p>
+<h2 id="behaviour-and-limits">Behaviour and limits<a class="headerlink" href="#behaviour-and-limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Workflow durability: <code>RunStore</code> protocol, serializable-input guard, per-step memoization</li>
-<li><code>ctx.log</code> — inline log lines during a phase</li>
-<li><code>ctx.parallel</code> failure isolation (<code>return_exceptions=True</code>)</li>
-<li>Startup resume trigger for incomplete runs (<code>resume_on_startup</code>)</li>
+<li><strong>Loaded at startup.</strong> Adding, removing or changing a server needs a restart
+  (on Railway, saving the variable redeploys).</li>
+<li><strong>Fail-soft per server.</strong> A server that is down, times out (30 s) or is
+  misconfigured is skipped with a warning; the gateway still starts. Each
+  server's result (tool names or the error) is in <code>GET /v1/status</code> under
+  <code>mcp_servers</code>, and on the web console's Status page.</li>
+<li><strong>Secrets are redacted.</strong> Header and <code>env</code> values are removed from all logs.</li>
+<li><strong><code>stdio</code> servers run inside the gateway's container</strong>, so the command (e.g.
+  <code>npx</code>, <code>uvx</code>) must exist in that image. Remote servers (<code>url</code>) need nothing
+  extra.</li>
 </ul>
 
 
@@ -1311,20 +1362,15 @@
 
 
 
-  
-  
 
 
 
 
-  
 
-
-
-      
-    </article>
-  </div>
-
+                
+              </article>
+            </div>
+          
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
