@@ -1970,7 +1970,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.0" },
     { name = "langchain-community", marker = "extra == 'search'", specifier = ">=0.3" },
     { name = "langchain-core", specifier = ">=0.3" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'mcp'", specifier = ">=0.1" },
+    { name = "langchain-mcp-adapters", marker = "extra == 'mcp'", specifier = ">=0.2.1,<0.3" },
     { name = "langchain-openai", specifier = ">=1.1.10" },
     { name = "langchain-quickjs", marker = "extra == 'dev'", specifier = ">=0.1.2,<0.1.3" },
     { name = "langchain-quickjs", marker = "extra == 'interpreter'", specifier = ">=0.1.2,<0.1.3" },

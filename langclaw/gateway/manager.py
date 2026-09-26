@@ -89,6 +89,7 @@ class GatewayManager:
         saved_reload_cb: Callable[[], bool] | None = None,
         agent_backend: Any | None = None,
         saved_store: Any | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -185,6 +186,7 @@ class GatewayManager:
             live_runs=self._workflow_runs,
             saved_store=saved_store,
             saved_reload_cb=saved_reload_cb,
+            mcp_servers=mcp_servers,
         )
 
         # Register /workflows whenever the feature is enabled (the app passes a

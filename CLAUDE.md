@@ -41,6 +41,7 @@ uv run pre-commit run --all-files  # Full pre-commit suite
 | Probe harness (E2E feature testing) | `langclaw/testing/` (`probe()` core + `ProbeTransport` + WS/Telegram drivers); `langclaw gateway --probe` (WS-only seam in `app.py:_build_all_channels`) + `langclaw probe` CLI. Design: [docs/PROBE.md](docs/PROBE.md) |
 | Runtime workflow authoring | `langclaw/workflows/saved_store.py` (parse/load) + `app._reload_saved_workflows` + gateway folder-watch |
 | Control-plane HTTP API (UIs) | `langclaw/gateway/control.py` (`ControlPlane`, shared with `/workflows`) + `langclaw/gateway/api.py` (`ApiChannel`). Guide: [docs/guides/control-plane-api.md](docs/guides/control-plane-api.md) |
+| MCP servers → tools | `langclaw/mcp.py` (`load_mcp_tools`, fail-soft per server) + `config.mcp.servers`; tools named `mcp_<server>_<tool>` (prefix reserved in `langclaw/naming.py`). Guide: [docs/guides/mcp.md](docs/guides/mcp.md) |
 | CLI commands | `langclaw/cli/app.py` (Typer) |
 | Agent construction | `langclaw/agents/builder.py` |
 | Gateway orchestration | `langclaw/gateway/manager.py` |

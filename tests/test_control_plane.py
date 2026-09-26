@@ -216,3 +216,10 @@ async def test_add_schedule_validates_channel_and_target() -> None:
         await plane.add_schedule(name="n", channel="telegram", user_id="1", cron_expr="* * * * *")
     with pytest.raises(ValueError, match="cron_expr or every_seconds"):
         await plane.add_schedule(name="n", channel="telegram", user_id="1", message="m")
+
+
+def test_status_reports_mcp_servers() -> None:
+    report = [{"name": "docs", "transport": "sse", "tools": ["mcp_docs_search"], "error": None}]
+    status = _plane(mcp_servers=report).status()
+    assert status["features"]["mcp"] is True
+    assert status["mcp_servers"] == report
