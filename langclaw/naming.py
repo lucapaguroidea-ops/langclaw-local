@@ -33,11 +33,15 @@ from collections.abc import Iterable
 #: middleware, and the reservation guard all read it from here.
 WORKFLOW_TOOL_PREFIX = "workflow_"
 
+#: Tool-name prefix for tools loaded from MCP servers: ``mcp_<server>_<tool>``.
+MCP_TOOL_PREFIX = "mcp_"
+
 #: Tool-name prefixes reserved for framework-generated tools, mapping each
 #: ``prefix`` → the human label of the owning primitive (used in error text).
 #: A developer-registered tool may not start with any of these.
 RESERVED_TOOL_PREFIXES: dict[str, str] = {
     WORKFLOW_TOOL_PREFIX: "workflow",
+    MCP_TOOL_PREFIX: "mcp",
 }
 
 #: Command names the framework owns (built-ins + primitive control surfaces).
@@ -58,6 +62,11 @@ RESERVED_COMMAND_NAMES: frozenset[str] = frozenset(
         "workflows",
     }
 )
+
+
+def mcp_tool_name(server_name: str, tool_name: str) -> str:
+    """Return the LangChain tool name an MCP server's tool is exposed under."""
+    return f"{MCP_TOOL_PREFIX}{server_name}_{tool_name}"
 
 
 def workflow_tool_name(workflow_name: str) -> str:
@@ -157,6 +166,8 @@ __all__ = [
     "RESERVED_COMMAND_NAMES",
     "RESERVED_TOOL_PREFIXES",
     "WORKFLOW_TOOL_PREFIX",
+    "MCP_TOOL_PREFIX",
+    "mcp_tool_name",
     "check_command_name_allowed",
     "check_tool_name_allowed",
     "reject_camel_collisions",

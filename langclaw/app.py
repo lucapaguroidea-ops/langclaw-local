@@ -129,6 +129,9 @@ class Langclaw:
         # pass a ``Callable[[ToolRuntime], BackendProtocol]`` if you need that.
         self._backend = backend
         self._extra_tools: list[Any] = []
+        # Tools loaded from config-declared MCP servers at gateway startup.
+        self._mcp_tools: list[Any] = []
+        self._mcp_servers: list[dict[str, Any]] = []
         self._extra_channels: list[BaseChannel] = []
         self._extra_middleware: list[Any] = []
         self._extra_roles: dict[str, list[str]] = {}
@@ -740,7 +743,7 @@ class Langclaw:
             effective_config,
             checkpointer=checkpointer,
             cron_manager=cron_manager,
-            extra_tools=self._extra_tools or None,
+            extra_tools=[*self._extra_tools, *self._mcp_tools] or None,
             extra_middleware=self._extra_middleware or None,
             subagents=self._subagents or None,
             system_prompt=self._system_prompt,
@@ -1018,6 +1021,13 @@ class Langclaw:
 
                     cron_manager = make_cron_manager(bus=bus, config=cfg.cron)
 
+                # Connect config-declared MCP servers; their tools join the
+                # agent's toolset (fail-soft per server).
+                from langclaw.mcp import load_mcp_tools
+
+                mcp = await load_mcp_tools(cfg)
+                self._mcp_tools, self._mcp_servers = mcp.tools, mcp.servers
+
                 # Build the main agent and capture the spec used so that the
                 # gateway can rebuild it when AGENTS.md changes.
                 checkpointer = checkpointer_backend.get()
@@ -1045,7 +1055,7 @@ class Langclaw:
                     named_agent_specs=self._named_agents or None,
                     agent_backend=self._backend,
                     default_agent_spec={
-                        "extra_tools": self._extra_tools or None,
+                        "extra_tools": [*self._extra_tools, *self._mcp_tools] or None,
                         "extra_middleware": self._extra_middleware or None,
                         "subagents": self._subagents or None,
                         "system_prompt": self._system_prompt,
@@ -1066,6 +1076,7 @@ class Langclaw:
                         if (cfg.workflows.enabled and self._interpreter_active())
                         else None
                     ),
+                    mcp_servers=self._mcp_servers,
                     # The same store backs the control plane's workflow editing.
                     saved_store=(
                         self._saved_workflow_store()

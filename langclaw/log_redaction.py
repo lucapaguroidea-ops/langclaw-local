@@ -65,6 +65,8 @@ def collect_secrets(
         ch.matrix.access_token,
         ch.api.token,
     ]
+    for server in config.mcp.servers.values():
+        candidates += [*server.headers.values(), *server.env.values()]
     secrets = {value for value in candidates if value and len(value) >= _MIN_SECRET_LENGTH}
     return sorted(secrets, key=len, reverse=True)
 

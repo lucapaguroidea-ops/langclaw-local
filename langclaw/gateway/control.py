@@ -69,6 +69,7 @@ class ControlPlane:
             file-authored workflows are unavailable.
         saved_reload_cb: Reconciles saved files into the registry; called after
             every save/delete so changes go live immediately.
+        mcp_servers: Per-server MCP load report (name, transport, tools, error).
     """
 
     def __init__(
@@ -84,6 +85,7 @@ class ControlPlane:
         live_runs: Mapping[str, asyncio.Task] | None = None,
         saved_store: SavedWorkflowStore | None = None,
         saved_reload_cb: Callable[[], bool] | None = None,
+        mcp_servers: Iterable[Mapping[str, Any]] | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -95,6 +97,7 @@ class ControlPlane:
         self._live_runs = live_runs if live_runs is not None else {}
         self._saved_store = saved_store
         self._saved_reload_cb = saved_reload_cb
+        self._mcp_servers = [dict(m) for m in (mcp_servers or [])]
 
     # ------------------------------------------------------------------
     # Status
@@ -115,7 +118,9 @@ class ControlPlane:
                 "run_journal": self._run_store is not None,
                 "schedules": self._cron is not None,
                 "interpreter": bool(self._config.interpreter.enabled),
+                "mcp": bool(self._mcp_servers),
             },
+            "mcp_servers": self._mcp_servers,
         }
 
     # ------------------------------------------------------------------

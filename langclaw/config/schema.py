@@ -780,6 +780,48 @@ def _load_json_defaults() -> dict[str, Any]:
     return {}
 
 
+class McpServerConfig(BaseModel):
+    """One MCP server whose tools the agent gets as ``mcp_<server>_<tool>``.
+
+    Remote servers use ``url`` (+ optional ``headers``); local ones use
+    ``transport="stdio"`` with ``command`` / ``args`` / ``env``.
+    """
+
+    transport: Literal["streamable_http", "sse", "stdio", "websocket"] = "streamable_http"
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class McpConfig(BaseModel):
+    """MCP servers to load at gateway startup (requires ``langclaw[mcp]``).
+
+    Env (JSON)::
+
+        LANGCLAW__MCP__SERVERS='{"docs": {"url": "https://example.com/mcp"}}'
+
+    A server that fails to connect is skipped with a warning; the gateway still
+    starts. Tools are loaded at startup, so changes need a restart.
+    """
+
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_names(self) -> McpConfig:
+        import re
+
+        for name in self.servers:
+            if not re.fullmatch(r"[a-z0-9_]+", name):
+                raise ValueError(
+                    f"Invalid MCP server name {name!r}: use lowercase letters, digits and "
+                    "underscores (it becomes part of tool names: mcp_<server>_<tool>)."
+                )
+        return self
+
+
 class LangclawConfig(BaseSettings):
     """
     Root configuration object. Merges JSON file + env vars.
@@ -822,6 +864,7 @@ class LangclawConfig(BaseSettings):
     agents: AgentConfig = Field(default_factory=AgentConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     interpreter: InterpreterConfig = Field(default_factory=InterpreterConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     workflows: WorkflowsConfig = Field(default_factory=WorkflowsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     checkpointer: CheckpointerConfig = Field(default_factory=CheckpointerConfig)

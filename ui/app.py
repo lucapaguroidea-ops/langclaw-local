@@ -214,6 +214,19 @@ def page_status(lc: LangclawClient) -> None:
     for feature, on in status["features"].items():
         st.write(f"{'✅' if on else '⬜'} {feature}")
 
+    st.subheader("MCP servers")
+    servers = status.get("mcp_servers", [])
+    if not servers:
+        st.caption("None configured. Add them with LANGCLAW__MCP__SERVERS (see the MCP guide).")
+    for server in servers:
+        if server["error"]:
+            st.error(f"**{server['name']}** ({server['transport']}): {server['error']}")
+        else:
+            st.success(
+                f"**{server['name']}** ({server['transport']}): {len(server['tools'])} tools"
+            )
+            st.caption(", ".join(server["tools"]))
+
 
 # -- main ----------------------------------------------------------------------
 
