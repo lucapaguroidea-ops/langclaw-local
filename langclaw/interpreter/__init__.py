@@ -20,6 +20,7 @@ mutating/egress tools require explicit operator opt-in via
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -180,6 +181,16 @@ def build_interpreter_middleware(
             "installed. Install the interpreter extra with: "
             "uv add 'langclaw[interpreter]'"
         ) from exc
+
+    # langchain-quickjs 0.3 reshaped the constructor (``snapshot_between_turns``
+    # became ``mode``); an unpinned install would otherwise crash with a bare
+    # TypeError at gateway startup.
+    if "snapshot_between_turns" not in inspect.signature(CodeInterpreterMiddleware).parameters:
+        raise ImportError(
+            "The installed 'langchain-quickjs' is not compatible with langclaw's "
+            "code interpreter (supported: >=0.1.2,<0.1.3). Reinstall the extra: "
+            "uv add 'langclaw[interpreter]' or pip install 'langchain-quickjs>=0.1.2,<0.1.3'"
+        )
 
     ptc = resolve_ptc_allowlist(
         available_tools,
