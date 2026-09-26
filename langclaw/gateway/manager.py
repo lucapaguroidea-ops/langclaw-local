@@ -96,6 +96,11 @@ class GatewayManager:
         # agents (mirrors the default agent's backend). ``None`` → config-driven.
         self._agent_backend = agent_backend
         self._channels = [ch for ch in channels if ch.is_enabled()]
+        for ch in channels:
+            if not ch.is_enabled():
+                logger.warning(
+                    f"Channel '{ch.name}' is disabled (is_enabled() is False); not starting it."
+                )
         self._cron_manager = cron_manager
         # Workflow-as-message-source (origin="workflow"): the runtime + registry
         # let the gateway run a named workflow directly (bus dispatch / cron),
