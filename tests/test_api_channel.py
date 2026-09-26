@@ -259,3 +259,19 @@ async def test_without_control_plane_management_is_503() -> None:
         assert resp.status == 503
     finally:
         await client.close()
+
+
+async def test_history_endpoint_uses_api_identity() -> None:
+    channel = ApiChannel(ApiChannelConfig(enabled=True, token=TOKEN, user_id="admin"))
+    plane = MagicMock()
+    plane.history = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
+    channel.set_control_plane(plane)
+    client = TestClient(TestServer(channel.build_app()))
+    await client.start_server()
+    try:
+        resp = await client.get("/v1/history?context_id=web", headers=AUTH)
+        assert resp.status == 200
+        assert (await resp.json())["messages"] == [{"role": "user", "content": "hi"}]
+        plane.history.assert_awaited_once_with("api", "admin", "web")
+    finally:
+        await client.close()

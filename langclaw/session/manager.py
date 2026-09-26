@@ -14,10 +14,14 @@ across messages from the same user in the same context.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from typing import Any
 
 from loguru import logger
+
+# Namespace for deterministic thread ids (uuid5 of the conversation key).
+_THREAD_NAMESPACE = uuid.UUID("6f1c3b2e-6a4d-5c8e-9b0a-1d2e3f4a5b6c")
 
 
 class SessionManager:
@@ -31,7 +35,10 @@ class SessionManager:
     the interface stays identical.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, checkpointer: Any | None = None) -> None:
+        # Optional LangGraph saver; when set, /reset deletes the thread's
+        # checkpoints so the (stable) thread id starts empty again.
+        self._checkpointer = checkpointer
         self._store: dict[str, str] = {}
         self._active_agent_store: dict[str, str] = {}
         self._lock = asyncio.Lock()
@@ -49,8 +56,10 @@ class SessionManager:
         key = self._make_key(channel, user_id, context_id)
         async with self._lock:
             if key not in self._store:
-                self._store[key] = str(uuid.uuid4())
-                logger.info(f"Created new thread {self._store[key]} for {key}")
+                # Deterministic: the same conversation maps to the same thread
+                # after a restart, so its checkpointed history is found again.
+                self._store[key] = str(uuid.uuid5(_THREAD_NAMESPACE, key))
+                logger.info(f"Using thread {self._store[key]} for {key}")
             return self._store[key]
 
     async def delete_thread(
@@ -60,12 +69,22 @@ class SessionManager:
         context_id: str = "default",
     ) -> bool:
         """
-        Remove the thread mapping (e.g. on /reset). Returns True if it existed.
-        Note: this does NOT delete the checkpoint from LangGraph storage.
+        Reset a conversation (e.g. on /reset). Returns True if it existed.
+
+        Thread ids are deterministic, so forgetting the mapping alone would
+        resume the same thread; with a checkpointer attached the thread's
+        checkpoints are deleted so the next message starts fresh.
         """
         key = self._make_key(channel, user_id, context_id)
+        thread_id = str(uuid.uuid5(_THREAD_NAMESPACE, key))
         async with self._lock:
-            return self._store.pop(key, None) is not None
+            existed = self._store.pop(key, None) is not None
+        if self._checkpointer is not None:
+            result = self._checkpointer.adelete_thread(thread_id)
+            if inspect.isawaitable(result):
+                await result
+            return True
+        return existed
 
     def make_runnable_config(
         self,

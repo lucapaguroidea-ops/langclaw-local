@@ -78,16 +78,13 @@ def page_chat(lc: LangclawClient) -> None:
     if st.sidebar.button("New conversation"):
         context = f"web-{uuid.uuid4().hex[:6]}"
     try:
-        history = lc.turns(context)
+        history = lc.history(context)
     except LangclawError as exc:
         st.error(str(exc))
         return
-    for turn in history:
-        if turn.get("content"):
-            with st.chat_message("user"):
-                st.markdown(turn["content"])
-        with st.chat_message("assistant"):
-            _show_turn(turn)
+    for message in history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
     if prompt := st.chat_input("Message langclaw (or /help)"):
         with st.chat_message("user"):
             st.markdown(prompt)
