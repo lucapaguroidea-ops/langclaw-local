@@ -552,7 +552,7 @@ async def test_bank_import_marks_invoices_paid_once(acme) -> None:
         ok = await tools["bank_confirm_match"].ainvoke(
             {"movement_key": open_[0]["key"], "bucket_key": target}
         )
-        assert ok == {"paid": target, "movement": open_[0]["key"]}
+        assert ok == {"paid": target, "movement": open_[0]["key"], "left": "0.00"}
         assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
         facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
         closing = 1000 + float(sale["amount"]) - float(purchase["amount"])
@@ -637,3 +637,45 @@ async def test_the_monthly_loop_runs_end_to_end(acme) -> None:
     assert queued and all(m.metadata["tenant"] == "acme" for m in bus.published)
     done = await runner.resume(spec, "month:1", {"action": "approve", "by": "luca"})
     assert done.status == "completed"
+
+
+def _mt940(*lines: tuple[str, float, str]) -> bytes:
+    """A statement with (C|D, amount, description) movements, opening 1000."""
+    body, total = "", 1000.0
+    for i, (side, amount, desc) in enumerate(lines):
+        total += amount if side == "C" else -amount
+        body += f":61:260915091{i}{side}{amount:.2f}NTRFNONREF//P{i}\n:86:{desc}\n".replace(
+            f"{amount:.2f}", f"{amount:.2f}".replace(".", ",")
+        )
+    return (
+        ":20:ST2\n:25:RO49AAAA1B31007593840000\n:28C:2/1\n:60F:C260901RON1000,00\n"
+        + body
+        + f":62F:C260930RON{total:.2f}\n".replace(".", ",")
+    ).encode()
+
+
+@needs_pg
+async def test_partial_payments_add_up_until_the_invoice_is_paid(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    number, gross = sale["fields"]["invoice_number"], float(sale["amount"])
+    first = round(gross * 0.4, 2)
+    await scoped.bucket.put("bank/p1.sta", _mt940(("C", first, f"avans {number}")))
+    await scoped.bucket.put("bank/p2.sta", _mt940(("C", round(gross - first, 2), f"rest {number}")))
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        one = await tools["bank_import"].ainvoke({"key": "bank/p1.sta"})
+        assert [m["kind"] for m in one["partial"]] == ["partial"]
+        f = (await scoped.store.get(sale["bucket_key"]))["fields"]
+        assert f["paid_amount"] == f"{first:.2f}" and not f.get("paid_on")
+        facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
+        two = await tools["bank_import"].ainvoke({"key": "bank/p2.sta"})
+        assert [m["bucket_key"] for m in two["paid"]] == [sale["bucket_key"]]
+        f = (await scoped.store.get(sale["bucket_key"]))["fields"]
+        assert f["paid_on"] == "2026-09-15" and len(f["payments"]) == 2
+        assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
+    assert facts["cash"]["receivables"]["total"] != "0.00"

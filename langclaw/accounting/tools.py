@@ -27,7 +27,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from langclaw.accounting.bank.match import match_payments
+from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.checks import check_proposal
@@ -460,10 +460,22 @@ def build_accounting_tools(
             if not (r.get("fields") or {}).get("paid_on")
         ]
 
-    async def _mark_paid(svc: DocumentServices, bucket_key: str, tx: dict[str, Any]) -> None:
-        paid = {"paid_on": str(tx["booked"]), "payment_ref": tx.get("reference", ""),
-                "payment_tx": tx["key"]}  # fmt: skip
-        await svc.store.save(bucket_key, {"fields": paid})
+    async def _apply_payment(
+        svc: DocumentServices, bucket_key: str, amount: Decimal, tx: dict[str, Any]
+    ) -> None:
+        """Add *amount* from movement *tx* to the invoice's payments; ``paid_on`` is
+        set once nothing is left to pay."""
+        row = await svc.store.get(bucket_key) or {}
+        f = row.get("fields") or {}
+        payments = [p for p in f.get("payments") or [] if p.get("tx") != tx["key"]]
+        payments.append({"tx": tx["key"], "date": str(tx["booked"]), "amount": str(amount),
+                         "reference": tx.get("reference", "")})  # fmt: skip
+        paid = sum((Decimal(p["amount"]) for p in payments), Decimal(0))
+        values: dict[str, Any] = {"payments": payments, "paid_amount": str(paid)}
+        if outstanding({**row, "fields": {**f, "paid_amount": paid}}) <= 0:
+            values.update(paid_on=str(tx["booked"]), payment_ref=tx.get("reference", ""),
+                          payment_tx=tx["key"])  # fmt: skip
+        await svc.store.save(bucket_key, {"fields": values})
 
     async def bank_import(key: str) -> dict:
         """Import a bank statement (MT940 or CAMT.053) from the client's bucket and
@@ -508,14 +520,15 @@ def build_accounting_tools(
             matches = match_payments(fresh, await _open_invoices(svc))
             by_key = {t.key: t for t in fresh}
             for m in matches:
-                await book.set_match(m["key"], m["bucket_key"], m["kind"], m["because"])
-                if m["kind"] == "certain":
+                keys = ",".join(a["bucket_key"] for a in m["allocations"])
+                await book.set_match(m["key"], keys, m["kind"], m["because"])
+                if m["kind"] in ("certain", "partial"):
                     t = by_key[m["key"]]
-                    await _mark_paid(
-                        svc,
-                        m["bucket_key"],
-                        {"key": t.key, "booked": t.booked, "reference": t.reference},
-                    )
+                    for a in m["allocations"]:
+                        await _apply_payment(
+                            svc, a["bucket_key"], Decimal(a["amount"]),
+                            {"key": t.key, "booked": t.booked, "reference": t.reference},
+                        )  # fmt: skip
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {
@@ -526,6 +539,7 @@ def build_accounting_tools(
             "imported": len(new),
             "already_imported": len(statement.transactions) - len(new),
             "paid": [m for m in matches if m["kind"] == "certain"],
+            "partial": [m for m in matches if m["kind"] == "partial"],
             "to_confirm": [m for m in matches if m["kind"] == "probable"],
             "unmatched": len(fresh) - len(matches),
         }
@@ -546,7 +560,8 @@ def build_accounting_tools(
         return {"movements": rows}
 
     async def bank_confirm_match(movement_key: str, bucket_key: str) -> dict:
-        """Confirm that a bank movement pays an invoice (marks the invoice paid).
+        """Confirm that a bank movement pays an invoice, fully or in part (the
+        invoice is marked paid once nothing is left to pay).
 
         Args:
             movement_key: The movement's key (from bank_import or bank_movements).
@@ -559,15 +574,17 @@ def build_accounting_tools(
             if tx is None:
                 return {"error": f"No bank movement {movement_key!r}."}
             _, row = await _invoice(bucket_key)
-            if Decimal(str(row.get("amount") or 0)).quantize(Decimal("0.01")) != abs(tx["amount"]):
-                return {
-                    "error": f"The movement is {tx['amount']}, the invoice {row.get('amount')}."
-                }
-            await book.set_match(movement_key, bucket_key, "certain", "confirmed")
-            await _mark_paid(svc, bucket_key, tx)
+            amount, left = abs(tx["amount"]), outstanding(row)
+            if amount > left:
+                return {"error": f"The movement is {tx['amount']}, but only {left} is left "
+                                 f"to pay on {bucket_key}."}  # fmt: skip
+            kind = "certain" if amount == left else "partial"
+            await book.set_match(movement_key, bucket_key, kind, "confirmed")
+            await _apply_payment(svc, bucket_key, amount, tx)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"paid": bucket_key, "movement": movement_key}
+        return {"paid" if kind == "certain" else "partly_paid": bucket_key,
+                "movement": movement_key, "left": str(left - amount)}  # fmt: skip
 
     fns = [
         accounting_context,

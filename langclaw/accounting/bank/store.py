@@ -79,9 +79,10 @@ class BankBook:
         return bool(done)
 
     async def list(self, *, unmatched_only: bool = False, limit: int = 50) -> list[dict]:
-        """Movements, newest first; *unmatched_only* keeps those without a certain match."""
+        """Movements, newest first; *unmatched_only* keeps those not yet applied to an
+        invoice (unmatched or only probable)."""
         pool = await self._db()
-        where = "WHERE match_kind <> 'certain'" if unmatched_only else ""
+        where = "WHERE match_kind NOT IN ('certain', 'partial')" if unmatched_only else ""
         rows = await pool.fetch(
             f"SELECT * FROM {self._schema}.bank_transactions {where} "
             "ORDER BY booked DESC, key LIMIT $1",

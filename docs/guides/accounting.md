@@ -83,16 +83,27 @@ exported from the bank) and call `bank_import(key)`:
    balances don't add up, it's filed as `needs_review`.
 2. Movements go to `bank_transactions` in the client's schema. Each has a stable
    key, so importing the same file twice adds nothing.
-3. Each new movement is matched to an open invoice:
-   - Money in only pays sales invoices, and money out only pays purchases.
-   - The amount must equal the invoice total.
-   - The amount plus one more signal is a **certain** match. The signal is the
-     invoice number in the description, the supplier's IBAN, or the partner's
-     name. The invoice gets `paid_on` / `payment_ref` / `payment_tx`.
-   - The amount alone, with only one candidate invoice, is **probable**. It's
-     listed under `to_confirm` for a person to confirm with
-     `bank_confirm_match(movement_key, bucket_key)`.
-   - With several candidates, nothing is matched.
+3. Each new movement is matched against open invoices by their **outstanding**
+   amount (total minus what's already paid). Money in pays sales, money out
+   pays purchases. The rules are tried in this order:
+   1. **One invoice, certain.** The amount matches and there's a second
+      signal: the invoice number in the description, the supplier's IBAN, or
+      the partner's name.
+   2. **Several invoices, certain.** Every invoice is named in the description
+      and their amounts add up to the payment.
+   3. **Several invoices, certain.** Exactly one combination of the partner's
+      open invoices adds up (up to 12 invoices searched). If more than one
+      combination fits, nothing is matched.
+   4. **Partial.** One invoice is named in the description and it's worth more
+      than the payment. The payment goes to that invoice.
+   5. **Probable.** The amount alone matches a single invoice. It goes under
+      `to_confirm` for a person to check with
+      `bank_confirm_match(movement_key, bucket_key)`, which also accepts a
+      partial amount.
+
+   Applied payments are recorded on the invoice as `payments` (list),
+   `paid_amount`, and, once nothing is left to pay, `paid_on` / `payment_ref` /
+   `payment_tx`. Cash aging counts only what's still outstanding.
 
 `bank_movements(unmatched_only=True)` lists what's still open.
 
@@ -206,6 +217,6 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   line that carries 0% needs the rate filled in before it adds up.
 - Cash figures are only as complete as the imported statements and the
   invoices' due dates; an invoice without a due date counts as not due.
-- Bank matching is one movement to one invoice. Partial payments, one payment
-  for several invoices, and FX movements stay with the accountant
-  (`bank_movements`).
+- Bank matching doesn't handle foreign-currency movements, fees netted out of a
+  payment, or partial payments that don't name the invoice. Those stay in
+  `bank_movements` for the accountant.
