@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
-from langclaw.accounting.period import blockers, parse_period, trial_balance, vat_summary
+from langclaw.accounting.period import (
+    blockers,
+    document_state,
+    parse_period,
+    trial_balance,
+    vat_summary,
+)
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
@@ -294,12 +300,16 @@ def build_accounting_tools(
                 doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
             )
         ]
+        month = await svc.store.search(
+            date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+        )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
         closed = {p["period"]: p for p in await journal.closed_periods()}
         report = {
             "period": period,
             "closed": closed.get(period),
             "blockers": blockers(docs),
+            "documents": document_state(month, _profile().get("expected_documents")),
             "trial_balance": trial_balance(await journal.lines_between(start, end)),
             "vat": vat_summary(booked),
             "invoices": len(docs),
@@ -309,7 +319,8 @@ def build_accounting_tools(
         return svc, json.loads(json.dumps(report, default=str))
 
     async def accounting_period_report(period: str) -> dict:
-        """A month's close report: trial balance, VAT summary (D300 draft), blockers.
+        """A month's close report: trial balance, VAT summary (D300 draft), blockers,
+        and which expected documents (client profile ``expected_documents``) are in.
 
         Args:
             period: The month, as YYYY-MM.
@@ -321,7 +332,8 @@ def build_accounting_tools(
         return report
 
     async def accounting_period_close(period: str, closed_by: str = "") -> dict:
-        """Close a month: refused while invoices lack an entry; afterwards nothing
+        """Close a month: refused while invoices lack an entry or expected documents
+        are missing; afterwards nothing
         can be posted with a date in it. Saves the report in the client's bucket.
 
         Args:
@@ -337,6 +349,10 @@ def build_accounting_tools(
                     "error": f"{len(report['blockers'])} invoice(s) in {period} have no entry yet.",
                     "blockers": report["blockers"],
                 }
+            if missing := report["documents"]["missing"]:
+                labels = ", ".join(m["label"] for m in missing)
+                return {"error": f"Expected documents missing for {period}: {labels}.",
+                        "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
             key = f"reports/{period}/close.json"

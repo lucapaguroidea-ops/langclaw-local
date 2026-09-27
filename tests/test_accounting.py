@@ -433,3 +433,38 @@ async def test_closing_a_period_needs_every_invoice_booked_then_locks_it(acme) -
         )
         assert "is closed" in posted["error"]
         assert await Journal(scoped.store).get("late.xml") is None
+
+
+@needs_pg
+async def test_a_month_does_not_close_without_its_expected_documents(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(
+        id="acme",
+        name="ACME",
+        tax_id="RO12345678",
+        profile={"vat_payer": True, "expected_documents": [{"doc_type": "bank_statement",
+                                                           "label": "Extras BT"}]},
+    )  # fmt: skip
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = str(rows[0]["document_date"])[:7]
+    with tenant_scope(client):
+        for row in rows:
+            if str(row["document_date"]).startswith(period):
+                await tools["journal_post"].ainvoke(
+                    {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+                )
+        report = await tools["accounting_period_report"].ainvoke({"period": period})
+        assert report["documents"]["missing"] == [{"doc_type": "bank_statement",
+                                                   "label": "Extras BT"}]  # fmt: skip
+        refused = await tools["accounting_period_close"].ainvoke({"period": period})
+        assert "Extras BT" in refused["error"]
+
+        await scoped.store.save(
+            "bank/bt-09.pdf", {"doc_type": "bank_statement", "document_date": f"{period}-28"}
+        )
+        closed = await tools["accounting_period_close"].ainvoke({"period": period})
+        assert closed["closed"] == period

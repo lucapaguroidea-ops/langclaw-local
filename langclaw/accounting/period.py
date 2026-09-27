@@ -118,3 +118,35 @@ def blockers(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for d in documents
         if d.get("doc_type") in INVOICE_TYPES and d.get("status") not in BOOKED
     ]
+
+
+def document_state(documents: list[dict[str, Any]], expected: list[Any] | None) -> dict[str, Any]:
+    """Which of the client's expected monthly documents are in, and what's unreviewed.
+
+    Args:
+        documents: The month's ``documents`` rows (any type).
+        expected: The client profile's ``expected_documents`` — doc types, or
+            ``{"doc_type", "label"?}`` objects (e.g. ``bank_statement``, ``payroll``).
+
+    Raises:
+        ValueError: an ``expected_documents`` entry has no doc type.
+    """
+    wanted = []
+    for item in expected or []:
+        spec = {"doc_type": item} if isinstance(item, str) else dict(item)
+        if not spec.get("doc_type"):
+            raise ValueError(f"expected_documents entry {item!r} needs a doc_type.")
+        wanted.append(
+            {"doc_type": spec["doc_type"], "label": spec.get("label") or spec["doc_type"]}
+        )
+    state = []
+    for spec in wanted:
+        keys = [d["bucket_key"] for d in documents if d.get("doc_type") == spec["doc_type"]]
+        state.append({**spec, "count": len(keys), "keys": keys})
+    return {
+        "expected": state,
+        "missing": [
+            {"doc_type": s["doc_type"], "label": s["label"]} for s in state if not s["count"]
+        ],
+        "needs_review": [d["bucket_key"] for d in documents if d.get("status") == "needs_review"],
+    }

@@ -15,7 +15,7 @@ Then add clients on the console's **Clients** page (or `PUT /v1/tenants/{id}`):
 | `name`, `tax_id` | Display name and fiscal code (CUI). |
 | `chats` | The chats that belong to this client, as `channel:chat_id` — e.g. `telegram:-1001234567890` for the client's Telegram group. A chat belongs to **one** client at most. |
 | `review_chat` | Where this client's review requests also go. |
-| `profile` | Company context (VAT payer, VAT on collection, tax regime, CAEN, anything else) for workflows to ground decisions in. |
+| `profile` | Company context (VAT payer, VAT on collection, tax regime, CAEN, `expected_documents` for the month-close checklist, anything else) for workflows to ground decisions in. |
 
 ## How the separation works
 
