@@ -780,6 +780,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#partner-statements-and-balances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partner statements and balances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#payment-reminders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Payment reminders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results-and-income-tax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results and income tax
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-monthly-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1412,6 +1445,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#partner-statements-and-balances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partner statements and balances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#payment-reminders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Payment reminders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results-and-income-tax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results and income tax
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-monthly-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1605,9 +1671,29 @@ so proposals get more consistent as the accountant approves them.</p>
   a type counts as present when any document of that <code>doc_type</code> is dated in the
   month. Also lists the month's documents still marked <code>needs_review</code>.</p>
 </li>
+<li>
+<p><strong>vat_settlement</strong> — a preview of the month's VAT settlement entry, for VAT
+  payers (monthly, or at quarter end with <code>"vat_period": "quarterly"</code>). The
+  balances of 4426 and 4427 up to the month's last day are cleared into
+  4423 (payable) or 4424 (refundable):
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
+  collection, where the 4428 → 4427 transfer depends on payments and stays
+  with the accountant.</p>
+</li>
+<li>
+<p><strong>depreciation</strong> — the month's depreciation entry for the client's fixed
+  assets, previewed here and posted at close: D 6811 / C the
+  accumulated-depreciation account of each asset (2131 → 2813, 214 → 2814,
+  205 → 2805). Register assets with
+  <code>assets_add(name, account, value, in_service, life_months)</code>; <code>assets_list(period)</code>
+  shows this month's amounts. Depreciation is linear. It starts the month after
+  the asset goes into service, is <code>value / life_months</code> rounded to the ban, and
+  the last month takes the rounding.</p>
+</li>
 </ul>
 <p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers,
-expected documents are missing, or the balance is off; otherwise it saves the report to
+expected documents are missing, or the balance is off. Otherwise it posts the
+depreciation and the VAT settlement, dated the last day of the month, and saves the report to
 <code>reports/&lt;period&gt;/close.json</code> in the client's bucket and <strong>locks</strong> the month:
 <code>journal_post</code> refuses any entry dated in it (<code>closed_periods</code> table in the
 client's schema). There's no reopen tool yet — reopening is a database change
@@ -1690,6 +1776,53 @@ it, has the model write advice that must cite these facts, and pauses for a
 person to approve or edit it before it reaches the client. The limits live in
 <code>langclaw/accounting/outlook.py:LIMITS</code> — reference data for your accountant
 to review, like the VAT table.</p>
+<h2 id="partner-statements-and-balances">Partner statements and balances<a class="headerlink" href="#partner-statements-and-balances" title="Permanent link">&para;</a></h2>
+<p>Invoices and payments both carry the partner's tax ID into the journal, so:</p>
+<ul>
+<li><code>partner_statement(partner_cui, date_from, date_to)</code> returns the partner's
+  statement (fișa partenerului). It has the opening balance, every movement on
+  the partner accounts (401/404/408, 411/4111/418) with a running balance, and
+  the closing balance. The balance is debit − credit, so a positive balance
+  means the partner owes the client.</li>
+<li><code>partner_balances(day)</code> returns every partner with an open balance on a day:
+  what customers owe (41x) and what the client owes suppliers (40x). This is
+  the list to send balance confirmations from.</li>
+</ul>
+<p>Entries booked by hand without a partner tax ID don't appear here.</p>
+<h2 id="payment-reminders">Payment reminders<a class="headerlink" href="#payment-reminders" title="Permanent link">&para;</a></h2>
+<p><code>receivables_overdue(day, min_days=7)</code> lists the client's customers with unpaid
+sales invoices past due by at least <code>min_days</code>, largest first. Each customer
+comes with its invoices, their due dates, days overdue, and what's left to pay
+after partial payments.</p>
+<p>The <strong>payment_reminders</strong> template (<code>ui/templates/payment_reminders.graph.json</code>)
+works like this:</p>
+<ol>
+<li>It runs <code>receivables_overdue</code>.</li>
+<li>The model drafts one reminder per customer, in Romanian. Each reminder cites
+   exactly those invoices, and the tone gets firmer with the delay.</li>
+<li>The run pauses for a person to approve or edit the drafts.</li>
+</ol>
+<p>The approved drafts are the output. Nothing is sent automatically, because
+there's no email channel yet. Send them from the chat, or copy them into your
+mail client.</p>
+<h2 id="results-and-income-tax">Results and income tax<a class="headerlink" href="#results-and-income-tax" title="Permanent link">&para;</a></h2>
+<p><code>accounting_results(period)</code> computes the profit and loss for the month and the
+year to date from the journal:</p>
+<ul>
+<li><strong>Revenue:</strong> class 7, so 709 discounts reduce it.</li>
+<li><strong>Expenses:</strong> class 6, without the income-tax accounts 691/697/698.</li>
+<li><strong>Result:</strong> revenue minus expenses, plus the income tax already booked.</li>
+</ul>
+<p>It also returns an <strong>income-tax estimate</strong> for the year so far:</p>
+<ul>
+<li><strong>Micro-enterprise</strong> (<code>"tax_regime": "micro"</code>): revenue × <code>micro_rate</code> (1% by
+  default; set 3% on the profile when it applies).</li>
+<li><strong>Profit tax:</strong> 16% of a positive result.</li>
+</ul>
+<p>It's a planning figure only. Non-deductible expenses, loss carry-forward,
+sponsorship credits and micro revenue exclusions stay with the accountant.</p>
+<p><code>accounting_outlook</code> includes it as <code>results_ytd</code>, so the monthly advice can talk
+about the year's result and the tax to set aside.</p>
 <h2 id="the-monthly-loop">The monthly loop<a class="headerlink" href="#the-monthly-loop" title="Permanent link">&para;</a></h2>
 <p>The <strong>accounting_month</strong> template (<code>ui/templates/accounting_month.graph.json</code>)
 does a client's month in one run:</p>
@@ -1723,6 +1856,9 @@ again, or open the console's Client overview, once they're reviewed.</p>
 <li><strong>Close tab:</strong> the VAT position, the expected documents and the trial balance.</li>
 <li><strong>Outlook tab:</strong> deadlines, limits, the bank balance, the 30-day projection
   and aging.</li>
+<li><strong>Results tab:</strong> the month's and the year-to-date profit and loss, plus the
+  income-tax estimate.</li>
+<li><strong>Partners tab:</strong> open partner balances on the month's last day.</li>
 <li><strong>Bank tab:</strong> the open movements.</li>
 </ul>
 <p>The page is read-only. Posting, closing a month and confirming a match happen
@@ -1764,6 +1900,9 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
 <li>Bank matching doesn't handle foreign-currency movements, fees netted out of a
   payment, or partial payments that don't name the invoice. Those stay in
   <code>bank_movements</code> for the accountant.</li>
+<li>Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
+  accelerated methods, and assets bought in a closed month stay with the
+  accountant.</li>
 </ul>
 
 
