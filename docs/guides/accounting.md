@@ -72,6 +72,30 @@ on purpose.
 These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration file (DUKIntegrator) is a later slice.
 
+## Bank statements and payments
+
+Put a statement in the client's bucket (MT940 `.sta`/`.txt` or CAMT.053 `.xml`, as
+exported from the bank) and call `bank_import(key)`:
+
+1. It parses the statement — no model involved — and checks that opening +
+   movements = closing. The statement is filed as a `bank_statement` document,
+   dated its last day, so it satisfies `expected_documents` at month close. If the
+   balances don't add up, it's filed as `needs_review`.
+2. Movements go to `bank_transactions` in the client's schema. Each has a stable
+   key, so importing the same file twice adds nothing.
+3. Each new movement is matched to an open invoice:
+   - Money in only pays sales invoices, and money out only pays purchases.
+   - The amount must equal the invoice total.
+   - The amount plus one more signal is a **certain** match. The signal is the
+     invoice number in the description, the supplier's IBAN, or the partner's
+     name. The invoice gets `paid_on` / `payment_ref` / `payment_tx`.
+   - The amount alone, with only one candidate invoice, is **probable**. It's
+     listed under `to_confirm` for a person to confirm with
+     `bank_confirm_match(movement_key, bucket_key)`.
+   - With several candidates, nothing is matched.
+
+`bank_movements(unmatched_only=True)` lists what's still open.
+
 ## Advice: what's coming
 
 `accounting_outlook(period, months=6)` computes, for one client, the facts to
@@ -131,3 +155,6 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   line that carries 0% needs the rate filled in before it adds up.
 - Advice covers deadlines, regime limits and the VAT trend only — cash flow,
   payments and profit forecasts need bank data that isn't imported yet.
+- Bank matching is one movement to one invoice. Partial payments, one payment
+  for several invoices, and FX movements stay with the accountant
+  (`bank_movements`).

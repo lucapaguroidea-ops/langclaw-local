@@ -12,6 +12,8 @@ Accounting tools — the steps of the ``accounting_proposal`` workflow.
   balance, VAT summary (D300 draft figures) and blockers; closing locks it.
 - ``accounting_outlook``: facts for forward-looking advice (deadlines, regime
   thresholds, VAT trend) — the ``monthly_advice`` template turns them into advice.
+- ``bank_import`` / ``bank_movements`` / ``bank_confirm_match``: bank statements
+  (MT940 / CAMT.053) from the client's bucket, matched to the invoices they pay.
 - ``accounting_export``: exports posted invoices to accounting software (SAGA
   import zip in the client's bucket under ``exports/<target>/``).
 
@@ -25,6 +27,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from langclaw.accounting.bank.match import match_payments
+from langclaw.accounting.bank.parse import BankStatementError, parse_statement
+from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
@@ -47,7 +52,14 @@ if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus
     from langclaw.documents.tools import DocumentServices
 
-_ERRORS = (BucketError, DocumentStoreError, JournalError, ExportUnavailable, ValueError)
+_ERRORS = (
+    BankStatementError,
+    BucketError,
+    DocumentStoreError,
+    JournalError,
+    ExportUnavailable,
+    ValueError,
+)
 _INVOICE_TYPES = ("invoice", "credit_note")
 
 
@@ -424,6 +436,123 @@ def build_accounting_tools(
             facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
         return json.loads(json.dumps(facts, default=str))
 
+    async def _open_invoices(svc: DocumentServices) -> list[dict[str, Any]]:
+        return [
+            r
+            for status in ("filed", "posted", "exported")
+            for r in await svc.store.search(doc_type="invoice", status=status, limit=200)
+            if not (r.get("fields") or {}).get("paid_on")
+        ]
+
+    async def _mark_paid(svc: DocumentServices, bucket_key: str, tx: dict[str, Any]) -> None:
+        paid = {"paid_on": str(tx["booked"]), "payment_ref": tx.get("reference", ""),
+                "payment_tx": tx["key"]}  # fmt: skip
+        await svc.store.save(bucket_key, {"fields": paid})
+
+    async def bank_import(key: str) -> dict:
+        """Import a bank statement (MT940 or CAMT.053) from the client's bucket and
+        match its movements to the invoices they pay. Safe to run twice.
+
+        Certain matches (amount plus invoice number, IBAN or partner name) mark the
+        invoice paid; probable ones (amount only) are listed to confirm with
+        bank_confirm_match.
+
+        Args:
+            key: The statement file's key in the bucket.
+        """
+        try:
+            svc = services.current()
+            data, _ = await svc.bucket.get(key)
+            statement = parse_statement(data)
+            problems = statement.check()
+            await svc.store.save(
+                key,
+                {
+                    "doc_type": "bank_statement",
+                    "document_date": statement.date_to or None,
+                    "amount": statement.closing,
+                    "currency": statement.currency,
+                    "summary": (
+                        f"Bank statement {statement.iban} {statement.date_from} – "
+                        f"{statement.date_to}: {statement.opening} → {statement.closing} "
+                        f"{statement.currency}, {len(statement.transactions)} movements."
+                    ),
+                    "status": "needs_review" if problems else "filed",
+                    "fields": {
+                        "source": "bank", "format": statement.format, "iban": statement.iban,
+                        "date_from": statement.date_from, "date_to": statement.date_to,
+                        "opening": str(statement.opening), "closing": str(statement.closing),
+                        "movements": len(statement.transactions), "problems": problems,
+                    },
+                },
+            )  # fmt: skip
+            book = BankBook(svc.store)
+            new = await book.add(key, statement.iban, statement.transactions)
+            fresh = [t for t in statement.transactions if t.key in new]
+            matches = match_payments(fresh, await _open_invoices(svc))
+            by_key = {t.key: t for t in fresh}
+            for m in matches:
+                await book.set_match(m["key"], m["bucket_key"], m["kind"], m["because"])
+                if m["kind"] == "certain":
+                    t = by_key[m["key"]]
+                    await _mark_paid(
+                        svc,
+                        m["bucket_key"],
+                        {"key": t.key, "booked": t.booked, "reference": t.reference},
+                    )
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {
+            "statement": key,
+            "iban": statement.iban,
+            "period": [statement.date_from, statement.date_to],
+            "problems": problems,
+            "imported": len(new),
+            "already_imported": len(statement.transactions) - len(new),
+            "paid": [m for m in matches if m["kind"] == "certain"],
+            "to_confirm": [m for m in matches if m["kind"] == "probable"],
+            "unmatched": len(fresh) - len(matches),
+        }
+
+    async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:
+        """The client's imported bank movements, newest first.
+
+        Args:
+            unmatched_only: Only movements without a certain match to an invoice.
+            limit: Maximum movements (1-500).
+        """
+        try:
+            rows = await BankBook(services.current().store).list(
+                unmatched_only=unmatched_only, limit=limit
+            )
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"movements": rows}
+
+    async def bank_confirm_match(movement_key: str, bucket_key: str) -> dict:
+        """Confirm that a bank movement pays an invoice (marks the invoice paid).
+
+        Args:
+            movement_key: The movement's key (from bank_import or bank_movements).
+            bucket_key: The invoice's key.
+        """
+        try:
+            svc = services.current()
+            book = BankBook(svc.store)
+            tx = await book.get(movement_key)
+            if tx is None:
+                return {"error": f"No bank movement {movement_key!r}."}
+            _, row = await _invoice(bucket_key)
+            if Decimal(str(row.get("amount") or 0)).quantize(Decimal("0.01")) != abs(tx["amount"]):
+                return {
+                    "error": f"The movement is {tx['amount']}, the invoice {row.get('amount')}."
+                }
+            await book.set_match(movement_key, bucket_key, "certain", "confirmed")
+            await _mark_paid(svc, bucket_key, tx)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"paid": bucket_key, "movement": movement_key}
+
     fns = [
         accounting_context,
         accounting_check,
@@ -433,6 +562,9 @@ def build_accounting_tools(
         accounting_period_report,
         accounting_period_close,
         accounting_outlook,
+        bank_import,
+        bank_movements,
+        bank_confirm_match,
     ]
     if bus is not None:
         fns.append(accounting_queue)

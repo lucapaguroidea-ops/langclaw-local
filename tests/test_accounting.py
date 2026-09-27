@@ -498,3 +498,55 @@ async def test_outlook_facts_come_from_the_books(acme) -> None:
     )
     assert round(float(facts["revenue_ytd"]), 2) == round(sales, 2)
     assert facts["unbooked_invoices"] == 0
+
+
+def _mt940_paying(sale: dict[str, Any], purchase: dict[str, Any]) -> bytes:
+    def amt(x: Any) -> str:
+        return f"{float(x):.2f}".replace(".", ",")
+
+    closing = 1000 + float(sale["amount"]) - float(purchase["amount"])
+    return (
+        ":20:ST1\n:25:RO49AAAA1B31007593840000\n:28C:1/1\n:60F:C260901RON1000,00\n"
+        f":61:2609150915C{amt(sale['amount'])}NTRFNONREF//IN1\n"
+        f":86:Incasare {sale['fields']['invoice_number']}\n"
+        f":61:2609200920D{amt(purchase['amount'])}NTRFNONREF//OUT1\n"
+        ":86:Plata servicii\n"
+        f":62F:C260930RON{amt(closing)}\n"
+    ).encode()
+
+
+@needs_pg
+async def test_bank_import_marks_invoices_paid_once(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678")
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    purchase = next(r for r in rows if r["fields"]["direction"] == "in")
+    await scoped.bucket.put("bank/bt-2026-09.sta", _mt940_paying(sale, purchase))
+    with tenant_scope(client):
+        out = await tools["bank_import"].ainvoke({"key": "bank/bt-2026-09.sta"})
+        assert out["problems"] == [] and out["imported"] == 2
+        assert [m["bucket_key"] for m in out["paid"]] == [sale["bucket_key"]]
+        assert (await scoped.store.get(sale["bucket_key"]))["fields"]["paid_on"] == "2026-09-15"
+        statement = await scoped.store.get("bank/bt-2026-09.sta")
+        assert statement["doc_type"] == "bank_statement" and statement["status"] == "filed"
+
+        again = await tools["bank_import"].ainvoke({"key": "bank/bt-2026-09.sta"})
+        assert again["imported"] == 0 and again["already_imported"] == 2
+
+        open_ = (await tools["bank_movements"].ainvoke({}))["movements"]
+        assert [m["reference"] for m in open_] == ["OUT1"]
+        wrong = await tools["bank_confirm_match"].ainvoke(
+            {"movement_key": open_[0]["key"], "bucket_key": sale["bucket_key"]}
+        )
+        assert "error" in wrong
+        target = next((m["bucket_key"] for m in out["to_confirm"]), purchase["bucket_key"])
+        ok = await tools["bank_confirm_match"].ainvoke(
+            {"movement_key": open_[0]["key"], "bucket_key": target}
+        )
+        assert ok == {"paid": target, "movement": open_[0]["key"]}
+        assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
