@@ -43,6 +43,7 @@ class WorkflowRuntime:
         self._executor_factory: ExecutorFactory | None = None
         self._graph_runner: GraphWorkflowRunner | None = None
         self._catalog: dict[str, list[str]] | None = None
+        self._review_hook: Any = None
         #: Validated, versioned access to workflow files (set by the app).
         self.files: WorkflowFiles | None = None
         if runner is not None:
@@ -72,7 +73,15 @@ class WorkflowRuntime:
     def set_graph_runner(self, runner: GraphWorkflowRunner) -> None:
         """Use *runner* for workflow runs; its nodes use the live agent toolset."""
         runner.set_executor_provider(self._step_executor)
+        if self._review_hook is not None:
+            runner.review_hook = self._review_hook
         self._graph_runner = runner
+
+    def set_review_hook(self, hook: Any) -> None:
+        """Call *hook(run_record, new_reviews)* whenever a run pauses for review
+        (the gateway sends the review requests)."""
+        self._review_hook = hook
+        self.graph_runner.review_hook = hook
 
     async def _step_executor(self) -> StepExecutor:
         if self._executor_factory is None:

@@ -8,13 +8,16 @@ from unittest.mock import MagicMock
 
 from langclaw.bus.base import InboundMessage
 from langclaw.config.schema import LangclawConfig, WorkflowsConfig
+from langclaw.gateway.base import BaseChannel
 from langclaw.gateway.commands import CommandContext
 from langclaw.gateway.manager import GatewayManager
 from langclaw.workflows import WorkflowRegistry, WorkflowRuntime
 from tests.test_graph_workflows import DOC_FLOW, FakeExecutor, graph_spec_of
 
 
-class _FakeChannel:
+class _FakeChannel(BaseChannel):
+    """A text-only channel: review requests arrive as text (the BaseChannel default)."""
+
     name = "telegram"
 
     def __init__(self) -> None:
@@ -23,7 +26,16 @@ class _FakeChannel:
     def is_enabled(self) -> bool:
         return True
 
-    async def send(self, m) -> None:
+    async def start(self, bus) -> None:  # pragma: no cover
+        return None
+
+    async def stop(self) -> None:  # pragma: no cover
+        return None
+
+    async def send_ai_message(self, m) -> None:
+        self.sent.append(m)
+
+    async def send_tool_progress(self, m) -> None:
         self.sent.append(m)
 
 
@@ -83,7 +95,8 @@ async def test_run_pauses_for_review_and_approve_delivers_output() -> None:
     reply = await _run_command(mgr, "run", "doc_flow", '{"key": "inv.pdf"}')
     assert "Started workflow 'doc_flow'" in reply
     await _drain(mgr, bus)
-    assert "waiting for review" in _texts(mgr)[-1]
+    assert "⏸ Review needed — doc_flow" in _texts(mgr)[-1]
+    assert "/workflows approve doc_flow:" in _texts(mgr)[-1]
     reviews = await mgr._control_plane.list_reviews()
     assert len(reviews) == 1
     run_id = reviews[0]["run_id"]

@@ -682,6 +682,15 @@ class WorkflowsConfig(BaseModel):
     """Default LangGraph ``recursion_limit`` per run — a backstop against a loop
     that never ends. A workflow's own ``max_steps`` overrides it."""
 
+    review_channel: str = ""
+    """Channel that also receives every review request (e.g. ``"telegram"``), in
+    addition to the chat that started the run — so runs started from the UI,
+    the API, or cron still reach you. Requires ``review_chat_id``."""
+
+    review_chat_id: str = ""
+    """Chat on ``review_channel`` to send review requests to (for Telegram, your
+    numeric chat / user id)."""
+
 
 class ToolsConfig(BaseModel):
     """Configuration for built-in agent tools (web search, fetch, etc.)."""

@@ -385,9 +385,18 @@ snapshot the old file to `workflows/.history/<name>/`, write, reconcile. Both th
 API (`PUT /v1/workflows/{name}`, versions/restore) and the agent's
 `manage_workflows` tool use it. Code workflows can't be overwritten.
 
+**Review requests:** when a run pauses, the runner calls the runtime's review hook
+→ `ControlPlane.notify_review_requests`, which sends each request to the run's
+`reply_to` chat and to `workflows.review_channel`/`review_chat_id` (deduped) via
+`BaseChannel.send_review_request` (Telegram: inline Approve/Edit/Reject buttons,
+payload `wfr:<a|e|r>:<review key>` — `gateway/reviews.py`; default: text with the
+commands) and records each sent message as a *notice* on the review. After any
+answer, `mark_review_resolved` updates every notice (Telegram edits the message
+and drops the buttons). Agent-tool runs take `reply_to` from `ToolRuntime.context`.
+
 **Reviews (HITL):** a paused run's reviews are answered via
 `ControlPlane.answer_review` (used by `/workflows approve|reject|edit`,
-`POST /v1/runs/{id}/review`, and later Telegram buttons): it claims the review in the index (**first answer
+`POST /v1/runs/{id}/review`, and Telegram buttons via `answer_review_by_key`): it claims the review in the index (**first answer
 wins**; a late answer gets `ConflictError` → API 409 naming who answered), then
 publishes an `origin="workflow"` message with `metadata["review"]` so the run
 continues on the bus worker and delivers to the channel that started it

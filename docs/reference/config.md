@@ -34,6 +34,8 @@ API keys are the exception — they use the provider's own plain env var
 | `LANGCLAW__WORKFLOWS__ENABLED` | `false` | |
 | `LANGCLAW__WORKFLOWS__MAX_CONCURRENT_RUNS` | `16` | runs executing at once (paused runs don't count) |
 | `LANGCLAW__WORKFLOWS__MAX_STEPS_PER_RUN` | `1000` | default LangGraph `recursion_limit` per run |
+| `LANGCLAW__WORKFLOWS__REVIEW_CHANNEL` | `""` | also send every review request here (e.g. `telegram`) |
+| `LANGCLAW__WORKFLOWS__REVIEW_CHAT_ID` | `""` | chat on that channel (your Telegram chat id) |
 | `LANGCLAW__INTERPRETER__ENABLED` | `false` | sandboxed `eval` tool (needs `langclaw[interpreter]`) |
 | `LANGCLAW__CHANNELS__TELEGRAM__ENABLED` | `false` | |
 | `LANGCLAW__CHANNELS__TELEGRAM__TOKEN` | `""` | bot token (needs `langclaw[telegram]`) |

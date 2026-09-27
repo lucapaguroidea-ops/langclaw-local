@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus, InboundMessage, OutboundMessage
@@ -150,6 +150,47 @@ class BaseChannel(ABC):
         Every channel must implement this.
         """
         ...
+
+    async def send_review_request(
+        self, target: dict[str, str], request: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Ask a person to answer a paused workflow run's review.
+
+        Default: a text message with the ``/workflows`` commands to answer. Channels
+        with interactive UI override this (Telegram adds Approve / Edit / Reject
+        buttons) and return a reference to the sent message (e.g.
+        ``{"message_id": 123}``), which is handed back to
+        :meth:`mark_review_resolved` once the review is answered anywhere.
+
+        Args:
+            target: ``{"channel", "user_id", "context_id", "chat_id"}``.
+            request: ``{"run_id", "workflow", "key", "interrupt_id", "message",
+                "data", "editable"}`` (see :mod:`langclaw.gateway.reviews`).
+        """
+        from langclaw.bus.base import OutboundMessage
+        from langclaw.gateway.reviews import review_request_text
+
+        await self.send(
+            OutboundMessage(
+                channel=self.name,
+                user_id=target.get("user_id", ""),
+                context_id=target.get("context_id", "default"),
+                chat_id=target.get("chat_id", ""),
+                content=review_request_text(request),
+                type="ai",
+                metadata={"origin": "workflow", "review_key": request.get("key", "")},
+            )
+        )
+        return None
+
+    async def mark_review_resolved(
+        self, notice: dict[str, Any], request: dict[str, Any], decision: dict[str, Any]
+    ) -> None:
+        """Update a review request sent by :meth:`send_review_request` once answered.
+
+        *notice* is what :meth:`send_review_request` returned (plus ``chat_id``);
+        *decision* holds ``action``, ``by``, and ``via``. Default: no-op.
+        """
 
     @abstractmethod
     async def stop(self) -> None:

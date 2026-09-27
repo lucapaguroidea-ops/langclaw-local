@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -59,6 +60,11 @@ class ReviewAlreadyResolved(RuntimeError):
 
 
 _PAST = {"approve": "approved", "edit": "edited", "reject": "rejected"}
+
+
+def review_key(run_id: str, interrupt_id: str) -> str:
+    """A short, stable id for one review — fits in a Telegram button's 64-byte payload."""
+    return hashlib.sha1(f"{run_id}|{interrupt_id}".encode()).hexdigest()[:12]
 
 
 class RunIndexBackend(Protocol):
@@ -159,20 +165,53 @@ class RunIndex:
             await self._backend.put(run_id, record)
             return record
 
-    async def add_reviews(self, run_id: str, pending: list[dict[str, Any]]) -> dict[str, Any]:
-        """Record newly pending reviews (idempotent per ``interrupt_id``) and mark waiting."""
+    async def add_reviews(
+        self, run_id: str, pending: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Record newly pending reviews (idempotent per ``interrupt_id``) and mark waiting.
+
+        Returns:
+            ``(record, added)`` — *added* are the reviews not seen before (the ones
+            to notify about).
+        """
         async with self._lock:
             record = await self._backend.get(run_id) or {"run_id": run_id, "reviews": []}
             known = {r["interrupt_id"] for r in record.get("reviews", [])}
+            added = []
             for review in pending:
                 if review["interrupt_id"] not in known:
-                    record.setdefault("reviews", []).append(
-                        {**review, "created_at": now_iso(), "decision": None}
-                    )
+                    entry = {
+                        **review,
+                        "key": review_key(run_id, review["interrupt_id"]),
+                        "created_at": now_iso(),
+                        "decision": None,
+                        "notices": [],
+                    }
+                    record.setdefault("reviews", []).append(entry)
+                    added.append(copy.deepcopy(entry))
             record["status"] = "waiting"
             record["updated_at"] = now_iso()
             await self._backend.put(run_id, record)
-            return record
+            return record, added
+
+    async def add_notice(self, run_id: str, interrupt_id: str, notice: dict[str, Any]) -> None:
+        """Remember where a review request was sent (so it can be updated when answered)."""
+        async with self._lock:
+            record = await self._backend.get(run_id)
+            if record is None:
+                return
+            for review in record.get("reviews", []):
+                if review["interrupt_id"] == interrupt_id:
+                    review.setdefault("notices", []).append(notice)
+            await self._backend.put(run_id, record)
+
+    async def find_review(self, key: str) -> tuple[str, str] | None:
+        """``(run_id, interrupt_id)`` of the review with short *key*, among recent runs."""
+        for record in await self.list(limit=500):
+            for review in record.get("reviews", []):
+                if review.get("key") == key:
+                    return record["run_id"], review["interrupt_id"]
+        return None
 
     async def claim_review(
         self, run_id: str, decision: dict[str, Any], *, interrupt_id: str = ""

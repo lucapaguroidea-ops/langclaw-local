@@ -95,9 +95,26 @@ template keys, unreachable nodes, …); an invalid file is skipped with a warnin
 
 ## Reviews
 
-When a run pauses, the channel that started it gets a message with the run id.
-Answer from any surface — the **first answer wins**, and later answers are told
-who answered and where:
+When a run pauses, a **review request** goes to the chat that started it —
+however it was started (a message, the agent's tool, a command, the API):
+
+- **Telegram** shows it with **✅ Approve / ✏️ Edit / ❌ Reject** buttons. *Edit*
+  replies with the exact `/workflows edit …` command to send, pre-filled with the
+  current value.
+- Other channels get the same text with the commands to answer.
+
+To also get every review in one place — including runs started from the UI, the
+API, or cron — set a review chat:
+
+```bash
+LANGCLAW__WORKFLOWS__REVIEW_CHANNEL=telegram
+LANGCLAW__WORKFLOWS__REVIEW_CHAT_ID=<your Telegram chat id>
+```
+
+Answer from any surface — buttons, commands, the UI, or
+`POST /v1/runs/{run_id}/review`. The **first answer wins**: a later answer is told
+who answered and where, and every review request that was sent is updated to
+show the outcome (e.g. "✅ Approved by @luca via ui", buttons removed).
 
 ```
 /workflows reviews                     # everything waiting

@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from langchain.tools import ToolRuntime
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -102,15 +103,35 @@ def make_workflow_tools(registry: WorkflowRegistry, runtime: WorkflowRuntime) ->
     return [_make_one_workflow_tool(spec, runtime, StructuredTool) for spec in registry.specs()]
 
 
+def _origin(tool_runtime: Any) -> dict[str, str] | None:
+    """The chat a tool call came from (so a review request goes back there)."""
+    ctx = getattr(tool_runtime, "context", None)
+    channel = getattr(ctx, "channel", "") if ctx is not None else ""
+    if not channel:
+        return None
+    return {
+        "channel": channel,
+        "user_id": getattr(ctx, "user_id", ""),
+        "context_id": getattr(ctx, "context_id", ""),
+        "chat_id": getattr(ctx, "chat_id", ""),
+    }
+
+
 def _make_one_workflow_tool(
-    spec: WorkflowSpec, runtime: WorkflowRuntime, structured_tool_cls: type[BaseTool]
+    spec: WorkflowSpec, wf_runtime: WorkflowRuntime, structured_tool_cls: type[BaseTool]
 ) -> BaseTool:
     description = spec.description or f"Run the {spec.name!r} workflow."
 
-    async def _run(workflow_input: Any = None) -> str:
+    async def _run(workflow_input: Any = None, runtime: ToolRuntime = None) -> str:  # type: ignore[assignment]
         run_id = f"{spec.name}:{uuid.uuid4().hex[:12]}"
         try:
-            result = await runtime.run_graph(spec, workflow_input, run_id=run_id, trigger="agent")
+            result = await wf_runtime.run_graph(
+                spec,
+                workflow_input,
+                run_id=run_id,
+                trigger="agent",
+                reply_to=_origin(runtime),
+            )
             return result.to_text()
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as text
             logger.warning(f"Workflow {spec.name!r} run {run_id} failed: {exc}")

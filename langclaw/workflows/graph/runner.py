@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from langclaw.workflows.registry import WorkflowSpec
 
 ExecutorProvider = Callable[[], "StepExecutor | Awaitable[StepExecutor]"]
+ReviewHook = Callable[[dict[str, Any], list[dict[str, Any]]], Awaitable[None]]
 
 
 def thread_id_for(run_id: str) -> str:
@@ -112,6 +113,9 @@ class GraphWorkflowRunner:
         self._executor_provider = executor_provider
         self._max_steps = max_steps
         self._compiled: dict[str, tuple[int, Any]] = {}
+        #: Called with ``(run_record, new_reviews)`` when a run pauses for review —
+        #: the gateway sends the review requests (e.g. Telegram buttons).
+        self.review_hook: ReviewHook | None = None
 
     def set_executor_provider(self, provider: ExecutorProvider) -> None:
         self._executor_provider = provider
@@ -338,9 +342,14 @@ class GraphWorkflowRunner:
         snapshot = await graph.aget_state(config)
         if snapshot.interrupts:
             pending = [_review_from_interrupt(i) for i in snapshot.interrupts]
-            record = await self.index.add_reviews(run_id, pending)
+            record, added = await self.index.add_reviews(run_id, pending)
             open_reviews = [r for r in record["reviews"] if r.get("decision") is None]
             logger.info(f"Workflow {spec.name!r} run {run_id} waiting for review")
+            if added and self.review_hook is not None:
+                try:
+                    await self.review_hook(record, added)
+                except Exception as exc:  # noqa: BLE001 — notifying must not fail the run
+                    logger.warning(f"Review notification for {run_id} failed: {exc}")
             return GraphRunResult(run_id, spec.name, "waiting", reviews=open_reviews)
 
         values = snapshot.values or {}

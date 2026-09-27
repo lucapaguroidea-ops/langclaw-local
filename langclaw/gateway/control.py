@@ -26,6 +26,8 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 from langclaw.bus.base import InboundMessage
 
 if TYPE_CHECKING:
@@ -422,6 +424,7 @@ class ControlPlane:
             )
         except ReviewAlreadyResolved as exc:
             raise ConflictError(str(exc), exc.decision) from exc
+        await self._mark_resolved(record, review)
         target = dict(record.get("reply_to") or fallback_target or {})
         if not target.get("channel"):
             raise ValueError(f"Run {run_id} has no channel to continue on.")
@@ -441,6 +444,94 @@ class ControlPlane:
             )
         )
         return review
+
+    async def answer_review_by_key(
+        self, key: str, action: str, *, by: str, via: str
+    ) -> tuple[dict[str, Any], str]:
+        """Answer the review a button with short *key* belongs to.
+
+        Returns:
+            ``(claimed review, run_id)``.
+
+        Raises:
+            NotFoundError / ConflictError / ValueError: as :meth:`answer_review`.
+        """
+        self.require_workflows()
+        graph = self._graph_runner()
+        found = await graph.index.find_review(key) if graph is not None else None
+        if found is None:
+            raise NotFoundError("That review no longer exists.")
+        run_id, interrupt_id = found
+        review = await self.answer_review(
+            run_id, {"action": action}, by=by, via=via, interrupt_id=interrupt_id
+        )
+        return review, run_id
+
+    async def review_request(self, key: str) -> dict[str, Any] | None:
+        """The review request with short *key* (for re-rendering, e.g. edit help)."""
+        graph = self._graph_runner()
+        found = await graph.index.find_review(key) if graph is not None else None
+        if found is None:
+            return None
+        run_id, interrupt_id = found
+        record = await graph.index.get(run_id) or {}
+        for review in record.get("reviews", []):
+            if review["interrupt_id"] == interrupt_id:
+                return _request_of(record, review)
+        return None
+
+    async def notify_review_requests(
+        self, record: Mapping[str, Any], reviews: list[dict[str, Any]]
+    ) -> None:
+        """Send each new review request to where the run started and to the
+        configured review chat (``workflows.review_channel`` / ``review_chat_id``),
+        once per chat, and remember where each went."""
+        graph = self._graph_runner()
+        targets: list[dict[str, str]] = []
+        reply_to = dict(record.get("reply_to") or {})
+        if reply_to.get("channel"):
+            targets.append(reply_to)
+        cfg = self._config.workflows
+        if cfg.review_channel and cfg.review_chat_id:
+            targets.append(
+                {
+                    "channel": cfg.review_channel,
+                    "user_id": cfg.review_chat_id,
+                    "context_id": cfg.review_chat_id,
+                    "chat_id": cfg.review_chat_id,
+                }
+            )
+        seen: set[tuple[str, str]] = set()
+        for target in targets:
+            where = (target["channel"], target.get("chat_id") or target.get("user_id", ""))
+            channel = self._channel(target["channel"])
+            if where in seen or channel is None:
+                continue
+            seen.add(where)
+            for review in reviews:
+                request = _request_of(record, review)
+                try:
+                    ref = await channel.send_review_request(target, request)
+                except Exception as exc:  # noqa: BLE001 — one channel failing must not stop others
+                    logger.warning(f"Review request to {where} failed: {exc}")
+                    continue
+                if ref and graph is not None:
+                    notice = {"channel": target["channel"], "chat_id": where[1], **ref}
+                    await graph.index.add_notice(record["run_id"], review["interrupt_id"], notice)
+
+    async def _mark_resolved(self, record: Mapping[str, Any], review: dict[str, Any]) -> None:
+        request = _request_of(record, review)
+        for notice in review.get("notices", []):
+            channel = self._channel(notice.get("channel", ""))
+            if channel is None:
+                continue
+            try:
+                await channel.mark_review_resolved(notice, request, review["decision"])
+            except Exception as exc:  # noqa: BLE001 — cosmetic; the answer is recorded
+                logger.warning(f"Updating review message {notice} failed: {exc}")
+
+    def _channel(self, name: str) -> Any | None:
+        return next((c for c in self._channels if getattr(c, "name", "") == name), None)
 
     def _graph_runner(self) -> Any | None:
         return getattr(self._runtime, "graph_runner", None) if self._runtime else None
@@ -564,6 +655,19 @@ class ControlPlane:
                 1 for r in record.get("reviews", []) if r.get("decision") is None
             ),
         }
+
+
+def _request_of(record: Mapping[str, Any], review: Mapping[str, Any]) -> dict[str, Any]:
+    """The channel-facing view of one review (see :mod:`langclaw.gateway.reviews`)."""
+    return {
+        "run_id": record["run_id"],
+        "workflow": record.get("workflow", ""),
+        "key": review.get("key", ""),
+        "interrupt_id": review["interrupt_id"],
+        "message": review.get("message", ""),
+        "data": review.get("data") or {},
+        "editable": review.get("editable", ""),
+    }
 
 
 def _message_text(content: Any) -> str:

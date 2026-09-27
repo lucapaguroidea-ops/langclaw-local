@@ -191,6 +191,11 @@ class GatewayManager:
             checkpointer=checkpointer_backend.get(),
         )
 
+        # Review requests (Telegram buttons, text elsewhere) go out whenever a run
+        # pauses, however it was started.
+        if workflow_runtime is not None and hasattr(workflow_runtime, "set_review_hook"):
+            workflow_runtime.set_review_hook(self._control_plane.notify_review_requests)
+
         # Register /workflows whenever the feature is enabled (the app passes a
         # registry — possibly empty — in that case), so the command stays
         # discoverable even before any workflow is registered. It is hidden only
@@ -1140,17 +1145,20 @@ class GatewayManager:
                         "chat_id": msg.chat_id,
                     },
                 )
-            await channel.send(
-                OutboundMessage(
-                    channel=msg.channel,
-                    user_id=msg.user_id,
-                    context_id=msg.context_id,
-                    chat_id=msg.chat_id,
-                    content=self._stringify_workflow_output(output),
-                    type="ai",
-                    metadata={"origin": "workflow", "workflow": name, "run_id": run_id},
+            # A run paused for review already sent its review request (via the
+            # runtime's review hook) — don't repeat it as plain text.
+            if getattr(output, "status", "") != "waiting":
+                await channel.send(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        user_id=msg.user_id,
+                        context_id=msg.context_id,
+                        chat_id=msg.chat_id,
+                        content=self._stringify_workflow_output(output),
+                        type="ai",
+                        metadata={"origin": "workflow", "workflow": name, "run_id": run_id},
+                    )
                 )
-            )
         except asyncio.CancelledError:
             logger.info(f"Workflow run {run_id} cancelled.")
             raise
