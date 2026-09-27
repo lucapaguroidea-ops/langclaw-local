@@ -172,6 +172,19 @@ class Journal:
         )
         return [dict(r) for r in rows]
 
+    async def balance_until(self, day: date, account: str) -> Decimal:
+        """Debit − credit on *account* (and its analytics, e.g. ``4426.01``) for
+        entries dated up to *day*."""
+        pool = await self._db()
+        value = await pool.fetchval(
+            f"SELECT COALESCE(SUM(l.debit - l.credit), 0) FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date <= $1 AND (l.account = $2 OR l.account LIKE $2 || '.%')",
+            day,
+            account,
+        )
+        return Decimal(value).quantize(_CENT)
+
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""
         pool = await self._db()

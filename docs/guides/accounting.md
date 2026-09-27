@@ -62,8 +62,17 @@ so proposals get more consistent as the accountant approves them.
   a type counts as present when any document of that `doc_type` is dated in the
   month. Also lists the month's documents still marked `needs_review`.
 
+- **vat_settlement** — a preview of the month's VAT settlement entry, for VAT
+  payers (monthly, or at quarter end with `"vat_period": "quarterly"`). The
+  balances of 4426 and 4427 up to the month's last day are cleared into
+  4423 (payable) or 4424 (refundable):
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
+  collection, where the 4428 → 4427 transfer depends on payments and stays
+  with the accountant.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
-expected documents are missing, or the balance is off; otherwise it saves the report to
+expected documents are missing, or the balance is off. Otherwise it posts the VAT
+settlement, dated the last day of the month, and saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change

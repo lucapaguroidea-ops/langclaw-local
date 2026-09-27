@@ -736,3 +736,38 @@ async def test_a_payment_in_a_closed_month_is_applied_but_not_booked(acme) -> No
     assert out["paid"] and out["booked_entries"] == 0
     assert "closed" in out["not_booked"][0]["reason"]
     assert (await scoped.store.get(sale["bucket_key"]))["fields"]["paid_on"]
+
+
+@needs_pg
+async def test_closing_a_month_posts_the_vat_settlement(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.period import parse_period
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        for row in rows:  # every month up to the one we close
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        preview = await tools["accounting_period_report"].ainvoke({"period": period})
+        assert preview["vat_settlement"]["lines"]
+        closed = await tools["accounting_period_close"].ainvoke({"period": period})
+    assert closed["closed"] == period and closed["vat_settlement"] == preview["vat_settlement"]
+    journal = Journal(scoped.store)
+    _, end = parse_period(period)
+    assert await journal.balance_until(end, "4426") == Decimal("0.00")
+    assert await journal.balance_until(end, "4427") == Decimal("0.00")
+    net = await journal.balance_until(end, "4423") + await journal.balance_until(end, "4424")
+    sales_vat = sum(Decimal(r["fields"]["total_vat"]) for r in rows
+                    if r["fields"]["direction"] == "out")  # fmt: skip
+    buy_vat = sum(Decimal(r["fields"]["total_vat"]) for r in rows
+                  if r["fields"]["direction"] == "in")  # fmt: skip
+    assert net == buy_vat - sales_vat  # 4423 credit (−) / 4424 debit (+)

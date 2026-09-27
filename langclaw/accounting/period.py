@@ -166,3 +166,48 @@ def document_state(documents: list[dict[str, Any]], expected: list[Any] | None) 
         ],
         "needs_review": [d["bucket_key"] for d in documents if d.get("status") == "needs_review"],
     }
+
+
+def settles_vat(period: str, profile: dict[str, Any]) -> bool:
+    """Whether the month's close settles VAT: VAT payers, monthly or at quarter end
+    (``vat_period: quarterly``). Not for VAT on collection — the 4428 → 4427
+    transfer depends on payments and stays with the accountant."""
+    if not profile.get("vat_payer") or profile.get("vat_on_collection"):
+        return False
+    _, end = parse_period(period)
+    return profile.get("vat_period") != "quarterly" or end.month % 3 == 0
+
+
+def vat_settlement(*, deductible: Decimal, collected: Decimal) -> dict[str, Any] | None:
+    """The settlement entry for the balances of 4426 (*deductible*, debit) and 4427
+    (*collected*, credit): 4427 = 4426 + 4423 (payable) or 4427 + 4424 (refundable)
+    = 4426. ``None`` when both are zero."""
+    d, c = deductible.quantize(_CENT), collected.quantize(_CENT)
+    if not d and not c:
+        return None
+
+    def line(account: str, debit: Decimal, credit: Decimal) -> dict[str, str]:
+        return {
+            "account": account,
+            "debit": str(debit) if debit else "0",
+            "credit": str(credit) if credit else "0",
+            "explanation": "Regularizare TVA",
+        }
+
+    lines = []
+    if c:
+        lines.append(line("4427", c, Decimal(0)))
+    if c > d:
+        if d:
+            lines.append(line("4426", Decimal(0), d))
+        lines.append(line("4423", Decimal(0), c - d))
+    else:
+        if d > c:
+            lines.append(line("4424", d - c, Decimal(0)))
+        if d:
+            lines.append(line("4426", Decimal(0), d))
+    return {
+        "lines": lines,
+        "reasoning": f"Regularizare TVA: colectată {c}, deductibilă {d}.",
+        "legal_basis": "OMFP 1802/2014; Codul fiscal art. 316",
+    }

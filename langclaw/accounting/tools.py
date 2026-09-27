@@ -40,7 +40,9 @@ from langclaw.accounting.period import (
     document_state,
     parse_period,
     resolve_period,
+    settles_vat,
     trial_balance,
+    vat_settlement,
     vat_summary,
 )
 from langclaw.accounting.vat import allowed_vat_rates
@@ -324,6 +326,12 @@ def build_accounting_tools(
         )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
         closed = {p["period"]: p for p in await journal.closed_periods()}
+        settlement = None
+        if settles_vat(period, _profile()):
+            settlement = vat_settlement(
+                deductible=await journal.balance_until(end, "4426"),
+                collected=-await journal.balance_until(end, "4427"),
+            )
         report = {
             "period": period,
             "closed": closed.get(period),
@@ -331,6 +339,7 @@ def build_accounting_tools(
             "documents": document_state(month, _profile().get("expected_documents")),
             "trial_balance": trial_balance(await journal.lines_between(start, end)),
             "vat": vat_summary(booked),
+            "vat_settlement": settlement,
             "invoices": len(docs),
         }
         if len(docs) >= 200:
@@ -352,8 +361,9 @@ def build_accounting_tools(
 
     async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
-        are missing; afterwards nothing
-        can be posted with a date in it. Saves the report in the client's bucket.
+        are missing. Posts the VAT settlement (4426/4427 → 4423 or 4424) for VAT
+        payers, saves the report in the client's bucket, then locks the month so
+        nothing can be posted with a date in it.
 
         Args:
             period: The month, as YYYY-MM (empty: last month).
@@ -375,6 +385,17 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            settled = report["vat_settlement"]
+            if settled:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/vat-settlement",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(doc, settled, approved_by=closed_by or "close")
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
+                _, report = await _period_report(period)  # with the settlement booked
             key = f"reports/{period}/close.json"
             await svc.bucket.put(
                 key, json.dumps(report, indent=2).encode(), content_type="application/json"
@@ -382,7 +403,8 @@ def build_accounting_tools(
             await Journal(svc.store).close_period(period, closed_by=closed_by)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"closed": period, "report_key": key, "vat": report["vat"]}
+        return {"closed": period, "report_key": key, "vat": report["vat"],
+                "vat_settlement": settled}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
