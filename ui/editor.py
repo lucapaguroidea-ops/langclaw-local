@@ -311,3 +311,43 @@ def tenant_payload(
         "review_chat": review_chat.strip(),
         "profile": {**(profile or {}), **extra},
     }
+
+
+# -- Client overview ----------------------------------------------------------------------
+
+
+def recent_months(today: Any, count: int = 12) -> list[str]:
+    """*today*'s month and the ones before it (*count* in all), newest first, as ``YYYY-MM``."""
+    months = []
+    index = today.year * 12 + today.month - 1
+    for back in range(count):
+        year, month = divmod(index - back, 12)
+        months.append(f"{year:04d}-{month + 1:02d}")
+    return months
+
+
+def overview_alerts(view: dict[str, Any]) -> list[str]:
+    """What needs attention in an ``accounting_overview`` result, as short lines."""
+    alerts: list[str] = []
+    parts = {"Close report": "report", "Outlook": "outlook", "Bank": "bank"}
+    for label, part in parts.items():
+        if error := (view.get(part) or {}).get("error"):
+            alerts.append(f"{label}: {error}")
+    report = view.get("report") or {}
+    if blockers := report.get("blockers"):
+        alerts.append(f"{len(blockers)} invoice(s) without an entry")
+    missing = (report.get("documents") or {}).get("missing") or []
+    if missing:
+        alerts.append("Missing documents: " + ", ".join(m["label"] for m in missing))
+    if report.get("trial_balance") and not report["trial_balance"].get("balanced"):
+        alerts.append("The trial balance doesn't balance")
+    outlook = view.get("outlook") or {}
+    for t in outlook.get("thresholds") or []:
+        if t.get("warn"):
+            alerts.append(f"{t['name']} at {t['used_pct']}% of the limit")
+    overdue = ((outlook.get("cash") or {}).get("receivables") or {}).get("overdue")
+    if overdue not in (None, "0", "0.00"):
+        alerts.append(f"Overdue receivables: {overdue}")
+    if movements := (view.get("bank") or {}).get("movements"):
+        alerts.append(f"{len(movements)} bank movement(s) not matched")
+    return alerts
