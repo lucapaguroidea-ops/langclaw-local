@@ -669,6 +669,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scans-and-photos-ocr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scans and photos (OCR)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#search-by-meaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search by meaning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#documents-sent-in-chat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1235,6 +1257,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scans-and-photos-ocr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scans and photos (OCR)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#search-by-meaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search by meaning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#documents-sent-in-chat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1344,6 +1388,8 @@ classify it, ask me when unsure, file it, let me search it later".</p>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">LANGCLAW__DOCUMENTS__ENABLED</span><span class="o">=</span><span class="nb">true</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">LANGCLAW__DOCUMENTS__DATABASE_URL</span><span class="o">=</span>postgresql://...<span class="w">     </span><span class="c1"># or DOCUMENTS_DATABASE_URL</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nv">LANGCLAW__DOCUMENTS__INTAKE_WORKFLOW</span><span class="o">=</span>document_intake<span class="w">   </span><span class="c1"># optional, see below</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nv">LANGCLAW__DOCUMENTS__OCR_MODEL</span><span class="o">=</span>openrouter:google/gemini-2.5-flash<span class="w">  </span><span class="c1"># optional: read scans</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nv">LANGCLAW__DOCUMENTS__EMBEDDING_MODEL</span><span class="o">=</span>openai/text-embedding-3-small<span class="w"> </span><span class="c1"># optional: search by meaning</span>
 </span></code></pre></div>
 <p>The bucket is any S3-compatible store. Each unset
 <code>LANGCLAW__DOCUMENTS__BUCKET__{ENDPOINT,NAME,ACCESS_KEY,SECRET_KEY,REGION}</code> falls
@@ -1370,7 +1416,7 @@ away from conversation state and lets you back up / restore it on its own.</p>
 </tr>
 <tr>
 <td><code>bucket_read(key)</code></td>
-<td>A file's text — PDFs page by page, text files as-is (capped at <code>max_text_chars</code>). Scanned PDFs and images return a <code>note</code> instead: there's no OCR yet</td>
+<td>A file's text — PDFs page by page, text files as-is (capped at <code>max_text_chars</code>). Scanned PDFs and photos go through OCR when <code>OCR_MODEL</code> is set (<code>"ocr": true</code> in the result); without it they return a <code>note</code></td>
 </tr>
 <tr>
 <td><code>bucket_link(key, expires_minutes)</code></td>
@@ -1393,6 +1439,14 @@ away from conversation state and lets you back up / restore it on its own.</p>
 <td>One record</td>
 </tr>
 <tr>
+<td><code>documents_semantic_search(query, ...filters, limit)</code></td>
+<td><em>With <code>EMBEDDING_MODEL</code>:</em> records ranked by meaning ("power bills" finds electricity invoices), each with a <code>similarity</code> 0–1; the same filters as <code>documents_search</code> narrow them</td>
+</tr>
+<tr>
+<td><code>documents_reindex(limit)</code></td>
+<td><em>With <code>EMBEDDING_MODEL</code>:</em> embed records saved before it was on (or whose embedding failed); repeat while <code>remaining</code> &gt; 0</td>
+</tr>
+<tr>
 <td><code>documents_start_intake(prefix, limit, channel, chat_id)</code></td>
 <td>Start <code>INTAKE_WORKFLOW</code> for every new file. Each gets a <code>processing</code> record first, so a second scan never queues it twice. Reports to the given chat, else to <code>workflows.review_channel</code> / <code>review_chat_id</code></td>
 </tr>
@@ -1400,9 +1454,22 @@ away from conversation state and lets you back up / restore it on its own.</p>
 </table>
 <p>Failures come back as <code>{"error": "..."}</code> — a missing object, a bad date
 (<code>YYYY-MM-DD</code>), an unreachable database. The table is created on first use.</p>
+<h2 id="scans-and-photos-ocr">Scans and photos (OCR)<a class="headerlink" href="#scans-and-photos-ocr" title="Permanent link">&para;</a></h2>
+<p>Files with a text layer are read directly. When there's none — a scanned PDF, a
+phone photo of a receipt — and <code>OCR_MODEL</code> names a vision-capable model,
+<code>bucket_read</code> renders each page (first <code>OCR_MAX_PAGES</code>) to an image and asks the
+model to transcribe it. The intake workflow needs no change: its <code>fetch</code> step
+just gets text back. OCR failures come back as a <code>note</code>, never an exception.</p>
+<h2 id="search-by-meaning">Search by meaning<a class="headerlink" href="#search-by-meaning" title="Permanent link">&para;</a></h2>
+<p>With <code>EMBEDDING_MODEL</code> set, <code>documents_save</code> also embeds each record (type,
+sender, receiver, date, summary, extra fields) through OpenRouter — or any
+OpenAI-compatible endpoint via <code>EMBEDDING_BASE_URL</code> — and stores the vector in the
+table's <code>embedding</code> column. If embedding fails the record is still saved and the
+result carries a <code>note</code>; <code>documents_reindex</code> catches it up later, as it does for
+records from before search was on. Vectors never go back to the model.</p>
 <h2 id="documents-sent-in-chat">Documents sent in chat<a class="headerlink" href="#documents-sent-in-chat" title="Permanent link">&para;</a></h2>
-<p>With <code>INTAKE_WORKFLOW</code> set, a <strong>file</strong> sent in chat (a PDF or text document — not
-a photo, voice note, or video) is uploaded to
+<p>With <code>INTAKE_WORKFLOW</code> set, a <strong>file</strong> sent in chat (a PDF or text document — and a
+<strong>photo</strong> too when <code>OCR_MODEL</code> is set; never a voice note or video) is uploaded to
 <code>&lt;intake_prefix&gt;&lt;YYYY-MM-DD&gt;/&lt;id&gt;-&lt;filename&gt;</code> (default prefix <code>inbox/</code>) and the
 workflow starts right away, with no agent turn, getting:</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;inbox/2026-09-27/1a2b3c4d-invoice.pdf&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;filename&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;invoice.pdf&quot;</span><span class="p">,</span>
@@ -1432,8 +1499,13 @@ agent, e.g. "run bucket_scan every day at 7", which uses the cron tool with
 so scanned runs know where to report.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li>No OCR: scanned PDFs and photos have no text to read.</li>
-<li>Search is filter / substring based; semantic (vector) search isn't wired yet.</li>
+<li>OCR is a vision-model call per page (first <code>OCR_MAX_PAGES</code> pages), used only
+  when a file has no text layer. Pick a model that accepts images; a text-only
+  model makes the call fail and <code>bucket_read</code> returns the error as a <code>note</code>.</li>
+<li>Semantic search compares vectors in plain SQL — no pgvector extension needed —
+  by scanning every embedded row. That's fast up to tens of thousands of documents;
+  beyond that, a pgvector index is the next step. Changing <code>EMBEDDING_MODEL</code> means
+  old vectors don't match new ones: clear the column and run <code>documents_reindex</code>.</li>
 </ul>
 
 

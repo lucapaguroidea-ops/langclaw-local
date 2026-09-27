@@ -3291,6 +3291,31 @@ API keys are the exception — they use the provider's own plain env var
 <td>bucket prefix for files sent in chat</td>
 </tr>
 <tr>
+<td><code>LANGCLAW__DOCUMENTS__OCR_MODEL</code></td>
+<td><code>""</code></td>
+<td>vision model for scanned PDFs and photos (e.g. <code>openrouter:google/gemini-2.5-flash</code>); empty ⇒ no OCR</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__DOCUMENTS__OCR_MAX_PAGES</code></td>
+<td><code>10</code></td>
+<td>read at most this many pages of a scanned PDF</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__DOCUMENTS__EMBEDDING_MODEL</code></td>
+<td><code>""</code></td>
+<td>embedding model for semantic search (e.g. <code>openai/text-embedding-3-small</code>); empty ⇒ off</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__DOCUMENTS__EMBEDDING_BASE_URL</code></td>
+<td><code>https://openrouter.ai/api/v1</code></td>
+<td>OpenAI-compatible embeddings endpoint</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__DOCUMENTS__EMBEDDING_API_KEY</code></td>
+<td><code>""</code></td>
+<td>key for that endpoint (falls back to <code>OPENROUTER_API_KEY</code>)</td>
+</tr>
+<tr>
 <td><code>LANGCLAW__WORKFLOWS__REVIEW_CHANNEL</code></td>
 <td><code>""</code></td>
 <td>also send every review request here (e.g. <code>telegram</code>)</td>
@@ -3488,37 +3513,37 @@ are available in <code>os.environ</code> for <code>init_chat_model</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>langclaw/config/schema.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1028">1028</a></span>
-<span class="normal"><a href="#__codelineno-0-1029">1029</a></span>
-<span class="normal"><a href="#__codelineno-0-1030">1030</a></span>
-<span class="normal"><a href="#__codelineno-0-1031">1031</a></span>
-<span class="normal"><a href="#__codelineno-0-1032">1032</a></span>
-<span class="normal"><a href="#__codelineno-0-1033">1033</a></span>
-<span class="normal"><a href="#__codelineno-0-1034">1034</a></span>
-<span class="normal"><a href="#__codelineno-0-1035">1035</a></span>
-<span class="normal"><a href="#__codelineno-0-1036">1036</a></span>
-<span class="normal"><a href="#__codelineno-0-1037">1037</a></span>
-<span class="normal"><a href="#__codelineno-0-1038">1038</a></span>
-<span class="normal"><a href="#__codelineno-0-1039">1039</a></span>
-<span class="normal"><a href="#__codelineno-0-1040">1040</a></span>
-<span class="normal"><a href="#__codelineno-0-1041">1041</a></span>
-<span class="normal"><a href="#__codelineno-0-1042">1042</a></span>
-<span class="normal"><a href="#__codelineno-0-1043">1043</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1028"><a id="__codelineno-0-1028" name="__codelineno-0-1028"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
-</span><span id="__span-0-1029"><a id="__codelineno-0-1029" name="__codelineno-0-1029"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
-</span><span id="__span-0-1030"><a id="__codelineno-0-1030" name="__codelineno-0-1030"></a>
-</span><span id="__span-0-1031"><a id="__codelineno-0-1031" name="__codelineno-0-1031"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
-</span><span id="__span-0-1032"><a id="__codelineno-0-1032" name="__codelineno-0-1032"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
-</span><span id="__span-0-1033"><a id="__codelineno-0-1033" name="__codelineno-0-1033"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
-</span><span id="__span-0-1034"><a id="__codelineno-0-1034" name="__codelineno-0-1034"></a>
-</span><span id="__span-0-1035"><a id="__codelineno-0-1035" name="__codelineno-0-1035"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
-</span><span id="__span-0-1036"><a id="__codelineno-0-1036" name="__codelineno-0-1036"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
-</span><span id="__span-0-1037"><a id="__codelineno-0-1037" name="__codelineno-0-1037"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1038"><a id="__codelineno-0-1038" name="__codelineno-0-1038"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
-</span><span id="__span-0-1039"><a id="__codelineno-0-1039" name="__codelineno-0-1039"></a>
-</span><span id="__span-0-1040"><a id="__codelineno-0-1040" name="__codelineno-0-1040"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-0-1041"><a id="__codelineno-0-1041" name="__codelineno-0-1041"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
-</span><span id="__span-0-1042"><a id="__codelineno-0-1042" name="__codelineno-0-1042"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
-</span><span id="__span-0-1043"><a id="__codelineno-0-1043" name="__codelineno-0-1043"></a>    <span class="k">return</span> <span class="n">config</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1048">1048</a></span>
+<span class="normal"><a href="#__codelineno-0-1049">1049</a></span>
+<span class="normal"><a href="#__codelineno-0-1050">1050</a></span>
+<span class="normal"><a href="#__codelineno-0-1051">1051</a></span>
+<span class="normal"><a href="#__codelineno-0-1052">1052</a></span>
+<span class="normal"><a href="#__codelineno-0-1053">1053</a></span>
+<span class="normal"><a href="#__codelineno-0-1054">1054</a></span>
+<span class="normal"><a href="#__codelineno-0-1055">1055</a></span>
+<span class="normal"><a href="#__codelineno-0-1056">1056</a></span>
+<span class="normal"><a href="#__codelineno-0-1057">1057</a></span>
+<span class="normal"><a href="#__codelineno-0-1058">1058</a></span>
+<span class="normal"><a href="#__codelineno-0-1059">1059</a></span>
+<span class="normal"><a href="#__codelineno-0-1060">1060</a></span>
+<span class="normal"><a href="#__codelineno-0-1061">1061</a></span>
+<span class="normal"><a href="#__codelineno-0-1062">1062</a></span>
+<span class="normal"><a href="#__codelineno-0-1063">1063</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1048"><a id="__codelineno-0-1048" name="__codelineno-0-1048"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
+</span><span id="__span-0-1049"><a id="__codelineno-0-1049" name="__codelineno-0-1049"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
+</span><span id="__span-0-1050"><a id="__codelineno-0-1050" name="__codelineno-0-1050"></a>
+</span><span id="__span-0-1051"><a id="__codelineno-0-1051" name="__codelineno-0-1051"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
+</span><span id="__span-0-1052"><a id="__codelineno-0-1052" name="__codelineno-0-1052"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
+</span><span id="__span-0-1053"><a id="__codelineno-0-1053" name="__codelineno-0-1053"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
+</span><span id="__span-0-1054"><a id="__codelineno-0-1054" name="__codelineno-0-1054"></a>
+</span><span id="__span-0-1055"><a id="__codelineno-0-1055" name="__codelineno-0-1055"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
+</span><span id="__span-0-1056"><a id="__codelineno-0-1056" name="__codelineno-0-1056"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
+</span><span id="__span-0-1057"><a id="__codelineno-0-1057" name="__codelineno-0-1057"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1058"><a id="__codelineno-0-1058" name="__codelineno-0-1058"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
+</span><span id="__span-0-1059"><a id="__codelineno-0-1059" name="__codelineno-0-1059"></a>
+</span><span id="__span-0-1060"><a id="__codelineno-0-1060" name="__codelineno-0-1060"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-1061"><a id="__codelineno-0-1061" name="__codelineno-0-1061"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
+</span><span id="__span-0-1062"><a id="__codelineno-0-1062" name="__codelineno-0-1062"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
+</span><span id="__span-0-1063"><a id="__codelineno-0-1063" name="__codelineno-0-1063"></a>    <span class="k">return</span> <span class="n">config</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
