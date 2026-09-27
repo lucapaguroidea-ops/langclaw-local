@@ -70,9 +70,18 @@ so proposals get more consistent as the accountant approves them.
   collection, where the 4428 → 4427 transfer depends on payments and stays
   with the accountant.
 
+- **depreciation** — the month's depreciation entry for the client's fixed
+  assets, previewed here and posted at close: D 6811 / C the
+  accumulated-depreciation account of each asset (2131 → 2813, 214 → 2814,
+  205 → 2805). Register assets with
+  `assets_add(name, account, value, in_service, life_months)`; `assets_list(period)`
+  shows this month's amounts. Depreciation is linear. It starts the month after
+  the asset goes into service, is `value / life_months` rounded to the ban, and
+  the last month takes the rounding.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
-expected documents are missing, or the balance is off. Otherwise it posts the VAT
-settlement, dated the last day of the month, and saves the report to
+expected documents are missing, or the balance is off. Otherwise it posts the
+depreciation and the VAT settlement, dated the last day of the month, and saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change
@@ -245,3 +254,6 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 - Bank matching doesn't handle foreign-currency movements, fees netted out of a
   payment, or partial payments that don't name the invoice. Those stay in
   `bank_movements` for the accountant.
+- Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
+  accelerated methods, and assets bought in a closed month stay with the
+  accountant.

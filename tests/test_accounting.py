@@ -771,3 +771,41 @@ async def test_closing_a_month_posts_the_vat_settlement(acme) -> None:
     buy_vat = sum(Decimal(r["fields"]["total_vat"]) for r in rows
                   if r["fields"]["direction"] == "in")  # fmt: skip
     assert net == buy_vat - sales_vat  # 4423 credit (−) / 4424 debit (+)
+
+
+@needs_pg
+async def test_closing_a_month_posts_depreciation(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.period import parse_period
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        bad = await tools["assets_add"].ainvoke(
+            {"name": "Stoc", "account": "371", "value": 10, "in_service": "2026-01-01",
+             "life_months": 12}
+        )  # fmt: skip
+        assert "2xx" in bad["error"]
+        added = await tools["assets_add"].ainvoke(
+            {"name": "Laptop", "account": "2131", "value": 3600, "in_service": "2025-01-15",
+             "life_months": 36}
+        )  # fmt: skip
+        assert added["asset"]["id"]
+        listed = await tools["assets_list"].ainvoke({"period": period})
+        assert listed["assets"][0]["this_month"] == "100.00"
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        closed = await tools["accounting_period_close"].ainvoke({"period": period})
+    assert closed["depreciation"]["lines"][0] == {
+        "account": "6811", "debit": "100.00", "credit": "0", "explanation": f"Amortizare {period}"
+    }  # fmt: skip
+    _, end = parse_period(period)
+    assert await Journal(scoped.store).balance_until(end, "2813") == Decimal("-100.00")

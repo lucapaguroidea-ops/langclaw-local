@@ -27,6 +27,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
 from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fee, payment_entry
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
@@ -340,6 +341,7 @@ def build_accounting_tools(
             "trial_balance": trial_balance(await journal.lines_between(start, end)),
             "vat": vat_summary(booked),
             "vat_settlement": settlement,
+            "depreciation": depreciation_entry(await FixedAssets(svc.store).list(), period),
             "invoices": len(docs),
         }
         if len(docs) >= 200:
@@ -361,9 +363,10 @@ def build_accounting_tools(
 
     async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
-        are missing. Posts the VAT settlement (4426/4427 → 4423 or 4424) for VAT
-        payers, saves the report in the client's bucket, then locks the month so
-        nothing can be posted with a date in it.
+        are missing. Posts the month's depreciation (6811 / 28xx) and, for VAT
+        payers, the VAT settlement (4426/4427 → 4423 or 4424); saves the report in
+        the client's bucket; then locks the month so nothing can be posted with a
+        date in it.
 
         Args:
             period: The month, as YYYY-MM (empty: last month).
@@ -385,6 +388,18 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            depreciation = report["depreciation"]
+            if depreciation:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/depreciation",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(
+                        doc, depreciation, approved_by=closed_by or "close"
+                    )
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
             settled = report["vat_settlement"]
             if settled:
                 _, end = parse_period(period)
@@ -404,7 +419,7 @@ def build_accounting_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"closed": period, "report_key": key, "vat": report["vat"],
-                "vat_settlement": settled}  # fmt: skip
+                "vat_settlement": settled, "depreciation": depreciation}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -657,6 +672,50 @@ def build_accounting_tools(
                 "movement": movement_key, "left": str(left - amount),
                 **({"not_booked": why} if why else {})}  # fmt: skip
 
+    async def assets_add(
+        name: str, account: str, value: float, in_service: str, life_months: int
+    ) -> dict:
+        """Register a fixed asset; it depreciates linearly from the month after
+        *in_service*, posted when each month is closed.
+
+        Args:
+            name: What it is (e.g. "Laptop Dell").
+            account: Its fixed-asset account (20x / 21x, e.g. 2131, 214, 205).
+            value: Entry value, without VAT.
+            in_service: Date put into service (YYYY-MM-DD).
+            life_months: Useful life in months (from the catalogue of useful lives).
+        """
+        try:
+            asset = await FixedAssets(services.current().store).add(
+                name, account, Decimal(str(value)), in_service, int(life_months)
+            )
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"asset": {"id": asset.id, "name": asset.name, "account": asset.account,
+                          "value": str(asset.value), "in_service": asset.in_service,
+                          "life_months": asset.life_months}}  # fmt: skip
+
+    async def assets_list(period: str = "") -> dict:
+        """The client's fixed assets with this month's depreciation.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        try:
+            period = resolve_period(period)
+            assets = await FixedAssets(services.current().store).list()
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {
+            "period": period,
+            "assets": [
+                {"id": a.id, "name": a.name, "account": a.account, "value": str(a.value),
+                 "in_service": a.in_service, "life_months": a.life_months,
+                 "this_month": str(monthly_depreciation(a, period))}
+                for a in assets
+            ],
+        }  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -669,6 +728,8 @@ def build_accounting_tools(
         bank_import,
         bank_movements,
         bank_confirm_match,
+        assets_add,
+        assets_list,
     ]
     if bus is not None:
         fns.append(accounting_queue)
