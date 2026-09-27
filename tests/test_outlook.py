@@ -149,3 +149,13 @@ def test_the_reminders_template_is_valid_against_the_real_tools() -> None:
     names = {t.name for t in build_accounting_tools(DocumentServices(DocumentsConfig()))}
     path = Path(__file__).resolve().parent.parent / "ui/templates/payment_reminders.graph.json"
     parse_graph_spec("payment_reminders", json.loads(path.read_text()), available_tools=names)
+
+
+def test_overdue_invoices_carry_their_reminder_history() -> None:
+    from langclaw.accounting.outlook import overdue_receivables
+
+    a = _inv("s1", "out", 100, "2026-08-01", partner="Alfa")
+    a["fields"].update(invoice_number="FC-1", reminders=["2026-09-01", "2026-09-15"])
+    (alfa,) = overdue_receivables([a], on=date(2026, 9, 30))
+    inv = alfa["invoices"][0]
+    assert inv["reminders_sent"] == 2 and inv["last_reminder"] == "2026-09-15"

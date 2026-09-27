@@ -205,7 +205,8 @@ def overdue_receivables(
         entry["invoices"].append(
             {"bucket_key": row.get("bucket_key"), "number": f.get("invoice_number", ""),
              "issued": row.get("document_date"), "due": due, "days_overdue": late,
-             "outstanding": left}
+             "outstanding": left, "reminders_sent": len(f.get("reminders") or []),
+             "last_reminder": (f.get("reminders") or [""])[-1]}
         )  # fmt: skip
     for entry in by_partner.values():
         entry["invoices"].sort(key=lambda i: -i["days_overdue"])
