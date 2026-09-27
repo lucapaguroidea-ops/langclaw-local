@@ -749,6 +749,71 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return json.loads(json.dumps(result, default=str))
 
+    async def partner_statement(partner_cui: str, date_from: str = "", date_to: str = "") -> dict:
+        """A partner's statement (fișa partenerului): opening balance, every movement
+        on its partner accounts (401/404/408, 411/4111/418) with a running balance
+        (debit − credit: positive means they owe the client), and the closing balance.
+
+        Args:
+            partner_cui: The partner's tax ID, as on its invoices (e.g. RO87654321).
+            date_from: First day (YYYY-MM-DD); empty: from the beginning.
+            date_to: Last day (YYYY-MM-DD); empty: up to today.
+        """
+        if not partner_cui.strip():
+            return {"error": "Give the partner_cui (the partner's tax ID)."}
+        try:
+            start = date.fromisoformat(date_from) if date_from else None
+            end = date.fromisoformat(date_to) if date_to else None
+            lines = await Journal(services.current().store).partner_lines(partner_cui, end)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        cent = Decimal("0.01")
+        opening = sum(
+            (Decimal(x["debit"]) - Decimal(x["credit"]) for x in lines
+             if start and x["entry_date"] < start),
+            Decimal(0),
+        )  # fmt: skip
+        balance, movements = opening, []
+        for x in lines:
+            if start and x["entry_date"] < start:
+                continue
+            balance += Decimal(x["debit"]) - Decimal(x["credit"])
+            movements.append(
+                {"date": x["entry_date"].isoformat(), "document": x["bucket_key"],
+                 "account": x["account"], "explanation": x["explanation"],
+                 "debit": str(Decimal(x["debit"]).quantize(cent)),
+                 "credit": str(Decimal(x["credit"]).quantize(cent)),
+                 "balance": str(balance.quantize(cent))}
+            )  # fmt: skip
+        name = next((x["partner_name"] for x in lines if x["partner_name"]), "")
+        return {
+            "partner": {"cui": partner_cui, "name": name},
+            "opening": str(opening.quantize(cent)),
+            "movements": movements,
+            "closing": str(balance.quantize(cent)),
+        }
+
+    async def partner_balances(day: str = "") -> dict:
+        """Every partner with an open balance on *day*: what customers owe (41x) and
+        what the client owes suppliers (40x) — the list for balance confirmations.
+
+        Args:
+            day: The date (YYYY-MM-DD); empty: today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            rows = await Journal(services.current().store).partner_balances(on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        cent = Decimal("0.01")
+        partners = [
+            {"cui": r["partner_cui"], "name": r["name"],
+             "receivable": str(Decimal(r["rec"]).quantize(cent)),
+             "payable": str(Decimal(r["pay"]).quantize(cent))}
+            for r in rows if r["rec"] or r["pay"]
+        ]  # fmt: skip
+        return {"day": on.isoformat(), "partners": partners}
+
     fns = [
         accounting_context,
         accounting_check,
@@ -764,6 +829,8 @@ def build_accounting_tools(
         assets_add,
         assets_list,
         accounting_results,
+        partner_statement,
+        partner_balances,
     ]
     if bus is not None:
         fns.append(accounting_queue)

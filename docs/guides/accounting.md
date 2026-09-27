@@ -172,6 +172,21 @@ person to approve or edit it before it reaches the client. The limits live in
 `langclaw/accounting/outlook.py:LIMITS` — reference data for your accountant
 to review, like the VAT table.
 
+## Partner statements and balances
+
+Invoices and payments both carry the partner's tax ID into the journal, so:
+
+- `partner_statement(partner_cui, date_from, date_to)` returns the partner's
+  statement (fișa partenerului). It has the opening balance, every movement on
+  the partner accounts (401/404/408, 411/4111/418) with a running balance, and
+  the closing balance. The balance is debit − credit, so a positive balance
+  means the partner owes the client.
+- `partner_balances(day)` returns every partner with an open balance on a day:
+  what customers owe (41x) and what the client owes suppliers (40x). This is
+  the list to send balance confirmations from.
+
+Entries booked by hand without a partner tax ID don't appear here.
+
 ## Results and income tax
 
 `accounting_results(period)` computes the profit and loss for the month and the

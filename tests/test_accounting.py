@@ -837,3 +837,33 @@ async def test_results_come_from_the_journal(acme) -> None:
     assert res["tax_estimate"]["regime"] == "micro"
     assert float(res["tax_estimate"]["tax"]) == round(sales / 100, 2)
     assert facts["results_ytd"]["tax_estimate"] == res["tax_estimate"]
+
+
+@needs_pg
+async def test_partner_statement_and_balances(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    cui, gross = sale["fields"]["customer_cui"], round(float(sale["amount"]), 2)
+    first = round(gross * 0.4, 2)
+    await scoped.bucket.put(
+        "bank/s1.sta", _mt940(("C", first, f"avans {sale['fields']['invoice_number']}"))
+    )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        await tools["bank_import"].ainvoke({"key": "bank/s1.sta"})
+        st = await tools["partner_statement"].ainvoke({"partner_cui": cui})
+        balances = await tools["partner_balances"].ainvoke({"day": "2026-12-31"})
+        missing = await tools["partner_statement"].ainvoke({"partner_cui": ""})
+    assert st["partner"]["cui"] == cui and st["opening"] == "0.00"
+    assert [m["debit"] for m in st["movements"]] == [f"{gross:.2f}", "0.00"]
+    assert st["movements"][-1]["balance"] == st["closing"] == f"{gross - first:.2f}"
+    row = next(b for b in balances["partners"] if b["cui"] == cui)
+    assert row["receivable"] == f"{gross - first:.2f}" and row["payable"] == "0.00"
+    assert "partner_cui" in missing["error"]
