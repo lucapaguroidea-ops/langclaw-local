@@ -8,6 +8,8 @@ Accounting tools — the steps of the ``accounting_proposal`` workflow.
 - ``journal_post``: posts an entry — only if the checks pass.
 - ``accounting_defer``: marks an invoice for manual booking.
 - ``accounting_queue``: starts the workflow for invoices waiting for an entry.
+- ``accounting_period_report`` / ``accounting_period_close``: a month's trial
+  balance, VAT summary (D300 draft figures) and blockers; closing locks it.
 - ``accounting_export``: exports posted invoices to accounting software (SAGA
   import zip in the client's bucket under ``exports/<target>/``).
 
@@ -23,7 +25,9 @@ from typing import TYPE_CHECKING, Any
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
+from langclaw.accounting.period import blockers, parse_period, trial_balance, vat_summary
 from langclaw.accounting.vat import allowed_vat_rates
+from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
 from langclaw.tenants import current_tenant
 
@@ -33,7 +37,7 @@ if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus
     from langclaw.documents.tools import DocumentServices
 
-_ERRORS = (DocumentStoreError, JournalError, ExportUnavailable, ValueError)
+_ERRORS = (BucketError, DocumentStoreError, JournalError, ExportUnavailable, ValueError)
 _INVOICE_TYPES = ("invoice", "credit_note")
 
 
@@ -279,7 +283,80 @@ def build_accounting_tools(
             return {"exported": [], "skipped": batch.skipped}
         return {"key": key, "url": url, "exported": batch.exported, "skipped": batch.skipped}
 
-    fns = [accounting_context, accounting_check, journal_post, accounting_defer, accounting_export]
+    async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
+        start, end = parse_period(period)
+        svc = services.current()
+        journal = Journal(svc.store)
+        docs = [
+            r
+            for doc_type in _INVOICE_TYPES
+            for r in await svc.store.search(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            )
+        ]
+        booked = [d for d in docs if d.get("status") in ("posted", "exported")]
+        closed = {p["period"]: p for p in await journal.closed_periods()}
+        report = {
+            "period": period,
+            "closed": closed.get(period),
+            "blockers": blockers(docs),
+            "trial_balance": trial_balance(await journal.lines_between(start, end)),
+            "vat": vat_summary(booked),
+            "invoices": len(docs),
+        }
+        if len(docs) >= 200:
+            report["note"] = "Over 200 invoices in the month: the report covers the first 200."
+        return svc, json.loads(json.dumps(report, default=str))
+
+    async def accounting_period_report(period: str) -> dict:
+        """A month's close report: trial balance, VAT summary (D300 draft), blockers.
+
+        Args:
+            period: The month, as YYYY-MM.
+        """
+        try:
+            _, report = await _period_report(period)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return report
+
+    async def accounting_period_close(period: str, closed_by: str = "") -> dict:
+        """Close a month: refused while invoices lack an entry; afterwards nothing
+        can be posted with a date in it. Saves the report in the client's bucket.
+
+        Args:
+            period: The month, as YYYY-MM.
+            closed_by: Who closed it.
+        """
+        try:
+            svc, report = await _period_report(period)
+            if report["closed"]:
+                return {"error": f"Period {period} is already closed.", "closed": report["closed"]}
+            if report["blockers"]:
+                return {
+                    "error": f"{len(report['blockers'])} invoice(s) in {period} have no entry yet.",
+                    "blockers": report["blockers"],
+                }
+            if not report["trial_balance"]["balanced"]:
+                return {"error": "The trial balance doesn't balance; check the journal."}
+            key = f"reports/{period}/close.json"
+            await svc.bucket.put(
+                key, json.dumps(report, indent=2).encode(), content_type="application/json"
+            )
+            await Journal(svc.store).close_period(period, closed_by=closed_by)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"closed": period, "report_key": key, "vat": report["vat"]}
+
+    fns = [
+        accounting_context,
+        accounting_check,
+        journal_post,
+        accounting_defer,
+        accounting_export,
+        accounting_period_report,
+        accounting_period_close,
+    ]
     if bus is not None:
         fns.append(accounting_queue)
     return [StructuredTool.from_function(coroutine=fn, parse_docstring=True) for fn in fns]

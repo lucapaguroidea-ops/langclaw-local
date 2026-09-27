@@ -156,6 +156,9 @@ async def acme():
     root = DocumentStore(PG)
     pool = await root._db()
     await pool.execute("DROP SCHEMA IF EXISTS tenant_acme CASCADE")
+    from langclaw.accounting.journal import Journal
+
+    Journal._ready.clear()  # the schema was dropped: the table cache is stale
     with moto.mock_aws():
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="docs")
@@ -378,3 +381,55 @@ async def test_posted_invoices_export_to_saga_once(acme) -> None:
         assert len(again["exported"]) == len(rows)
         nextup = await tools["accounting_export"].ainvoke({"target": "nextup"})
         assert "NextUp" in nextup["error"]
+
+
+@needs_pg
+async def test_closing_a_period_needs_every_invoice_booked_then_locks_it(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = str(rows[0]["document_date"])[:7]
+    in_period = [r for r in rows if str(r["document_date"]).startswith(period)]
+    with tenant_scope(client):
+        bad = await tools["accounting_period_report"].ainvoke({"period": "Sept"})
+        assert "YYYY-MM" in bad["error"]
+        refused = await tools["accounting_period_close"].ainvoke({"period": period})
+        assert "no entry yet" in refused["error"] and len(refused["blockers"]) == len(in_period)
+
+        for row in in_period:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        report = await tools["accounting_period_report"].ainvoke({"period": period})
+        assert report["blockers"] == [] and report["trial_balance"]["balanced"]
+        vat = report["vat"]
+        expected = sum(
+            (1 if r["fields"]["direction"] == "out" else -1) * float(r["fields"]["total_vat"])
+            for r in in_period
+        )
+        assert round(float(vat["payable"]) - float(vat["refundable"]), 2) == round(expected, 2)
+
+        closed = await tools["accounting_period_close"].ainvoke(
+            {"period": period, "closed_by": "ana"}
+        )
+        assert closed["closed"] == period
+        saved, _ = await scoped.bucket.get(closed["report_key"])
+        assert json.loads(saved)["period"] == period
+        again = await tools["accounting_period_close"].ainvoke({"period": period})
+        assert "already closed" in again["error"]
+
+        # nothing can be posted into a closed month
+        from langclaw.accounting.journal import Journal
+
+        late = {**in_period[0], "bucket_key": "late.xml"}
+        await scoped.store.save("late.xml", {k: late[k] for k in ("doc_type", "document_date",
+                                "amount", "fields", "sender", "receiver")})  # fmt: skip
+        posted = await tools["journal_post"].ainvoke(
+            {"bucket_key": "late.xml", "proposal": _entry_for(late)}
+        )
+        assert "is closed" in posted["error"]
+        assert await Journal(scoped.store).get("late.xml") is None
