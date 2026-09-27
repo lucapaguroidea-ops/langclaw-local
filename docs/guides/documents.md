@@ -33,7 +33,7 @@ Railway the bucket needs no extra settings.
 | `bucket_link(key, expires_minutes)` | A temporary download link |
 | `bucket_new_files(prefix, limit)` | Files not yet in the `documents` table (for a scheduled scan) |
 | `documents_save(bucket_key, sender, receiver, document_date, doc_type, amount, currency, summary, status, fields)` | Insert **or update** the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra `fields` merge into a JSON column |
-| `documents_search(text, sender, receiver, doc_type, date_from, date_to, status, limit)` | Filter filed documents (case-insensitive; `text` searches summary, file name, and extra fields) |
+| `documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit)` | Filter filed documents (case-insensitive; `text` searches summary, file name, and extra fields). `fields` filters on type-specific details: `{"jurisdiction": "Delaware"}`, or `{"notice.days": "90"}` for a nested value |
 | `documents_get(bucket_key)` | One record |
 | `documents_semantic_search(query, ...filters, limit)` | *With `EMBEDDING_MODEL`:* records ranked by meaning ("power bills" finds electricity invoices), each with a `similarity` 0–1; the same filters as `documents_search` narrow them |
 | `documents_reindex(limit)` | *With `EMBEDDING_MODEL`:* embed records saved before it was on (or whose embedding failed); repeat while `remaining` > 0 |
@@ -92,8 +92,12 @@ amount, currency, summary, confidence) → check
   review rejected   → mark_rejected (status "rejected")
 ```
 
-Change the threshold in the `check` node. Add fields to `classify.output` and
-pass them to `save`'s `fields` to keep more.
+Besides the fixed fields, `classify` returns `details`: whatever else matters for
+*that kind* of document (an invoice's `tax_id` / `iban` / `due_date`, a contract's
+`jurisdiction` / `notice_days`), which `save` stores in `fields`. Every record can
+have different details; search them with `documents_search(fields=...)`, or the
+**Fields** box on the console's Documents page (`jurisdiction=Delaware`).
+Change the threshold in the `check` node.
 
 **`bucket_scan`** is one step, `documents_start_intake`. It covers files that
 reach the bucket some other way, such as an upload or a sync. Schedule it by asking the
@@ -106,6 +110,10 @@ so scanned runs know where to report.
 - OCR is a vision-model call per page (first `OCR_MAX_PAGES` pages), used only
   when a file has no text layer. Pick a model that accepts images; a text-only
   model makes the call fail and `bucket_read` returns the error as a `note`.
+- Field filters are substring matches over the JSON `fields` column, so they
+  scan rows (like semantic search) — fine at tens of thousands of documents.
+  Details keep whatever names the model picks; describing the names you want in
+  the `details` output (as the template does) keeps them consistent.
 - Semantic search compares vectors in plain SQL — no pgvector extension needed —
   by scanning every embedded row. That's fast up to tens of thousands of documents;
   beyond that, a pgvector index is the next step. Changing `EMBEDDING_MODEL` means

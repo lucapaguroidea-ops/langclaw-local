@@ -155,9 +155,14 @@ class DocumentStore:
         date_from: str = "",
         date_to: str = "",
         status: str = "",
+        fields: dict[str, str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """Filter documents; text filters are case-insensitive substring matches."""
+        """Filter documents; text filters are case-insensitive substring matches.
+
+        *fields* filters on extracted extras: ``{"jurisdiction": "delaware"}``
+        (a dotted key reaches nested values, e.g. ``"notice.days"``).
+        """
         where, args = _filters(
             text=text,
             sender=sender,
@@ -166,6 +171,7 @@ class DocumentStore:
             date_from=date_from,
             date_to=date_to,
             status=status,
+            fields=fields,
         )
         args.append(max(1, min(int(limit), 200)))
         sql = "SELECT * FROM documents"
@@ -184,7 +190,7 @@ class DocumentStore:
         )
 
     async def similar(
-        self, vector: list[float], *, limit: int = 10, **filters: str
+        self, vector: list[float], *, limit: int = 10, **filters: Any
     ) -> list[dict[str, Any]]:
         """Rows ranked by cosine similarity to *vector* (``similarity`` in each row).
 
@@ -237,6 +243,7 @@ def _filters(
     date_from: str = "",
     date_to: str = "",
     status: str = "",
+    fields: dict[str, str] | None = None,
     first_param: int = 1,
 ) -> tuple[list[str], list[Any]]:
     """SQL ``WHERE`` clauses + args; placeholders start at ``$first_param``."""
@@ -262,6 +269,12 @@ def _filters(
         add("document_date <= ?", _as_date(date_to))
     if status:
         add("status = ?", status)
+    for key, value in (fields or {}).items():
+        if not key or value in (None, ""):
+            continue
+        args.append(key.split("."))
+        path = f"${first_param + len(args) - 1}::text[]"
+        add(f"fields #>> {path} ILIKE ?", f"%{value}%")
     return where, args
 
 

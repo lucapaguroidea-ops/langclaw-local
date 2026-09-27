@@ -257,3 +257,18 @@ def mermaid_html(code: str, *, height: int = 480) -> str:
 </script>
 <style>body{{margin:0;font-family:sans-serif}} .mermaid svg{{max-height:{height - 20}px}}</style>
 """
+
+
+def parse_field_filters(text: str) -> tuple[dict[str, str], list[str]]:
+    """``"jurisdiction=Delaware, tax_id=IT0123"`` → ``({...}, problems)``."""
+    filters: dict[str, str] = {}
+    problems: list[str] = []
+    for part in (p.strip() for p in (text or "").split(",")):
+        if not part:
+            continue
+        name, sep, value = part.partition("=")
+        if not sep or not name.strip() or not value.strip():
+            problems.append(f"{part!r} — write name=value")
+            continue
+        filters[name.strip()] = value.strip()
+    return filters, problems

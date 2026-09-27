@@ -512,6 +512,9 @@ class ApiChannel(BaseChannel):
                 date_from=query.get("date_from", ""),
                 date_to=query.get("date_to", ""),
                 status=query.get("status", ""),
+                fields={
+                    k.removeprefix("field."): v for k, v in query.items() if k.startswith("field.")
+                },
                 limit=_parse_int(query.get("limit"), default=50, name="limit"),
             )
         )

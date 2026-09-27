@@ -120,3 +120,15 @@ def test_graph_diff_shows_changes_only() -> None:
     diff = editor.graph_diff(DOC_FLOW, changed)
     assert '+  "description": "new words",' in diff
     assert editor.graph_diff(DOC_FLOW, DOC_FLOW) == ""
+
+
+def test_parse_field_filters() -> None:
+    assert editor.parse_field_filters("") == ({}, [])
+    assert editor.parse_field_filters("jurisdiction=State of Delaware, tax_id = IT0123") == (
+        {"jurisdiction": "State of Delaware", "tax_id": "IT0123"},
+        [],
+    )
+    assert editor.parse_field_filters("notice.days=90, oops") == (
+        {"notice.days": "90"},
+        ["'oops' — write name=value"],
+    )

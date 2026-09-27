@@ -291,9 +291,12 @@ async def test_documents_routes(setup) -> None:
     plane.list_documents = Fake().list_documents
     plane.get_document = Fake().get_document
     resp = await client.get(
-        "/v1/documents", params={"q": "rent", "semantic": "true", "limit": "5"}, headers=AUTH
+        "/v1/documents",
+        params={"q": "rent", "semantic": "true", "limit": "5", "field.notice.days": "90"},
+        headers=AUTH,
     )
     body = await resp.json()
+    assert body["kw"]["fields"] == {"notice.days": "90"}
     assert body["kw"]["q"] == "rent" and body["kw"]["semantic"] is True and body["kw"]["limit"] == 5
     detail = await client.get("/v1/documents/inbox/2026-09-27/a-b.pdf", headers=AUTH)
     assert (await detail.json())["document"]["bucket_key"] == "inbox/2026-09-27/a-b.pdf"

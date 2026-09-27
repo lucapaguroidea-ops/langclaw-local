@@ -78,7 +78,7 @@ curl "$URL/v1/turns/<turn_id>?wait=25" -H "Authorization: Bearer $TOKEN"
 | `POST /v1/runs/{run_id}/cancel` | Cancel a run executing in this gateway |
 | `GET /v1/reviews` | Reviews waiting for an answer (`?workflow=`) |
 | `POST /v1/runs/{run_id}/review` | Answer a review: `{"action": "approve" \| "edit" \| "reject", "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}`. The run continues on the channel that started it. A second answer is a **409** whose `decision` says who answered first, and where. |
-| `GET /v1/documents` | Filed documents (read-only). `?q=` searches text — or ranks by meaning with `&semantic=true` when `documents.embedding_model` is set — plus `sender`, `receiver`, `doc_type`, `date_from`, `date_to`, `status`, `limit`. Returns `{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}` (`semantic`: whether meaning search is available); ranked rows carry `similarity` 0–1 |
+| `GET /v1/documents` | Filed documents (read-only). `?q=` searches text — or ranks by meaning with `&semantic=true` when `documents.embedding_model` is set — plus `sender`, `receiver`, `doc_type`, `date_from`, `date_to`, `status`, `limit`, and `field.<name>=<text>` for type-specific details (e.g. `field.jurisdiction=Delaware`). Returns `{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}` (`semantic`: whether meaning search is available); ranked rows carry `similarity` 0–1 |
 | `GET /v1/documents/{bucket_key}` | One record + a 1-hour download `link` for its file |
 | `GET /v1/schedules` | Scheduled jobs |
 | `POST /v1/schedules` | `{"name", "channel", "user_id", "message" \| "workflow_name", "cron_expr" \| "every_seconds", "chat_id"?, "workflow_input"?}` |

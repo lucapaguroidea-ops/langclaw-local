@@ -738,10 +738,18 @@ def page_documents(lc: LangclawClient) -> None:
         doc_type = cols[1].text_input("Type", placeholder="invoice")
         status = cols[2].selectbox("Status", STATUSES, format_func=lambda s: s or "any")
         by_meaning = cols[3].toggle("By meaning", value=True, help="Semantic search")
-        dates = st.columns(2)
+        dates = st.columns(3)
         date_from = dates[0].date_input("From", value=None)
         date_to = dates[1].date_input("To", value=None)
+        field_text = dates[2].text_input(
+            "Fields",
+            placeholder="jurisdiction=Delaware, tax_id=IT0123",
+            help="Match type-specific details the intake extracted (name=value, comma-separated).",
+        )
         st.form_submit_button("Search")
+    fields, problems = editor.parse_field_filters(field_text)
+    for problem in problems:
+        st.warning(f"Ignored field filter {problem}")
     result = _call(
         lc.documents,
         q,
@@ -751,6 +759,7 @@ def page_documents(lc: LangclawClient) -> None:
         status=status,
         date_from=date_from.isoformat() if date_from else "",
         date_to=date_to.isoformat() if date_to else "",
+        fields=fields,
     )
     if not result:
         return
@@ -822,8 +831,15 @@ def _document_detail(lc: LangclawClient, key: str) -> None:
     if doc.get("summary"):
         st.write(doc["summary"])
     if doc.get("fields"):
-        with st.expander("Other extracted fields"):
-            st.json(doc["fields"])
+        st.write("**Details**")
+        st.dataframe(
+            [
+                {"field": k, "value": json.dumps(v) if isinstance(v, dict | list) else str(v)}
+                for k, v in doc["fields"].items()
+            ],
+            hide_index=True,
+            width="stretch",
+        )
 
 
 def page_status(lc: LangclawClient) -> None:
