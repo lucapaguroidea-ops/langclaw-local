@@ -903,7 +903,13 @@ class Langclaw:
         install_redacting_streams(redactor)
 
         # Configure stdlib logging (used by channel implementations).
-        logging.basicConfig(level=cfg.log_level.upper())
+        # Below WARNING → stdout, WARNING+ → stderr: hosts like Railway label
+        # every stderr line an error, which buried real errors under INFO noise.
+        quiet = logging.StreamHandler(sys.stdout)
+        quiet.addFilter(lambda record: record.levelno < logging.WARNING)
+        loud = logging.StreamHandler(sys.stderr)
+        loud.setLevel(logging.WARNING)
+        logging.basicConfig(level=cfg.log_level.upper(), handlers=[quiet, loud])
         for handler in logging.getLogger().handlers:
             handler.setFormatter(
                 RedactingFormatter(
@@ -915,9 +921,17 @@ class Langclaw:
         # Configure loguru (used by GatewayManager, middleware, tools).
         # diagnose=False: tracebacks must not dump local variable values.
         logger.remove()
+        level = cfg.log_level.upper()
+        warning_no = logger.level("WARNING").no
         logger.add(
-            make_redacting_sink(redactor, sys.stderr.write),
-            level=cfg.log_level.upper(),
+            make_redacting_sink(redactor, lambda m: sys.stdout.write(m)),
+            level=level,
+            filter=lambda record: record["level"].no < warning_no,
+            diagnose=False,
+        )
+        logger.add(
+            make_redacting_sink(redactor, lambda m: sys.stderr.write(m)),
+            level=max(logger.level(level).no, warning_no),
             diagnose=False,
         )
 

@@ -185,7 +185,7 @@ capabilities:
 | Call | Does |
 |---|---|
 | `await steps().llm(prompt, schema=Model, system=..., model=...)` | One model call, no tools. With `schema`, a validated Pydantic object; otherwise text. `model` overrides the default model. |
-| `await steps().tool(name, **kwargs)` | Call a registered tool. |
+| `await steps().tool(name, **kwargs)` | Call a registered tool. A tool that *returns* an error (`{"error": ...}` or `"Error: ..."`) fails the step with `WorkflowStepError`, so the run shows **failed** with the tool's message instead of completing with nothing done. Catch it in a code node to handle it yourself. |
 | `await steps().subagent(type, prompt)` | Delegate to a registered subagent (its own tools and context window). |
 | `request_review(message, data=..., editable=...)` | Pause the run for a person; returns their decision. |
 
