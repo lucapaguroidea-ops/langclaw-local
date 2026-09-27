@@ -1143,6 +1143,7 @@ class GatewayManager:
         # the same default-deny allowlist the `workflow_<name>` tool gate applies
         # on the agent path (otherwise dispatching via the bus would bypass it).
         perms = self._config.permissions
+        role = ""
         if getattr(perms, "enabled", False):
             from langclaw.middleware.permissions import allowed_workflow_names
 
@@ -1201,6 +1202,7 @@ class GatewayManager:
                         "context_id": msg.context_id,
                         "chat_id": msg.chat_id,
                     },
+                    role=role,
                 )
             # A run paused for review already sent its review request (via the
             # runtime's review hook) — don't repeat it as plain text.

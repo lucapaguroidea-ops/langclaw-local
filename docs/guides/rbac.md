@@ -67,6 +67,14 @@ The unified capability filter runs as middleware **before the LLM sees the tools
 
 Subagents and workflows have an additional gate: even if a subagent type appears in the toolset, the `task` tool checks `RoleConfig.subagents` at call time.
 
+**Inside a workflow run**, tool steps follow the role of whoever *started* the run
+(from chat, the `workflow_<name>` tool, cron, or the API): a step calling a tool
+that role isn't granted fails the run with "The run's role 'clerk' may not use
+tool 'documents_save' — grant it in permissions.roles.clerk.tools". The role is
+stored with the run, so it still applies after a review or a restart. A run
+started without a known user (e.g. a scheduled scan) uses `default_role`. Model
+calls and subagent steps inside a workflow aren't tool-gated.
+
 ## Startup validation
 
 `validate_capability_registry` runs at startup and raises `ValueError` if any axis is misconfigured — missing `RoleConfig` field, unreserved name prefix, or no enforcement shape. Misconfiguration fails loudly rather than silently passing through.

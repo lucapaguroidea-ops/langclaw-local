@@ -745,7 +745,9 @@ class Langclaw:
         if self._workflow_runtime is None:
             from langclaw.workflows.files import WorkflowFiles
 
-            runtime = WorkflowRuntime(effective_config.workflows)
+            runtime = WorkflowRuntime(
+                effective_config.workflows, permissions=effective_config.permissions
+            )
             runtime.files = WorkflowFiles(
                 self._config.agents.workflows_dir,
                 registry=self._workflows,

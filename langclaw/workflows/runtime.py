@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from langclaw.workflows.graph.runner import GraphRunResult, GraphWorkflowRunner
 
 if TYPE_CHECKING:
-    from langclaw.config.schema import WorkflowsConfig
+    from langclaw.config.schema import PermissionsConfig, WorkflowsConfig
     from langclaw.workflows.executor import StepExecutor
     from langclaw.workflows.files import WorkflowFiles
     from langclaw.workflows.registry import WorkflowSpec
@@ -36,9 +36,15 @@ class WorkflowRuntime:
     """
 
     def __init__(
-        self, config: WorkflowsConfig, *, runner: GraphWorkflowRunner | None = None
+        self,
+        config: WorkflowsConfig,
+        *,
+        runner: GraphWorkflowRunner | None = None,
+        permissions: PermissionsConfig | None = None,
     ) -> None:
         self._config = config
+        #: RBAC definitions handed to every runner (tool steps obey the run's role).
+        self.permissions = permissions
         self._run_gate = asyncio.Semaphore(max(1, config.max_concurrent_runs))
         self._executor_factory: ExecutorFactory | None = None
         self._graph_runner: GraphWorkflowRunner | None = None
@@ -73,6 +79,7 @@ class WorkflowRuntime:
     def set_graph_runner(self, runner: GraphWorkflowRunner) -> None:
         """Use *runner* for workflow runs; its nodes use the live agent toolset."""
         runner.set_executor_provider(self._step_executor)
+        runner.permissions = self.permissions
         if self._review_hook is not None:
             runner.review_hook = self._review_hook
         self._graph_runner = runner
@@ -99,12 +106,17 @@ class WorkflowRuntime:
         run_id: str,
         trigger: str = "",
         reply_to: dict[str, str] | None = None,
+        role: str = "",
     ) -> GraphRunResult:
-        """Start a run; returns when it finishes or pauses for review."""
+        """Start a run; returns when it finishes or pauses for review.
+
+        *role* is the starting user's RBAC role: with permissions on, the run's
+        tool steps may only use tools that role is granted.
+        """
         validated = spec.validate_input(run_input)
         async with self._run_gate:
             return await self.graph_runner.start(
-                spec, validated, run_id=run_id, trigger=trigger, reply_to=reply_to
+                spec, validated, run_id=run_id, trigger=trigger, reply_to=reply_to, role=role
             )
 
     #: Alias used by bus dispatch and cron.
