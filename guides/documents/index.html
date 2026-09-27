@@ -680,6 +680,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#e-factura-romania" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        e-Factura (Romania)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scans-and-photos-ocr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1307,6 +1318,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#e-factura-romania" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        e-Factura (Romania)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scans-and-photos-ocr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1509,6 +1531,45 @@ away from conversation state and lets you back up / restore it on its own.</p>
 client's own folder (<code>tenants/&lt;id&gt;/…</code>) and table (<code>tenant_&lt;id&gt;.documents</code>);
 keys like <code>inbox/…</code> are relative to it. A chat linked to no client gets no
 document access, and chat intake tells the sender so.</p>
+<h2 id="e-factura-romania">e-Factura (Romania)<a class="headerlink" href="#e-factura-romania" title="Permanent link">&para;</a></h2>
+<p>Romanian B2B invoices travel through ANAF's RO e-Factura as UBL XML, which is
+structured and legally authoritative, so importing them needs <strong>no OCR and no
+model</strong>. With <code>LANGCLAW__DOCUMENTS__EFACTURA__MODE</code> set, the <code>efactura_sync</code> tool:</p>
+<ol>
+<li>lists the client's SPV messages (last <code>days</code>, max 60) — invoices <em>received</em>
+   (from suppliers) and <em>sent</em> (to customers);</li>
+<li>downloads each new one (a zip with the invoice and ANAF's signature) and
+   stores the invoice under the client's folder as <code>efactura/&lt;received|sent&gt;/&lt;id&gt;.xml</code>;</li>
+<li>parses it (<code>langclaw.documents.efactura.ubl</code>) into a record: supplier and
+   customer with their tax ids, number, dates, totals, the VAT breakdown per rate,
+   and every line — <code>fields.direction</code> is <code>in</code> or <code>out</code>, <code>fields.source</code> is
+   <code>efactura</code>;</li>
+<li>files it once: re-running the sync skips what's already there. An invoice
+   whose totals don't add up is still filed, as <code>needs_review</code>, with
+   <code>fields.problems</code> saying why.</li>
+</ol>
+<p>With <a href="../tenants/">clients</a> on, each client syncs its own tax id (set on the
+Clients page); otherwise <code>LANGCLAW__DOCUMENTS__EFACTURA__CIF</code>. Schedule it per
+client with the <strong>e-Factura sync</strong> template (save it as <code>efactura_sync</code>, then ask
+the bot in the client's chat to run <code>efactura_sync</code> every morning).</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>demo</code></td>
+<td>Realistic dummy invoices (CIUS-RO, 21% / 11% VAT, suppliers like utilities and shops), the same set per tax id — for building and testing before ANAF access exists. Clearly not real data.</td>
+</tr>
+<tr>
+<td><code>anaf</code></td>
+<td>ANAF's API (<code>api.anaf.ro/{prod,test}/FCTEL/rest/listaMesajeFactura</code>, <code>descarcare</code>) with <code>LANGCLAW__DOCUMENTS__EFACTURA__TOKEN</code>.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="scans-and-photos-ocr">Scans and photos (OCR)<a class="headerlink" href="#scans-and-photos-ocr" title="Permanent link">&para;</a></h2>
 <p>Files with a text layer are read directly. When there's none — a scanned PDF, a
 phone photo of a receipt — and <code>OCR_MODEL</code> names a vision-capable model,
@@ -1561,6 +1622,12 @@ so scanned runs know where to report.</p>
 <li>OCR is a vision-model call per page (first <code>OCR_MAX_PAGES</code> pages), used only
   when a file has no text layer. Pick a model that accepts images; a text-only
   model makes the call fail and <code>bucket_read</code> returns the error as a <code>note</code>.</li>
+<li>e-Factura <code>anaf</code> mode: the OAuth token is set by hand. ANAF issues it only
+  through a qualified digital certificate, and neither getting nor refreshing it
+  is automated yet. The API calls follow ANAF's documented endpoints, but have
+  only been tested against recorded response shapes, not the live service. The
+  signature file in each zip is kept by ANAF, not verified here, and the paged
+  list endpoint (for very high volumes) isn't used.</li>
 <li>Field filters are substring matches over the JSON <code>fields</code> column, so they
   scan rows (like semantic search) — fine at tens of thousands of documents.
   Details keep whatever names the model picks; describing the names you want in
