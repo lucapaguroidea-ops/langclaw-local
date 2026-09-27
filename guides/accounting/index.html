@@ -758,6 +758,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#advice-whats-coming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advice: what's coming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1346,6 +1357,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#advice-whats-coming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advice: what's coming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1526,6 +1548,27 @@ client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.</p>
 <p>These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration file (DUKIntegrator) is a later slice.</p>
+<h2 id="advice-whats-coming">Advice: what's coming<a class="headerlink" href="#advice-whats-coming" title="Permanent link">&para;</a></h2>
+<p><code>accounting_outlook(period, months=6)</code> computes, for one client, the facts to
+advise on — nothing here is written by a model:</p>
+<ul>
+<li><strong>deadlines</strong> — returns due after the month, all on the 25th of the next
+  month: D300 and D394 (VAT payers; at quarter end when the profile has
+  <code>"vat_period": "quarterly"</code>), D112 (profile <code>employees</code>), D100 (profile
+  <code>"tax_regime": "micro"</code>, at quarter end).</li>
+<li><strong>thresholds</strong> — the year's net sales against the limits that would change
+  the client's regime: VAT registration (395,000 RON, for <code>"vat_payer": false</code>)
+  and the micro-enterprise ceiling (250,000 EUR in 2025, 100,000 EUR from 2026;
+  needs <code>eur_ron</code> on the profile). Flagged <code>warn</code> from 80%.</li>
+<li><strong>vat_trend</strong> — net VAT per month over the last <em>months</em>, the latest against
+  the average before it.</li>
+<li><strong>unbooked_invoices</strong> — the month's invoices still without an entry.</li>
+</ul>
+<p>The <strong>monthly_advice</strong> template (<code>ui/templates/monthly_advice.graph.json</code>) runs
+it, has the model write advice that must cite these facts, and pauses for a
+person to approve or edit it before it reaches the client. The limits live in
+<code>langclaw/accounting/outlook.py:LIMITS</code> — reference data for your accountant
+to review, like the VAT table.</p>
 <h2 id="export-to-saga-nextup">Export to SAGA / NextUp<a class="headerlink" href="#export-to-saga-nextup" title="Permanent link">&para;</a></h2>
 <p><code>accounting_export(target="saga", date_from=, date_to=, again=False)</code> takes the
 client's <strong>posted</strong> invoices and builds one batch, stored in the client's bucket
@@ -1558,6 +1601,8 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
   into a real SAGA install yet — try one batch before relying on it.</li>
 <li>Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
   line that carries 0% needs the rate filled in before it adds up.</li>
+<li>Advice covers deadlines, regime limits and the VAT trend only — cash flow,
+  payments and profit forecasts need bank data that isn't imported yet.</li>
 </ul>
 
 
