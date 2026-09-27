@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from langclaw.workflows.executor import StepRequest
+from langclaw.workflows.executor import StepRequest, WorkflowStepError
 from langclaw.workflows.graph import (
     GraphSpecError,
     GraphWorkflowRunner,
@@ -397,3 +397,42 @@ def test_mermaid_for_files_shows_labels_conditions_and_review_paths() -> None:
     assert "n_review -->|approve| n_save" in drawing
     assert "n_review -.->|reject| END" in drawing
     assert "n_save --> END" in drawing
+
+
+# -- tool errors fail the step -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad", [{"error": "No intake workflow: set documents.intake_workflow."}, "Error: boom"]
+)
+async def test_a_tool_that_returns_an_error_fails_the_run(bad: Any) -> None:
+    class Failing(FakeExecutor):
+        async def __call__(self, request: StepRequest) -> Any:
+            if request.kind == "tool" and request.target == "bucket_read":
+                self.calls.append(request)
+                return bad
+            return await super().__call__(request)
+
+    ex = Failing()
+    runner = runner_with(ex)
+    spec = graph_spec_of("doc_flow", DOC_FLOW)
+    with pytest.raises(WorkflowStepError, match="Tool 'bucket_read' failed: "):
+        await runner.start(spec, {"key": "x.pdf"}, run_id="doc_flow:err")
+    record = await runner.index.get("doc_flow:err")
+    assert record["status"] == "failed"
+    assert record["error"].startswith("Tool 'bucket_read' failed: ")
+    assert ex.tools_called() == ["bucket_read"]  # nothing ran after the failed step
+
+
+async def test_a_result_that_merely_mentions_error_is_not_a_failure() -> None:
+    class Chatty(FakeExecutor):
+        async def __call__(self, request: StepRequest) -> Any:
+            if request.kind == "tool" and request.target == "bucket_read":
+                self.calls.append(request)
+                return {"text": "Error handling policy, page 2", "error_count": 0}
+            return await super().__call__(request)
+
+    result = await runner_with(Chatty()).start(
+        graph_spec_of("doc_flow", DOC_FLOW), {"key": "p.pdf"}, run_id="doc_flow:ok"
+    )
+    assert result.status == "completed"

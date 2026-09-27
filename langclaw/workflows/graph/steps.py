@@ -63,14 +63,37 @@ class WorkflowSteps:
         return result
 
     async def tool(self, name: str, **kwargs: Any) -> Any:
-        """Call a registered tool by name."""
-        return await self._executor(StepRequest(kind="tool", target=name, payload=kwargs))
+        """Call a registered tool by name.
+
+        langclaw tools report failure by *returning* ``{"error": ...}`` (or an
+        ``"Error: ..."`` string) rather than raising, so the agent can recover.
+        A workflow has no one to read that, so it becomes a failed step here —
+        the run stops and shows the error instead of "completing" with nothing
+        done. Catch :class:`WorkflowStepError` in a code node to handle it.
+
+        Raises:
+            WorkflowStepError: the tool is missing or returned an error.
+        """
+        result = await self._executor(StepRequest(kind="tool", target=name, payload=kwargs))
+        error = tool_error(result)
+        if error:
+            raise WorkflowStepError(f"Tool {name!r} failed: {error}")
+        return result
 
     async def subagent(self, subagent_type: str, prompt: str) -> str:
         """Delegate to a registered subagent and return its final reply."""
         return await self._executor(
             StepRequest(kind="subagent", target=subagent_type, payload=prompt)
         )
+
+
+def tool_error(result: Any) -> str:
+    """The error a tool *returned*, or ``""``: ``{"error": "..."}`` or ``"Error: ..."``."""
+    if isinstance(result, dict) and result.get("error"):
+        return str(result["error"])
+    if isinstance(result, str) and result.startswith("Error:"):
+        return result.removeprefix("Error:").strip()
+    return ""
 
 
 def steps() -> WorkflowSteps:
