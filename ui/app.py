@@ -834,7 +834,7 @@ def _document_detail(lc: LangclawClient, key: str) -> None:
         st.write("**Details**")
         st.dataframe(
             [
-                {"field": k, "value": json.dumps(v) if isinstance(v, (dict, list)) else str(v)}
+                {"field": k, "value": json.dumps(v) if isinstance(v, dict | list) else str(v)}
                 for k, v in doc["fields"].items()
             ],
             hide_index=True,
