@@ -27,6 +27,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
 from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fee, payment_entry
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
@@ -34,15 +35,24 @@ from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
-from langclaw.accounting.outlook import cash_position, deadlines, thresholds, trend
+from langclaw.accounting.outlook import (
+    cash_position,
+    deadlines,
+    overdue_receivables,
+    thresholds,
+    trend,
+)
 from langclaw.accounting.period import (
     blockers,
     document_state,
     parse_period,
     resolve_period,
+    settles_vat,
     trial_balance,
+    vat_settlement,
     vat_summary,
 )
+from langclaw.accounting.results import profit_and_loss, tax_estimate
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
@@ -324,6 +334,12 @@ def build_accounting_tools(
         )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
         closed = {p["period"]: p for p in await journal.closed_periods()}
+        settlement = None
+        if settles_vat(period, _profile()):
+            settlement = vat_settlement(
+                deductible=await journal.balance_until(end, "4426"),
+                collected=-await journal.balance_until(end, "4427"),
+            )
         report = {
             "period": period,
             "closed": closed.get(period),
@@ -331,6 +347,8 @@ def build_accounting_tools(
             "documents": document_state(month, _profile().get("expected_documents")),
             "trial_balance": trial_balance(await journal.lines_between(start, end)),
             "vat": vat_summary(booked),
+            "vat_settlement": settlement,
+            "depreciation": depreciation_entry(await FixedAssets(svc.store).list(), period),
             "invoices": len(docs),
         }
         if len(docs) >= 200:
@@ -352,8 +370,10 @@ def build_accounting_tools(
 
     async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
-        are missing; afterwards nothing
-        can be posted with a date in it. Saves the report in the client's bucket.
+        are missing. Posts the month's depreciation (6811 / 28xx) and, for VAT
+        payers, the VAT settlement (4426/4427 → 4423 or 4424); saves the report in
+        the client's bucket; then locks the month so nothing can be posted with a
+        date in it.
 
         Args:
             period: The month, as YYYY-MM (empty: last month).
@@ -375,6 +395,29 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            depreciation = report["depreciation"]
+            if depreciation:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/depreciation",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(
+                        doc, depreciation, approved_by=closed_by or "close"
+                    )
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
+            settled = report["vat_settlement"]
+            if settled:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/vat-settlement",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(doc, settled, approved_by=closed_by or "close")
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
+                _, report = await _period_report(period)  # with the settlement booked
             key = f"reports/{period}/close.json"
             await svc.bucket.put(
                 key, json.dumps(report, indent=2).encode(), content_type="application/json"
@@ -382,7 +425,8 @@ def build_accounting_tools(
             await Journal(svc.store).close_period(period, closed_by=closed_by)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"closed": period, "report_key": key, "vat": report["vat"]}
+        return {"closed": period, "report_key": key, "vat": report["vat"],
+                "vat_settlement": settled, "depreciation": depreciation}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -395,8 +439,9 @@ def build_accounting_tools(
 
     async def accounting_outlook(period: str = "", months: int = 6) -> dict:
         """Facts to advise a client on what's coming: returns due after the month,
-        how close the year's revenue is to regime limits, the VAT trend, and cash
-        (receivables / payables aging, bank balance, the next 30 days).
+        how close the year's revenue is to regime limits, the VAT trend, cash
+        (receivables / payables aging, bank balance, the next 30 days), and the
+        year's result with an income-tax estimate.
 
         Args:
             period: The month just finished, as YYYY-MM (empty: last month).
@@ -424,6 +469,7 @@ def build_accounting_tools(
             statements = await svc.store.search(
                 doc_type="bank_statement", date_to=end.isoformat(), limit=50
             )
+            results = await _results(svc, period)
         except _ERRORS as exc:
             return {"error": str(exc)}
         revenue = Decimal(0)
@@ -448,6 +494,10 @@ def build_accounting_tools(
             "vat_trend": trend(history),
             "unbooked_invoices": len(blockers(in_month)),
             "cash": cash_position(open_docs, on=end, bank_balance=bank),
+            "results_ytd": {
+                "year_to_date": results["year_to_date"],
+                "tax_estimate": results["tax_estimate"],
+            },
         }
         if len(year_docs) >= 200:
             facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
@@ -635,6 +685,160 @@ def build_accounting_tools(
                 "movement": movement_key, "left": str(left - amount),
                 **({"not_booked": why} if why else {})}  # fmt: skip
 
+    async def assets_add(
+        name: str, account: str, value: float, in_service: str, life_months: int
+    ) -> dict:
+        """Register a fixed asset; it depreciates linearly from the month after
+        *in_service*, posted when each month is closed.
+
+        Args:
+            name: What it is (e.g. "Laptop Dell").
+            account: Its fixed-asset account (20x / 21x, e.g. 2131, 214, 205).
+            value: Entry value, without VAT.
+            in_service: Date put into service (YYYY-MM-DD).
+            life_months: Useful life in months (from the catalogue of useful lives).
+        """
+        try:
+            asset = await FixedAssets(services.current().store).add(
+                name, account, Decimal(str(value)), in_service, int(life_months)
+            )
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"asset": {"id": asset.id, "name": asset.name, "account": asset.account,
+                          "value": str(asset.value), "in_service": asset.in_service,
+                          "life_months": asset.life_months}}  # fmt: skip
+
+    async def assets_list(period: str = "") -> dict:
+        """The client's fixed assets with this month's depreciation.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        try:
+            period = resolve_period(period)
+            assets = await FixedAssets(services.current().store).list()
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {
+            "period": period,
+            "assets": [
+                {"id": a.id, "name": a.name, "account": a.account, "value": str(a.value),
+                 "in_service": a.in_service, "life_months": a.life_months,
+                 "this_month": str(monthly_depreciation(a, period))}
+                for a in assets
+            ],
+        }  # fmt: skip
+
+    async def _results(svc: DocumentServices, period: str) -> dict[str, Any]:
+        start, end = parse_period(period)
+        journal = Journal(svc.store)
+        month = profit_and_loss(await journal.lines_between(start, end))
+        ytd = profit_and_loss(await journal.lines_between(date(start.year, 1, 1), end))
+        return {
+            "period": period,
+            "month": month,
+            "year_to_date": ytd,
+            "tax_estimate": tax_estimate(ytd, _profile()),
+        }
+
+    async def accounting_results(period: str = "") -> dict:
+        """Profit and loss from the journal for the month and the year to date, and
+        an estimate of the income tax (micro-enterprise or profit tax, per the
+        client's profile).
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        try:
+            result = await _results(services.current(), resolve_period(period))
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps(result, default=str))
+
+    async def partner_statement(partner_cui: str, date_from: str = "", date_to: str = "") -> dict:
+        """A partner's statement (fișa partenerului): opening balance, every movement
+        on its partner accounts (401/404/408, 411/4111/418) with a running balance
+        (debit − credit: positive means they owe the client), and the closing balance.
+
+        Args:
+            partner_cui: The partner's tax ID, as on its invoices (e.g. RO87654321).
+            date_from: First day (YYYY-MM-DD); empty: from the beginning.
+            date_to: Last day (YYYY-MM-DD); empty: up to today.
+        """
+        if not partner_cui.strip():
+            return {"error": "Give the partner_cui (the partner's tax ID)."}
+        try:
+            start = date.fromisoformat(date_from) if date_from else None
+            end = date.fromisoformat(date_to) if date_to else None
+            lines = await Journal(services.current().store).partner_lines(partner_cui, end)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        cent = Decimal("0.01")
+        opening = sum(
+            (Decimal(x["debit"]) - Decimal(x["credit"]) for x in lines
+             if start and x["entry_date"] < start),
+            Decimal(0),
+        )  # fmt: skip
+        balance, movements = opening, []
+        for x in lines:
+            if start and x["entry_date"] < start:
+                continue
+            balance += Decimal(x["debit"]) - Decimal(x["credit"])
+            movements.append(
+                {"date": x["entry_date"].isoformat(), "document": x["bucket_key"],
+                 "account": x["account"], "explanation": x["explanation"],
+                 "debit": str(Decimal(x["debit"]).quantize(cent)),
+                 "credit": str(Decimal(x["credit"]).quantize(cent)),
+                 "balance": str(balance.quantize(cent))}
+            )  # fmt: skip
+        name = next((x["partner_name"] for x in lines if x["partner_name"]), "")
+        return {
+            "partner": {"cui": partner_cui, "name": name},
+            "opening": str(opening.quantize(cent)),
+            "movements": movements,
+            "closing": str(balance.quantize(cent)),
+        }
+
+    async def partner_balances(day: str = "") -> dict:
+        """Every partner with an open balance on *day*: what customers owe (41x) and
+        what the client owes suppliers (40x) — the list for balance confirmations.
+
+        Args:
+            day: The date (YYYY-MM-DD); empty: today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            rows = await Journal(services.current().store).partner_balances(on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        cent = Decimal("0.01")
+        partners = [
+            {"cui": r["partner_cui"], "name": r["name"],
+             "receivable": str(Decimal(r["rec"]).quantize(cent)),
+             "payable": str(Decimal(r["pay"]).quantize(cent))}
+            for r in rows if r["rec"] or r["pay"]
+        ]  # fmt: skip
+        return {"day": on.isoformat(), "partners": partners}
+
+    async def receivables_overdue(day: str = "", min_days: int = 7) -> dict:
+        """Customers with unpaid sales invoices past due, with the invoices, days
+        overdue and what's left to pay — what payment reminders are drafted from.
+
+        Args:
+            day: The date to measure against (YYYY-MM-DD); empty: today.
+            min_days: Only invoices at least this many days past due.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            rows = await _invoices(services.current(), date(1900, 1, 1), on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        tenant = current_tenant()
+        customers = overdue_receivables(rows, on=on, min_days=max(0, int(min_days)))
+        return json.loads(json.dumps(
+            {"day": on.isoformat(), "client": tenant.name if tenant else "",
+             "customers": customers}, default=str))  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -647,6 +851,12 @@ def build_accounting_tools(
         bank_import,
         bank_movements,
         bank_confirm_match,
+        assets_add,
+        assets_list,
+        accounting_results,
+        partner_statement,
+        partner_balances,
+        receivables_overdue,
     ]
     if bus is not None:
         fns.append(accounting_queue)

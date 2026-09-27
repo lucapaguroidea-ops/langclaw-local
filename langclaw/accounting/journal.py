@@ -172,6 +172,51 @@ class Journal:
         )
         return [dict(r) for r in rows]
 
+    async def balance_until(self, day: date, account: str) -> Decimal:
+        """Debit − credit on *account* (and its analytics, e.g. ``4426.01``) for
+        entries dated up to *day*."""
+        pool = await self._db()
+        value = await pool.fetchval(
+            f"SELECT COALESCE(SUM(l.debit - l.credit), 0) FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date <= $1 AND (l.account = $2 OR l.account LIKE $2 || '.%')",
+            day,
+            account,
+        )
+        return Decimal(value).quantize(_CENT)
+
+    async def partner_lines(self, partner_cui: str, until: date | None = None) -> list[dict]:
+        """Lines on partner accounts (40x / 41x) of entries for *partner_cui*, oldest
+        first, up to *until*."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.entry_date, e.bucket_key, e.partner_name, l.account, l.debit, l.credit, "
+            f"l.explanation FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.partner_cui = $1 AND (l.account LIKE '40%' OR l.account LIKE '41%') "
+            "AND ($2::date IS NULL OR e.entry_date <= $2) ORDER BY e.entry_date, l.id",
+            partner_cui,
+            until,
+        )
+        return [dict(r) for r in rows]
+
+    async def partner_balances(self, day: date) -> list[dict]:
+        """Per partner up to *day*: receivable (41x debit − credit) and payable (40x
+        credit − debit)."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.partner_cui, max(e.partner_name) AS name, "
+            "COALESCE(SUM(CASE WHEN l.account LIKE '41%' THEN l.debit - l.credit END), 0) AS rec, "
+            "COALESCE(SUM(CASE WHEN l.account LIKE '40%' THEN l.credit - l.debit END), 0) AS pay "
+            f"FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.partner_cui <> '' AND e.entry_date <= $1 "
+            "AND (l.account LIKE '40%' OR l.account LIKE '41%') "
+            "GROUP BY e.partner_cui ORDER BY e.partner_cui",
+            day,
+        )
+        return [dict(r) for r in rows]
+
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""
         pool = await self._db()

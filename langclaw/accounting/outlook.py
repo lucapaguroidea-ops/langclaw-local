@@ -176,3 +176,37 @@ def cash_position(
             else None
         ),
     }
+
+
+def overdue_receivables(
+    invoices: list[dict[str, Any]], *, on: date, min_days: int = 1
+) -> list[dict[str, Any]]:
+    """Unpaid sales invoices at least *min_days* past due on *on*, grouped by
+    customer (largest outstanding first), each with its invoices (oldest first)."""
+    by_partner: dict[str, dict[str, Any]] = {}
+    for row in invoices:
+        f = row.get("fields") or {}
+        if f.get("direction") != "out" or f.get("paid_on") or row.get("doc_type") == "credit_note":
+            continue
+        due = str(f.get("due_date") or "")[:10]
+        if not due:
+            continue
+        late = (on - date.fromisoformat(due)).days
+        left = (Decimal(str(row.get("amount") or 0)) - Decimal(str(f.get("paid_amount") or 0))
+                ).quantize(_CENT)  # fmt: skip
+        if late < min_days or left <= 0:
+            continue
+        name = row.get("receiver") or "?"
+        entry = by_partner.setdefault(
+            name, {"partner": name, "cui": f.get("customer_cui", ""), "outstanding": Decimal(0),
+                   "invoices": []}
+        )  # fmt: skip
+        entry["outstanding"] += left
+        entry["invoices"].append(
+            {"bucket_key": row.get("bucket_key"), "number": f.get("invoice_number", ""),
+             "issued": row.get("document_date"), "due": due, "days_overdue": late,
+             "outstanding": left}
+        )  # fmt: skip
+    for entry in by_partner.values():
+        entry["invoices"].sort(key=lambda i: -i["days_overdue"])
+    return sorted(by_partner.values(), key=lambda e: e["outstanding"], reverse=True)

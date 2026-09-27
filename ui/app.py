@@ -900,7 +900,9 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
     if not alerts:
         st.success("Nothing needs attention for this month.")
     report, outlook, bank = view["report"], view["outlook"], view["bank"]
-    close_tab, outlook_tab, bank_tab = st.tabs(["Close", "Outlook", "Bank"])
+    close_tab, outlook_tab, results_tab, partners_tab, bank_tab = st.tabs(
+        ["Close", "Outlook", "Results", "Partners", "Bank"]
+    )
     with close_tab:
         if "error" not in report:
             if report.get("closed"):
@@ -940,6 +942,25 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
                 st.dataframe([cash[side]["buckets"]], hide_index=True)
                 if cash[side]["top_overdue"]:
                     st.dataframe(cash[side]["top_overdue"], hide_index=True)
+    results, partners = view.get("results") or {}, view.get("partners") or {}
+    with results_tab:
+        if "error" not in results:
+            for label, key in (("This month", "month"), ("Year to date", "year_to_date")):
+                pl = results[key]
+                cols = st.columns(3)
+                cols[0].metric(f"{label}: revenue", pl["revenue"])
+                cols[1].metric("Expenses", pl["expenses"])
+                cols[2].metric("Result", pl["result"])
+            tax = results["tax_estimate"]
+            st.metric(f"Estimated income tax ({tax['regime']}, {tax['rate']}%)", tax["tax"])
+            st.caption(tax["note"])
+    with partners_tab:
+        if "error" not in partners:
+            if partners["partners"]:
+                st.caption(f"Open balances on {partners['day']} (40x payable, 41x receivable).")
+                st.dataframe(partners["partners"], hide_index=True)
+            else:
+                st.caption("No open partner balances.")
     with bank_tab:
         if "error" not in bank:
             st.caption(

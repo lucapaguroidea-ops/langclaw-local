@@ -329,7 +329,8 @@ def recent_months(today: Any, count: int = 12) -> list[str]:
 def overview_alerts(view: dict[str, Any]) -> list[str]:
     """What needs attention in an ``accounting_overview`` result, as short lines."""
     alerts: list[str] = []
-    parts = {"Close report": "report", "Outlook": "outlook", "Bank": "bank"}
+    parts = {"Close report": "report", "Outlook": "outlook", "Bank": "bank",
+             "Results": "results", "Partners": "partners"}  # fmt: skip
     for label, part in parts.items():
         if error := (view.get(part) or {}).get("error"):
             alerts.append(f"{label}: {error}")

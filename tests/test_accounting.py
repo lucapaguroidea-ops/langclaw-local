@@ -579,6 +579,7 @@ async def test_the_overview_gathers_a_clients_month(acme) -> None:
     assert view["period"] == view["report"]["period"] == view["outlook"]["period"] == period
     assert view["report"]["blockers"] and view["report"]["documents"]["missing"]
     assert "cash" in view["outlook"] and view["bank"]["movements"] == []
+    assert "year_to_date" in view["results"] and view["partners"]["partners"] == []
     bad = await accounting_overview(services, client, "sept")
     assert "YYYY-MM" in bad["report"]["error"]
 
@@ -736,3 +737,149 @@ async def test_a_payment_in_a_closed_month_is_applied_but_not_booked(acme) -> No
     assert out["paid"] and out["booked_entries"] == 0
     assert "closed" in out["not_booked"][0]["reason"]
     assert (await scoped.store.get(sale["bucket_key"]))["fields"]["paid_on"]
+
+
+@needs_pg
+async def test_closing_a_month_posts_the_vat_settlement(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.period import parse_period
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        for row in rows:  # every month up to the one we close
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        preview = await tools["accounting_period_report"].ainvoke({"period": period})
+        assert preview["vat_settlement"]["lines"]
+        closed = await tools["accounting_period_close"].ainvoke({"period": period})
+    assert closed["closed"] == period and closed["vat_settlement"] == preview["vat_settlement"]
+    journal = Journal(scoped.store)
+    _, end = parse_period(period)
+    assert await journal.balance_until(end, "4426") == Decimal("0.00")
+    assert await journal.balance_until(end, "4427") == Decimal("0.00")
+    net = await journal.balance_until(end, "4423") + await journal.balance_until(end, "4424")
+    sales_vat = sum(Decimal(r["fields"]["total_vat"]) for r in rows
+                    if r["fields"]["direction"] == "out")  # fmt: skip
+    buy_vat = sum(Decimal(r["fields"]["total_vat"]) for r in rows
+                  if r["fields"]["direction"] == "in")  # fmt: skip
+    assert net == buy_vat - sales_vat  # 4423 credit (−) / 4424 debit (+)
+
+
+@needs_pg
+async def test_closing_a_month_posts_depreciation(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.period import parse_period
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        bad = await tools["assets_add"].ainvoke(
+            {"name": "Stoc", "account": "371", "value": 10, "in_service": "2026-01-01",
+             "life_months": 12}
+        )  # fmt: skip
+        assert "2xx" in bad["error"]
+        added = await tools["assets_add"].ainvoke(
+            {"name": "Laptop", "account": "2131", "value": 3600, "in_service": "2025-01-15",
+             "life_months": 36}
+        )  # fmt: skip
+        assert added["asset"]["id"]
+        listed = await tools["assets_list"].ainvoke({"period": period})
+        assert listed["assets"][0]["this_month"] == "100.00"
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        closed = await tools["accounting_period_close"].ainvoke({"period": period})
+    assert closed["depreciation"]["lines"][0] == {
+        "account": "6811", "debit": "100.00", "credit": "0", "explanation": f"Amortizare {period}"
+    }  # fmt: skip
+    _, end = parse_period(period)
+    assert await Journal(scoped.store).balance_until(end, "2813") == Decimal("-100.00")
+
+
+@needs_pg
+async def test_results_come_from_the_journal(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    profile = {"vat_payer": True, "tax_regime": "micro"}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678", profile=profile)):
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        res = await tools["accounting_results"].ainvoke({"period": period})
+        facts = await tools["accounting_outlook"].ainvoke({"period": period})
+    year = [r for r in rows if str(r["document_date"])[:4] == period[:4]]
+    sales = sum(float(r["fields"]["total_net"]) for r in year if r["fields"]["direction"] == "out")
+    costs = sum(float(r["fields"]["total_net"]) for r in year if r["fields"]["direction"] == "in")
+    ytd = res["year_to_date"]
+    assert round(float(ytd["revenue"]), 2) == round(sales, 2)
+    assert round(float(ytd["expenses"]), 2) == round(costs, 2)
+    assert res["tax_estimate"]["regime"] == "micro"
+    assert float(res["tax_estimate"]["tax"]) == round(sales / 100, 2)
+    assert facts["results_ytd"]["tax_estimate"] == res["tax_estimate"]
+
+
+@needs_pg
+async def test_partner_statement_and_balances(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    cui, gross = sale["fields"]["customer_cui"], round(float(sale["amount"]), 2)
+    first = round(gross * 0.4, 2)
+    await scoped.bucket.put(
+        "bank/s1.sta", _mt940(("C", first, f"avans {sale['fields']['invoice_number']}"))
+    )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        await tools["bank_import"].ainvoke({"key": "bank/s1.sta"})
+        st = await tools["partner_statement"].ainvoke({"partner_cui": cui})
+        balances = await tools["partner_balances"].ainvoke({"day": "2026-12-31"})
+        missing = await tools["partner_statement"].ainvoke({"partner_cui": ""})
+    assert st["partner"]["cui"] == cui and st["opening"] == "0.00"
+    assert [m["debit"] for m in st["movements"]] == [f"{gross:.2f}", "0.00"]
+    assert st["movements"][-1]["balance"] == st["closing"] == f"{gross - first:.2f}"
+    row = next(b for b in balances["partners"] if b["cui"] == cui)
+    assert row["receivable"] == f"{gross - first:.2f}" and row["payable"] == "0.00"
+    assert "partner_cui" in missing["error"]
+
+
+@needs_pg
+async def test_receivables_overdue_lists_unpaid_sales(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sales = [r for r in await scoped.store.search(doc_type="invoice", limit=20)
+             if r["fields"]["direction"] == "out" and r["fields"].get("due_date")]  # fmt: skip
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31", "min_days": 1})
+    listed = {i["bucket_key"] for c in out["customers"] for i in c["invoices"]}
+    assert listed == {r["bucket_key"] for r in sales} and out["client"] == "ACME"

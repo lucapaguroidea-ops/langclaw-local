@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 async def accounting_overview(
     services: DocumentServices, tenant: Tenant | None, period: str
 ) -> dict[str, Any]:
-    """``{"period", "report", "outlook", "bank"}`` for *tenant* and *period*.
+    """``{"period", "report", "outlook", "bank", "results", "partners"}`` for
+    *tenant* and *period* (partner balances as of the month's last day).
 
     Each part is the tool's own result, so a failing part carries its
     ``{"error": ...}`` without hiding the others.
@@ -34,4 +35,17 @@ async def accounting_overview(
         report = await tools["accounting_period_report"].ainvoke({"period": period})
         outlook = await tools["accounting_outlook"].ainvoke({"period": period})
         bank = await tools["bank_movements"].ainvoke({"unmatched_only": True, "limit": 50})
-    return {"period": period, "report": report, "outlook": outlook, "bank": bank}
+        results = await tools["accounting_results"].ainvoke({"period": period})
+        end = report.get("period") and _month_end(report["period"])
+        partners = await tools["partner_balances"].ainvoke({"day": end or ""})
+    return {"period": period, "report": report, "outlook": outlook, "bank": bank,
+            "results": results, "partners": partners}  # fmt: skip
+
+
+def _month_end(period: str) -> str:
+    from langclaw.accounting.period import parse_period
+
+    try:
+        return parse_period(period)[1].isoformat()
+    except ValueError:
+        return ""

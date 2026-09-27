@@ -111,3 +111,27 @@ def test_an_empty_period_means_last_month() -> None:
     assert resolve_period(" 2026-03 ", today=date(2026, 9, 27)) == "2026-03"
     with pytest.raises(ValueError, match="YYYY-MM"):
         resolve_period("march", today=date(2026, 9, 27))
+
+
+def test_vat_settlement_clears_4426_and_4427_into_4423_or_4424() -> None:
+    from langclaw.accounting.period import vat_settlement
+
+    payable = vat_settlement(deductible=D("235.54"), collected=D("462.00"))
+    assert [(x["account"], x["debit"], x["credit"]) for x in payable["lines"]] == [
+        ("4427", "462.00", "0"), ("4426", "0", "235.54"), ("4423", "0", "226.46")]  # fmt: skip
+    refund = vat_settlement(deductible=D("500.00"), collected=D("100.00"))
+    assert [(x["account"], x["debit"], x["credit"]) for x in refund["lines"]] == [
+        ("4427", "100.00", "0"), ("4424", "400.00", "0"), ("4426", "0", "500.00")]  # fmt: skip
+    only_in = vat_settlement(deductible=D("50.00"), collected=D("0"))
+    assert [x["account"] for x in only_in["lines"]] == ["4424", "4426"]
+    assert vat_settlement(deductible=D("0"), collected=D("0")) is None
+
+
+def test_settlement_is_due_monthly_or_at_quarter_end_for_vat_payers() -> None:
+    from langclaw.accounting.period import settles_vat
+
+    assert settles_vat("2026-08", {"vat_payer": True})
+    assert not settles_vat("2026-08", {"vat_payer": True, "vat_period": "quarterly"})
+    assert settles_vat("2026-09", {"vat_payer": True, "vat_period": "quarterly"})
+    assert not settles_vat("2026-09", {"vat_payer": False})
+    assert not settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})

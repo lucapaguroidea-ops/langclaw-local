@@ -62,8 +62,26 @@ so proposals get more consistent as the accountant approves them.
   a type counts as present when any document of that `doc_type` is dated in the
   month. Also lists the month's documents still marked `needs_review`.
 
+- **vat_settlement** — a preview of the month's VAT settlement entry, for VAT
+  payers (monthly, or at quarter end with `"vat_period": "quarterly"`). The
+  balances of 4426 and 4427 up to the month's last day are cleared into
+  4423 (payable) or 4424 (refundable):
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
+  collection, where the 4428 → 4427 transfer depends on payments and stays
+  with the accountant.
+
+- **depreciation** — the month's depreciation entry for the client's fixed
+  assets, previewed here and posted at close: D 6811 / C the
+  accumulated-depreciation account of each asset (2131 → 2813, 214 → 2814,
+  205 → 2805). Register assets with
+  `assets_add(name, account, value, in_service, life_months)`; `assets_list(period)`
+  shows this month's amounts. Depreciation is linear. It starts the month after
+  the asset goes into service, is `value / life_months` rounded to the ban, and
+  the last month takes the rounding.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
-expected documents are missing, or the balance is off; otherwise it saves the report to
+expected documents are missing, or the balance is off. Otherwise it posts the
+depreciation and the VAT settlement, dated the last day of the month, and saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change
@@ -154,6 +172,61 @@ person to approve or edit it before it reaches the client. The limits live in
 `langclaw/accounting/outlook.py:LIMITS` — reference data for your accountant
 to review, like the VAT table.
 
+## Partner statements and balances
+
+Invoices and payments both carry the partner's tax ID into the journal, so:
+
+- `partner_statement(partner_cui, date_from, date_to)` returns the partner's
+  statement (fișa partenerului). It has the opening balance, every movement on
+  the partner accounts (401/404/408, 411/4111/418) with a running balance, and
+  the closing balance. The balance is debit − credit, so a positive balance
+  means the partner owes the client.
+- `partner_balances(day)` returns every partner with an open balance on a day:
+  what customers owe (41x) and what the client owes suppliers (40x). This is
+  the list to send balance confirmations from.
+
+Entries booked by hand without a partner tax ID don't appear here.
+
+## Payment reminders
+
+`receivables_overdue(day, min_days=7)` lists the client's customers with unpaid
+sales invoices past due by at least `min_days`, largest first. Each customer
+comes with its invoices, their due dates, days overdue, and what's left to pay
+after partial payments.
+
+The **payment_reminders** template (`ui/templates/payment_reminders.graph.json`)
+works like this:
+
+1. It runs `receivables_overdue`.
+2. The model drafts one reminder per customer, in Romanian. Each reminder cites
+   exactly those invoices, and the tone gets firmer with the delay.
+3. The run pauses for a person to approve or edit the drafts.
+
+The approved drafts are the output. Nothing is sent automatically, because
+there's no email channel yet. Send them from the chat, or copy them into your
+mail client.
+
+## Results and income tax
+
+`accounting_results(period)` computes the profit and loss for the month and the
+year to date from the journal:
+
+- **Revenue:** class 7, so 709 discounts reduce it.
+- **Expenses:** class 6, without the income-tax accounts 691/697/698.
+- **Result:** revenue minus expenses, plus the income tax already booked.
+
+It also returns an **income-tax estimate** for the year so far:
+
+- **Micro-enterprise** (`"tax_regime": "micro"`): revenue × `micro_rate` (1% by
+  default; set 3% on the profile when it applies).
+- **Profit tax:** 16% of a positive result.
+
+It's a planning figure only. Non-deductible expenses, loss carry-forward,
+sponsorship credits and micro revenue exclusions stay with the accountant.
+
+`accounting_outlook` includes it as `results_ytd`, so the monthly advice can talk
+about the year's result and the tax to set aside.
+
 ## The monthly loop
 
 The **accounting_month** template (`ui/templates/accounting_month.graph.json`)
@@ -192,6 +265,9 @@ The **Client overview** page shows the chosen client and month. It uses
 - **Close tab:** the VAT position, the expected documents and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
+- **Results tab:** the month's and the year-to-date profit and loss, plus the
+  income-tax estimate.
+- **Partners tab:** open partner balances on the month's last day.
 - **Bank tab:** the open movements.
 
 The page is read-only. Posting, closing a month and confirming a match happen
@@ -236,3 +312,6 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 - Bank matching doesn't handle foreign-currency movements, fees netted out of a
   payment, or partial payments that don't name the invoice. Those stay in
   `bank_movements` for the accountant.
+- Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
+  accelerated methods, and assets bought in a closed month stay with the
+  accountant.
