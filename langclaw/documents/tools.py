@@ -68,6 +68,7 @@ class DocumentServices:
         self._ocr = ocr
         self._embeddings = embeddings
         self.require_tenant = require_tenant
+        self._spv: Any | None = None
         self.tenant_id: str | None = None
         self._parent: DocumentServices | None = None
         self._scoped: dict[str, DocumentServices] = {}
@@ -116,6 +117,17 @@ class DocumentServices:
                 self.config.ocr_model, max_pages=self.config.ocr_max_pages
             )
         return self._ocr
+
+    @property
+    def spv(self) -> Any:
+        """The e-Factura SPV client (``documents.efactura.mode``), created once."""
+        if self._parent is not None:
+            return self._parent.spv
+        if self._spv is None:
+            from langclaw.documents.efactura.sync import make_spv_client
+
+            self._spv = make_spv_client(self.config.efactura)
+        return self._spv
 
     @property
     def embeddings(self) -> Any | None:
@@ -489,6 +501,37 @@ def build_document_tools(
             )
         return {"started": new, "workflow": cfg.intake_workflow}
 
+    async def efactura_sync(days: int = 0) -> dict:
+        """Import this client's new e-Factura invoices from ANAF's SPV (received and sent).
+
+        Each invoice is filed once, with parties, dates, totals, VAT and lines read
+        straight from the XML. Safe to run repeatedly.
+
+        Args:
+            days: How many days back to look (1-60; default from config).
+        """
+        efactura = cfg.efactura
+        tenant = current_tenant() if services.require_tenant else None
+        cif = tenant.tax_id if tenant is not None else efactura.cif
+        try:
+            svc = services.current()
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        if not cif:
+            return {
+                "error": "No tax id to sync: set the client's tax id on the Clients page"
+                if tenant is not None
+                else "No tax id to sync: set LANGCLAW__DOCUMENTS__EFACTURA__CIF."
+            }
+        from langclaw.documents.efactura.spv import SpvError
+        from langclaw.documents.efactura.sync import sync_efactura
+
+        try:
+            result = await sync_efactura(svc, svc.spv, cif=cif, days=days or efactura.days)
+        except (SpvError, *_ERRORS) as exc:
+            return {"error": str(exc)}
+        return {"mode": efactura.mode, "cif": cif, **result}
+
     fns = [
         bucket_list,
         bucket_read,
@@ -500,6 +543,8 @@ def build_document_tools(
     ]
     if semantic:
         fns += [documents_semantic_search, documents_reindex]
+    if cfg.efactura.mode != "off":
+        fns.append(efactura_sync)
     if bus is not None:
         fns.append(documents_start_intake)
     return [StructuredTool.from_function(coroutine=fn, parse_docstring=True) for fn in fns]

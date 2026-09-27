@@ -1,0 +1,9 @@
+{
+  "description": "Import this client's new e-Factura invoices from ANAF's SPV (received and sent), parsed straight from the XML. Schedule it per client with the cron tool (workflow_name=efactura_sync) from the client's chat.",
+  "input": {},
+  "nodes": {
+    "sync": {"type": "tool", "tool": "efactura_sync", "args": {}}
+  },
+  "edges": [{"from": "START", "to": "sync"}],
+  "output": "sync"
+}

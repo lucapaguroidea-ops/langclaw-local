@@ -806,6 +806,28 @@ class BucketConfig(BaseModel):
         return bool(self.name and self.access_key and self.secret_key)
 
 
+class EFacturaConfig(BaseModel):
+    """Import invoices from ANAF's e-Factura (SPV) — no OCR, no model.
+
+    ``mode``: ``off`` (default), ``demo`` (realistic dummy invoices, for building
+    and testing), or ``anaf`` (the real API; needs ``token``).
+    Env: ``LANGCLAW__DOCUMENTS__EFACTURA__MODE=demo``
+    """
+
+    mode: Literal["off", "demo", "anaf"] = "off"
+    token: str = ""
+    """ANAF OAuth2 access token (issued to a qualified-certificate holder)."""
+    environment: Literal["prod", "test"] = "prod"
+    """ANAF endpoints to use (``test`` = ANAF's test environment)."""
+    cif: str = ""
+    """Fiscal code to sync when clients (tenants) are off; with clients, each
+    client's own tax id is used."""
+    days: int = 60
+    """How far back each sync looks (ANAF allows at most 60)."""
+    demo_invoices: int = 6
+    """Invoices the demo SPV serves per client."""
+
+
 class DocumentsConfig(BaseModel):
     """Document tools: a bucket for files, and a ``documents`` table for what was
     extracted from them (sender, receiver, date, summary, ...).
@@ -861,6 +883,9 @@ class DocumentsConfig(BaseModel):
 
     embedding_api_key: str = ""
     """API key for ``embedding_base_url``. Empty ⇒ ``OPENROUTER_API_KEY``."""
+
+    efactura: EFacturaConfig = Field(default_factory=EFacturaConfig)
+    """Import invoices from ANAF's e-Factura (adds the ``efactura_sync`` tool)."""
 
     @model_validator(mode="after")
     def _env_fallback(self) -> DocumentsConfig:

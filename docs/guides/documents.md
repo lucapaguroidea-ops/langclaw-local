@@ -49,6 +49,34 @@ client's own folder (`tenants/<id>/…`) and table (`tenant_<id>.documents`);
 keys like `inbox/…` are relative to it. A chat linked to no client gets no
 document access, and chat intake tells the sender so.
 
+## e-Factura (Romania)
+
+Romanian B2B invoices travel through ANAF's RO e-Factura as UBL XML, which is
+structured and legally authoritative, so importing them needs **no OCR and no
+model**. With `LANGCLAW__DOCUMENTS__EFACTURA__MODE` set, the `efactura_sync` tool:
+
+1. lists the client's SPV messages (last `days`, max 60) — invoices *received*
+   (from suppliers) and *sent* (to customers);
+2. downloads each new one (a zip with the invoice and ANAF's signature) and
+   stores the invoice under the client's folder as `efactura/<received|sent>/<id>.xml`;
+3. parses it (`langclaw.documents.efactura.ubl`) into a record: supplier and
+   customer with their tax ids, number, dates, totals, the VAT breakdown per rate,
+   and every line — `fields.direction` is `in` or `out`, `fields.source` is
+   `efactura`;
+4. files it once: re-running the sync skips what's already there. An invoice
+   whose totals don't add up is still filed, as `needs_review`, with
+   `fields.problems` saying why.
+
+With [clients](tenants.md) on, each client syncs its own tax id (set on the
+Clients page); otherwise `LANGCLAW__DOCUMENTS__EFACTURA__CIF`. Schedule it per
+client with the **e-Factura sync** template (save it as `efactura_sync`, then ask
+the bot in the client's chat to run `efactura_sync` every morning).
+
+| Mode | Source |
+|---|---|
+| `demo` | Realistic dummy invoices (CIUS-RO, 21% / 11% VAT, suppliers like utilities and shops), the same set per tax id — for building and testing before ANAF access exists. Clearly not real data. |
+| `anaf` | ANAF's API (`api.anaf.ro/{prod,test}/FCTEL/rest/listaMesajeFactura`, `descarcare`) with `LANGCLAW__DOCUMENTS__EFACTURA__TOKEN`. |
+
 ## Scans and photos (OCR)
 
 Files with a text layer are read directly. When there's none — a scanned PDF, a
@@ -117,6 +145,12 @@ so scanned runs know where to report.
 - OCR is a vision-model call per page (first `OCR_MAX_PAGES` pages), used only
   when a file has no text layer. Pick a model that accepts images; a text-only
   model makes the call fail and `bucket_read` returns the error as a `note`.
+- e-Factura `anaf` mode: the OAuth token is set by hand. ANAF issues it only
+  through a qualified digital certificate, and neither getting nor refreshing it
+  is automated yet. The API calls follow ANAF's documented endpoints, but have
+  only been tested against recorded response shapes, not the live service. The
+  signature file in each zip is kept by ANAF, not verified here, and the paged
+  list endpoint (for very high volumes) isn't used.
 - Field filters are substring matches over the JSON `fields` column, so they
   scan rows (like semantic search) — fine at tens of thousands of documents.
   Details keep whatever names the model picks; describing the names you want in
