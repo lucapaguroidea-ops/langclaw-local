@@ -828,6 +828,20 @@ class EFacturaConfig(BaseModel):
     """Invoices the demo SPV serves per client."""
 
 
+class AccountingConfig(BaseModel):
+    """Accounting proposals: a model proposes journal entries for filed invoices,
+    deterministic checks decide, a person reviews when in doubt, and only checked
+    entries are posted to the client's journal.
+
+    Env: ``LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true``
+    """
+
+    enabled: bool = False
+    """Add the ``accounting_*`` / ``journal_post`` tools."""
+    workflow: str = "accounting_proposal"
+    """Workflow ``accounting_queue`` starts for each invoice waiting for an entry."""
+
+
 class DocumentsConfig(BaseModel):
     """Document tools: a bucket for files, and a ``documents`` table for what was
     extracted from them (sender, receiver, date, summary, ...).
@@ -883,6 +897,9 @@ class DocumentsConfig(BaseModel):
 
     embedding_api_key: str = ""
     """API key for ``embedding_base_url``. Empty ⇒ ``OPENROUTER_API_KEY``."""
+
+    accounting: AccountingConfig = Field(default_factory=AccountingConfig)
+    """Accounting proposals for filed invoices (the ``accounting_*`` tools)."""
 
     efactura: EFacturaConfig = Field(default_factory=EFacturaConfig)
     """Import invoices from ANAF's e-Factura (adds the ``efactura_sync`` tool)."""

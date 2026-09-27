@@ -298,6 +298,14 @@ def create_claw_agent(
         from langclaw.documents.tools import build_document_tools, shared_services
 
         wf = config.workflows
+        if config.documents.accounting.enabled:
+            from langclaw.accounting.tools import build_accounting_tools
+
+            builtin_tools += build_accounting_tools(
+                shared_services(config.documents, require_tenant=config.tenants.enabled),
+                bus=bus,
+                report_to={"channel": wf.review_channel, "chat_id": wf.review_chat_id},
+            )
         builtin_tools += build_document_tools(
             shared_services(config.documents, require_tenant=config.tenants.enabled),
             bus=bus,

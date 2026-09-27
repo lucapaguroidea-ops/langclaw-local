@@ -43,6 +43,7 @@ API keys are the exception — they use the provider's own plain env var
 | `LANGCLAW__DOCUMENTS__EMBEDDING_MODEL` | `""` | embedding model for semantic search (e.g. `openai/text-embedding-3-small`); empty ⇒ off |
 | `LANGCLAW__DOCUMENTS__EMBEDDING_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible embeddings endpoint |
 | `LANGCLAW__DOCUMENTS__EMBEDDING_API_KEY` | `""` | key for that endpoint (falls back to `OPENROUTER_API_KEY`) |
+| `LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED` | `false` | accounting proposals: `accounting_*` / `journal_post` tools ([guide](../guides/accounting.md)) |
 | `LANGCLAW__DOCUMENTS__EFACTURA__MODE` | `off` | import invoices from ANAF e-Factura: `demo` (dummy invoices) or `anaf` |
 | `LANGCLAW__DOCUMENTS__EFACTURA__TOKEN` | `""` | ANAF OAuth access token (`anaf` mode) |
 | `LANGCLAW__DOCUMENTS__EFACTURA__ENVIRONMENT` | `prod` | `prod` or `test` ANAF endpoints |
