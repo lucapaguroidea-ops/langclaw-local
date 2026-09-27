@@ -809,3 +809,31 @@ async def test_closing_a_month_posts_depreciation(acme) -> None:
     }  # fmt: skip
     _, end = parse_period(period)
     assert await Journal(scoped.store).balance_until(end, "2813") == Decimal("-100.00")
+
+
+@needs_pg
+async def test_results_come_from_the_journal(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    profile = {"vat_payer": True, "tax_regime": "micro"}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678", profile=profile)):
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        res = await tools["accounting_results"].ainvoke({"period": period})
+        facts = await tools["accounting_outlook"].ainvoke({"period": period})
+    year = [r for r in rows if str(r["document_date"])[:4] == period[:4]]
+    sales = sum(float(r["fields"]["total_net"]) for r in year if r["fields"]["direction"] == "out")
+    costs = sum(float(r["fields"]["total_net"]) for r in year if r["fields"]["direction"] == "in")
+    ytd = res["year_to_date"]
+    assert round(float(ytd["revenue"]), 2) == round(sales, 2)
+    assert round(float(ytd["expenses"]), 2) == round(costs, 2)
+    assert res["tax_estimate"]["regime"] == "micro"
+    assert float(res["tax_estimate"]["tax"]) == round(sales / 100, 2)
+    assert facts["results_ytd"]["tax_estimate"] == res["tax_estimate"]

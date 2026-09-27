@@ -46,6 +46,7 @@ from langclaw.accounting.period import (
     vat_settlement,
     vat_summary,
 )
+from langclaw.accounting.results import profit_and_loss, tax_estimate
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
@@ -432,8 +433,9 @@ def build_accounting_tools(
 
     async def accounting_outlook(period: str = "", months: int = 6) -> dict:
         """Facts to advise a client on what's coming: returns due after the month,
-        how close the year's revenue is to regime limits, the VAT trend, and cash
-        (receivables / payables aging, bank balance, the next 30 days).
+        how close the year's revenue is to regime limits, the VAT trend, cash
+        (receivables / payables aging, bank balance, the next 30 days), and the
+        year's result with an income-tax estimate.
 
         Args:
             period: The month just finished, as YYYY-MM (empty: last month).
@@ -461,6 +463,7 @@ def build_accounting_tools(
             statements = await svc.store.search(
                 doc_type="bank_statement", date_to=end.isoformat(), limit=50
             )
+            results = await _results(svc, period)
         except _ERRORS as exc:
             return {"error": str(exc)}
         revenue = Decimal(0)
@@ -485,6 +488,10 @@ def build_accounting_tools(
             "vat_trend": trend(history),
             "unbooked_invoices": len(blockers(in_month)),
             "cash": cash_position(open_docs, on=end, bank_balance=bank),
+            "results_ytd": {
+                "year_to_date": results["year_to_date"],
+                "tax_estimate": results["tax_estimate"],
+            },
         }
         if len(year_docs) >= 200:
             facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
@@ -716,6 +723,32 @@ def build_accounting_tools(
             ],
         }  # fmt: skip
 
+    async def _results(svc: DocumentServices, period: str) -> dict[str, Any]:
+        start, end = parse_period(period)
+        journal = Journal(svc.store)
+        month = profit_and_loss(await journal.lines_between(start, end))
+        ytd = profit_and_loss(await journal.lines_between(date(start.year, 1, 1), end))
+        return {
+            "period": period,
+            "month": month,
+            "year_to_date": ytd,
+            "tax_estimate": tax_estimate(ytd, _profile()),
+        }
+
+    async def accounting_results(period: str = "") -> dict:
+        """Profit and loss from the journal for the month and the year to date, and
+        an estimate of the income tax (micro-enterprise or profit tax, per the
+        client's profile).
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        try:
+            result = await _results(services.current(), resolve_period(period))
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps(result, default=str))
+
     fns = [
         accounting_context,
         accounting_check,
@@ -730,6 +763,7 @@ def build_accounting_tools(
         bank_confirm_match,
         assets_add,
         assets_list,
+        accounting_results,
     ]
     if bus is not None:
         fns.append(accounting_queue)

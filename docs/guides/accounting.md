@@ -172,6 +172,27 @@ person to approve or edit it before it reaches the client. The limits live in
 `langclaw/accounting/outlook.py:LIMITS` — reference data for your accountant
 to review, like the VAT table.
 
+## Results and income tax
+
+`accounting_results(period)` computes the profit and loss for the month and the
+year to date from the journal:
+
+- **Revenue:** class 7, so 709 discounts reduce it.
+- **Expenses:** class 6, without the income-tax accounts 691/697/698.
+- **Result:** revenue minus expenses, plus the income tax already booked.
+
+It also returns an **income-tax estimate** for the year so far:
+
+- **Micro-enterprise** (`"tax_regime": "micro"`): revenue × `micro_rate` (1% by
+  default; set 3% on the profile when it applies).
+- **Profit tax:** 16% of a positive result.
+
+It's a planning figure only. Non-deductible expenses, loss carry-forward,
+sponsorship credits and micro revenue exclusions stay with the accountant.
+
+`accounting_outlook` includes it as `results_ytd`, so the monthly advice can talk
+about the year's result and the tax to set aside.
+
 ## The monthly loop
 
 The **accounting_month** template (`ui/templates/accounting_month.graph.json`)
