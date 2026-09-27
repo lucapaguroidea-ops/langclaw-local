@@ -1345,8 +1345,10 @@ so chat returns a <strong>turn</strong> you poll:</p>
 </span></code></pre></div>
 <ul>
 <li><code>messages</code> holds every output of the turn in order: <code>ai</code> text,
-  <code>tool_progress</code> (tool name and args in <code>metadata</code>), <code>tool_result</code>, or
-  <code>command</code>.</li>
+  <code>tool_progress</code> (tool name and args in <code>metadata</code>), <code>tool_result</code>,
+  <code>command</code>, or <code>review</code> — a workflow run paused for review (<code>metadata</code> holds
+  <code>run_id</code>, <code>interrupt_id</code>, <code>data</code>, <code>editable</code>; answer it with
+  <code>POST /v1/runs/{run_id}/review</code>).</li>
 <li><code>wait</code> (0–120 s) long-polls; omit it to return immediately.</li>
 <li><code>context_id</code> selects the conversation thread (memory is kept per
   <code>user_id</code> + <code>context_id</code>). <code>agent_name</code> routes to a named agent.</li>
@@ -1370,32 +1372,68 @@ so chat returns a <strong>turn</strong> you poll:</p>
 <td>Version, model, channels, agents, enabled features</td>
 </tr>
 <tr>
+<td><code>GET /v1/catalog</code></td>
+<td>Tool and subagent names workflow steps can use</td>
+</tr>
+<tr>
 <td><code>GET /v1/workflows</code></td>
-<td>Registered workflows (<code>mode</code>, <code>editable</code>)</td>
+<td>Workflows (<code>source</code>: <code>file</code> or <code>code</code>, <code>editable</code>, <code>valid</code>); files that failed to load are listed with their <code>errors</code></td>
 </tr>
 <tr>
 <td><code>GET /v1/workflows/{name}</code></td>
-<td>One workflow; saved (JS) workflows include <code>script</code></td>
+<td>One workflow with a <code>mermaid</code> drawing; file workflows include <code>graph</code> (the file)</td>
 </tr>
 <tr>
 <td><code>PUT /v1/workflows/{name}</code></td>
-<td>Create/replace a saved JS workflow: <code>{"script", "description"?, "uses_tools"?}</code></td>
+<td>Create/replace <code>workflows/&lt;name&gt;.graph.json</code>; the body is the file (see the <a href="../workflows/#as-a-file-workflowsnamegraphjson">workflows guide</a>). An invalid graph is a 400 listing every problem; unknown tools come back as <code>warnings</code>. The previous version is kept.</td>
+</tr>
+<tr>
+<td><code>POST /v1/workflows/{name}/validate</code></td>
+<td>Check a graph without saving: <code>{"valid", "errors", "warnings"}</code></td>
 </tr>
 <tr>
 <td><code>DELETE /v1/workflows/{name}</code></td>
-<td>Delete a saved workflow</td>
+<td>Delete a workflow file (its history is kept)</td>
+</tr>
+<tr>
+<td><code>GET /v1/workflows/{name}/versions</code></td>
+<td>Saved versions, newest first</td>
+</tr>
+<tr>
+<td><code>GET /v1/workflows/{name}/versions/{version}</code></td>
+<td>One saved version</td>
+</tr>
+<tr>
+<td><code>POST /v1/workflows/{name}/versions/{version}/restore</code></td>
+<td>Make that version current</td>
 </tr>
 <tr>
 <td><code>POST /v1/workflows/{name}/runs</code></td>
 <td>Start a run: <code>{"input"?}</code> → <code>202 {"run_id", "turn_id"}</code></td>
 </tr>
 <tr>
-<td><code>GET /v1/runs</code>, <code>GET /v1/runs/{run_id}</code></td>
-<td>Journaled runs (needs <code>workflows.resume_on_startup</code>)</td>
+<td><code>GET /v1/workflows/{name}/runs</code></td>
+<td>That workflow's runs (<code>?status=&amp;limit=</code>)</td>
+</tr>
+<tr>
+<td><code>GET /v1/runs</code></td>
+<td>Recent runs (<code>?workflow=&amp;status=&amp;limit=</code>)</td>
+</tr>
+<tr>
+<td><code>GET /v1/runs/{run_id}</code></td>
+<td>One run: status, trigger, reviews (with answers), final state, and each step's result</td>
 </tr>
 <tr>
 <td><code>POST /v1/runs/{run_id}/cancel</code></td>
-<td>Cancel a run this gateway started</td>
+<td>Cancel a run executing in this gateway</td>
+</tr>
+<tr>
+<td><code>GET /v1/reviews</code></td>
+<td>Reviews waiting for an answer (<code>?workflow=</code>)</td>
+</tr>
+<tr>
+<td><code>POST /v1/runs/{run_id}/review</code></td>
+<td>Answer a review: <code>{"action": "approve" \| "edit" \| "reject", "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}</code>. The run continues on the channel that started it. A second answer is a <strong>409</strong> whose <code>decision</code> says who answered first, and where.</td>
 </tr>
 <tr>
 <td><code>GET /v1/schedules</code></td>
@@ -1415,10 +1453,9 @@ so chat returns a <strong>turn</strong> you poll:</p>
 <code>/v1/turns/{turn_id}</code> for its progress lines and final output.</p>
 <p>Errors are <code>{"error": "..."}</code>: <strong>400</strong> invalid input, <strong>401</strong> bad token,
 <strong>404</strong> not found, <strong>409</strong> feature disabled (the message names the setting to
-turn on), <strong>503</strong> gateway not ready.</p>
-<p>Saved-workflow editing needs <code>LANGCLAW__WORKFLOWS__ENABLED=true</code>,
-<code>LANGCLAW__INTERPRETER__ENABLED=true</code> (plus <code>langclaw[interpreter]</code>) and a
-filesystem-rooted agent backend. Schedules need <code>LANGCLAW__CRON__ENABLED=true</code>.</p>
+turn on) or review already answered, <strong>503</strong> gateway not ready.</p>
+<p>Workflows need <code>LANGCLAW__WORKFLOWS__ENABLED=true</code>; schedules need
+<code>LANGCLAW__CRON__ENABLED=true</code>.</p>
 <h2 id="building-a-ui-with-appsmith">Building a UI with Appsmith<a class="headerlink" href="#building-a-ui-with-appsmith" title="Permanent link">&para;</a></h2>
 <p>Appsmith runs API queries <strong>server-side</strong>, so it can reach the private
 <code>railway.internal</code> address and the token never reaches the browser.</p>
@@ -1480,7 +1517,7 @@ filesystem-rooted agent backend. Schedules need <code>LANGCLAW__CRON__ENABLED=tr
 <td><code>saveWorkflow</code></td>
 <td>PUT</td>
 <td><code>/v1/workflows/{{wfName.text}}</code></td>
-<td><code>{"script": {{wfScript.text}}, "description": {{wfDesc.text}}}</code></td>
+<td><code>{{JSON.parse(wfGraph.text)}}</code></td>
 </tr>
 <tr>
 <td><code>deleteWorkflow</code></td>
@@ -1545,8 +1582,9 @@ filesystem-rooted agent backend. Schedules need <code>LANGCLAW__CRON__ENABLED=tr
   and <code>currentItem.messages.filter(m =&gt; m.type === "ai").map(m =&gt; m.content).join("\n\n")</code>
   (agent). Set <code>listTurns</code> to run on page load.</li>
 <li><strong>Workflows:</strong> a Table <code>wfTable</code> bound to <code>{{listWorkflows.data.workflows}}</code>;
-  Inputs <code>wfName</code>, <code>wfDesc</code>, a multi-line Input <code>wfScript</code> (default
-  <code>{{getWorkflow.data.script}}</code>, with <code>getWorkflow</code> run on row selection), and
+  an Input <code>wfName</code>, a multi-line Input <code>wfGraph</code> (default
+  <code>{{JSON.stringify(getWorkflow.data.graph, null, 2)}}</code>, with <code>getWorkflow</code> run on
+  row selection), and
   a JSON Input <code>wfInput</code>; Buttons for Save (<code>saveWorkflow</code>, then <code>listWorkflows</code>),
   Run (<code>{{Turns.runSelected()}}</code>), and Delete.</li>
 <li><strong>Schedules:</strong> a Table <code>schedTable</code> bound to <code>{{listSchedules.data.schedules}}</code>

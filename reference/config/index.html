@@ -1780,17 +1780,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.durable_steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;durable_steps
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#langclaw.config.schema.WorkflowsConfig.enabled" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1813,17 +1802,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.max_depth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;max_depth
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#langclaw.config.schema.WorkflowsConfig.max_steps_per_run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1835,10 +1813,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.resume_on_startup" class="md-nav__link">
+  <a href="#langclaw.config.schema.WorkflowsConfig.review_channel" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;resume_on_startup
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;review_channel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#langclaw.config.schema.WorkflowsConfig.review_chat_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;review_chat_id
       
     </span>
   </a>
@@ -2843,17 +2832,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.durable_steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;durable_steps
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#langclaw.config.schema.WorkflowsConfig.enabled" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2876,17 +2854,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.max_depth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;max_depth
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#langclaw.config.schema.WorkflowsConfig.max_steps_per_run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2898,10 +2865,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#langclaw.config.schema.WorkflowsConfig.resume_on_startup" class="md-nav__link">
+  <a href="#langclaw.config.schema.WorkflowsConfig.review_channel" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;resume_on_startup
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;review_channel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#langclaw.config.schema.WorkflowsConfig.review_chat_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;review_chat_id
       
     </span>
   </a>
@@ -3255,14 +3233,24 @@ API keys are the exception — they use the provider's own plain env var
 <td></td>
 </tr>
 <tr>
-<td><code>LANGCLAW__WORKFLOWS__DURABLE_STEPS</code></td>
-<td><code>false</code></td>
-<td>memoize completed steps</td>
+<td><code>LANGCLAW__WORKFLOWS__MAX_CONCURRENT_RUNS</code></td>
+<td><code>16</code></td>
+<td>runs executing at once (paused runs don't count)</td>
 </tr>
 <tr>
-<td><code>LANGCLAW__WORKFLOWS__RESUME_ON_STARTUP</code></td>
-<td><code>false</code></td>
-<td>re-drive interrupted runs (requires <code>DURABLE_STEPS</code>)</td>
+<td><code>LANGCLAW__WORKFLOWS__MAX_STEPS_PER_RUN</code></td>
+<td><code>1000</code></td>
+<td>default LangGraph <code>recursion_limit</code> per run</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__WORKFLOWS__REVIEW_CHANNEL</code></td>
+<td><code>""</code></td>
+<td>also send every review request here (e.g. <code>telegram</code>)</td>
+</tr>
+<tr>
+<td><code>LANGCLAW__WORKFLOWS__REVIEW_CHAT_ID</code></td>
+<td><code>""</code></td>
+<td>chat on that channel (your Telegram chat id)</td>
 </tr>
 <tr>
 <td><code>LANGCLAW__INTERPRETER__ENABLED</code></td>
@@ -3452,37 +3440,37 @@ are available in <code>os.environ</code> for <code>init_chat_model</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>langclaw/config/schema.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1000">1000</a></span>
-<span class="normal"><a href="#__codelineno-0-1001">1001</a></span>
-<span class="normal"><a href="#__codelineno-0-1002">1002</a></span>
-<span class="normal"><a href="#__codelineno-0-1003">1003</a></span>
-<span class="normal"><a href="#__codelineno-0-1004">1004</a></span>
-<span class="normal"><a href="#__codelineno-0-1005">1005</a></span>
-<span class="normal"><a href="#__codelineno-0-1006">1006</a></span>
-<span class="normal"><a href="#__codelineno-0-1007">1007</a></span>
-<span class="normal"><a href="#__codelineno-0-1008">1008</a></span>
-<span class="normal"><a href="#__codelineno-0-1009">1009</a></span>
-<span class="normal"><a href="#__codelineno-0-1010">1010</a></span>
-<span class="normal"><a href="#__codelineno-0-1011">1011</a></span>
-<span class="normal"><a href="#__codelineno-0-1012">1012</a></span>
-<span class="normal"><a href="#__codelineno-0-1013">1013</a></span>
-<span class="normal"><a href="#__codelineno-0-1014">1014</a></span>
-<span class="normal"><a href="#__codelineno-0-1015">1015</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1000"><a id="__codelineno-0-1000" name="__codelineno-0-1000"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
-</span><span id="__span-0-1001"><a id="__codelineno-0-1001" name="__codelineno-0-1001"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
-</span><span id="__span-0-1002"><a id="__codelineno-0-1002" name="__codelineno-0-1002"></a>
-</span><span id="__span-0-1003"><a id="__codelineno-0-1003" name="__codelineno-0-1003"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
-</span><span id="__span-0-1004"><a id="__codelineno-0-1004" name="__codelineno-0-1004"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
-</span><span id="__span-0-1005"><a id="__codelineno-0-1005" name="__codelineno-0-1005"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
-</span><span id="__span-0-1006"><a id="__codelineno-0-1006" name="__codelineno-0-1006"></a>
-</span><span id="__span-0-1007"><a id="__codelineno-0-1007" name="__codelineno-0-1007"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
-</span><span id="__span-0-1008"><a id="__codelineno-0-1008" name="__codelineno-0-1008"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
-</span><span id="__span-0-1009"><a id="__codelineno-0-1009" name="__codelineno-0-1009"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1010"><a id="__codelineno-0-1010" name="__codelineno-0-1010"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
-</span><span id="__span-0-1011"><a id="__codelineno-0-1011" name="__codelineno-0-1011"></a>
-</span><span id="__span-0-1012"><a id="__codelineno-0-1012" name="__codelineno-0-1012"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-0-1013"><a id="__codelineno-0-1013" name="__codelineno-0-1013"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
-</span><span id="__span-0-1014"><a id="__codelineno-0-1014" name="__codelineno-0-1014"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
-</span><span id="__span-0-1015"><a id="__codelineno-0-1015" name="__codelineno-0-1015"></a>    <span class="k">return</span> <span class="n">config</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-956">956</a></span>
+<span class="normal"><a href="#__codelineno-0-957">957</a></span>
+<span class="normal"><a href="#__codelineno-0-958">958</a></span>
+<span class="normal"><a href="#__codelineno-0-959">959</a></span>
+<span class="normal"><a href="#__codelineno-0-960">960</a></span>
+<span class="normal"><a href="#__codelineno-0-961">961</a></span>
+<span class="normal"><a href="#__codelineno-0-962">962</a></span>
+<span class="normal"><a href="#__codelineno-0-963">963</a></span>
+<span class="normal"><a href="#__codelineno-0-964">964</a></span>
+<span class="normal"><a href="#__codelineno-0-965">965</a></span>
+<span class="normal"><a href="#__codelineno-0-966">966</a></span>
+<span class="normal"><a href="#__codelineno-0-967">967</a></span>
+<span class="normal"><a href="#__codelineno-0-968">968</a></span>
+<span class="normal"><a href="#__codelineno-0-969">969</a></span>
+<span class="normal"><a href="#__codelineno-0-970">970</a></span>
+<span class="normal"><a href="#__codelineno-0-971">971</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-956"><a id="__codelineno-0-956" name="__codelineno-0-956"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LangclawConfig</span><span class="p">:</span>
+</span><span id="__span-0-957"><a id="__codelineno-0-957" name="__codelineno-0-957"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Load and return the merged LangclawConfig.</span>
+</span><span id="__span-0-958"><a id="__codelineno-0-958" name="__codelineno-0-958"></a>
+</span><span id="__span-0-959"><a id="__codelineno-0-959" name="__codelineno-0-959"></a><span class="sd">    Also calls ``load_dotenv()`` so that standard provider env vars</span>
+</span><span id="__span-0-960"><a id="__codelineno-0-960" name="__codelineno-0-960"></a><span class="sd">    (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) from ``.env``</span>
+</span><span id="__span-0-961"><a id="__codelineno-0-961" name="__codelineno-0-961"></a><span class="sd">    are available in ``os.environ`` for ``init_chat_model``.</span>
+</span><span id="__span-0-962"><a id="__codelineno-0-962" name="__codelineno-0-962"></a>
+</span><span id="__span-0-963"><a id="__codelineno-0-963" name="__codelineno-0-963"></a><span class="sd">    Unknown ``LANGCLAW__`` env vars are surfaced via :func:`validate_env_keys`</span>
+</span><span id="__span-0-964"><a id="__codelineno-0-964" name="__codelineno-0-964"></a><span class="sd">    (warning by default; raising when ``LANGCLAW__STRICT_ENV=true``).</span>
+</span><span id="__span-0-965"><a id="__codelineno-0-965" name="__codelineno-0-965"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-966"><a id="__codelineno-0-966" name="__codelineno-0-966"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
+</span><span id="__span-0-967"><a id="__codelineno-0-967" name="__codelineno-0-967"></a>
+</span><span id="__span-0-968"><a id="__codelineno-0-968" name="__codelineno-0-968"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">override</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-969"><a id="__codelineno-0-969" name="__codelineno-0-969"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">LangclawConfig</span><span class="p">()</span>
+</span><span id="__span-0-970"><a id="__codelineno-0-970" name="__codelineno-0-970"></a>    <span class="n">validate_env_keys</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">strict_env</span><span class="p">)</span>
+</span><span id="__span-0-971"><a id="__codelineno-0-971" name="__codelineno-0-971"></a>    <span class="k">return</span> <span class="n">config</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3564,11 +3552,10 @@ are available in <code>os.environ</code> for <code>init_chat_model</code>.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Host directory holding runtime-authored (saved) workflow <code>.js</code> files.</p>
+        <p>Host directory holding <code>&lt;name&gt;.graph.json</code> workflow files.</p>
 <p>Rooted at the agent's <em>filesystem backend root</em> so it matches where the
 agent's own <code>write_file</code> lands: <code>backend.root_dir</code> when set, else the
-workspace dir. (For <code>state</code>/<code>store</code> backends there is no host root and
-file-authoring is unavailable — see <code>WorkflowsConfig</code>.)</p>
+workspace dir.</p>
 
     </div>
 
@@ -5091,34 +5078,24 @@ to opt in.</p>
 
 
 
-        <p>Operator-authored Workflow primitive configuration (issue #38).</p>
-<p>Opt-in and <strong>off by default</strong>.  When enabled, workflows registered with
-<code>@app.workflow()</code> become invocable three ways: the LLM calls the
-<code>workflow_&lt;name&gt;</code> tool; an operator runs <code>/workflows run &lt;name&gt;</code>; or a
-message with <code>origin="workflow"</code> (e.g. a cron-fired job) dispatches one
-through the gateway.  Each is typed, multi-step, and RBAC-gated by role.</p>
-<p><strong>Runtime authoring (<code>mode="saved"</code>):</strong> when this <em>and</em> <code>interpreter</code> are
-enabled (and the backend is filesystem-rooted), the agent can save a workflow
-by <strong>writing a file</strong> with its ordinary <code>write_file</code> tool — there is no
-bespoke save tool.  After running an ad-hoc job with <code>eval</code>, the user can say
-"save that workflow"; the agent writes the same JS to <code>workflows/&lt;name&gt;.js</code>
-(with <code>// @description</code> / <code>// @uses</code> header comments).  The gateway watches
-that folder, reconciles the file into the registry, and rebuilds the default
-agent, so the new <code>workflow_&lt;name&gt;</code> tool goes live in the same session and
-reloads on every restart.  (Requires the <code>interpreter</code> extra — a saved body
-runs in the same QuickJS sandbox as <code>eval</code>.  <code>state</code>/<code>store</code> backends have
-no host folder, so file-authoring is unavailable there.)</p>
-<p>RBAC is enforced at the <strong>invocation</strong> boundary: the <code>workflow_&lt;name&gt;</code> tool
-gate, the <code>/workflows</code> command, cron dispatch, and bus dispatch all consult
-the role's default-deny workflow allowlist.  A workflow's <strong>steps</strong>, however,
-run <strong>in-process</strong> by calling <code>tool.ainvoke</code> directly — they bypass the
-graph, so the per-request <code>ToolPermissionMiddleware</code> does not filter a
-step's toolset.  A workflow can therefore reach any tool in the default
-agent's toolset; restrict reachable tools via the workflow's <code>uses_tools</code>,
-not per-role tool RBAC.  Bus dispatch runs a <em>whole workflow</em> as one bus
-message; full bus → gateway re-entry per <em>step</em> (inheriting rate limiting,
-channel context, per-step checkpointing, and step-level RBAC) is not yet
-wired.</p>
+        <p>Workflow configuration — named, checkpointed LangGraph procedures.</p>
+<p>Opt-in and <strong>off by default</strong>. When enabled, every workflow — a Python
+<code>StateGraph</code> registered with <code>app.workflow(name, graph=...)</code> or a
+<code>workflows/&lt;name&gt;.graph.json</code> file in the agent workspace — is invocable
+four ways: the LLM calls the <code>workflow_&lt;name&gt;</code> tool; an operator runs
+<code>/workflows run &lt;name&gt;</code>; a cron job fires it; or the control-plane API
+starts it.</p>
+<p>Runs are checkpointed on the gateway's checkpointer (thread
+<code>workflow:&lt;run_id&gt;</code>) with a run index in the same database, so a crash
+resumes from the last finished node on startup, and a <code>human_review</code> node
+pauses the run until someone answers (<code>/workflows approve|reject|edit</code>,
+Telegram, or the UI — first answer wins). Workflow files reload when they
+change, without a restart.</p>
+<p>RBAC is enforced at the <strong>invocation</strong> boundary (the <code>workflow_&lt;name&gt;</code>
+tool gate, <code>/workflows</code>, cron and bus dispatch all consult the role's
+default-deny workflow allowlist). A workflow's <strong>nodes</strong> call tools
+in-process through the default agent's toolset, so per-role tool RBAC does
+not filter them — restrict what a workflow can reach by what it calls.</p>
 <p>Env: <code>LANGCLAW__WORKFLOWS__ENABLED=true</code></p>
 
 
@@ -5143,35 +5120,6 @@ wired.</p>
 
 
 
-<h3 id="langclaw.config.schema.WorkflowsConfig.durable_steps" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">durable_steps</span> <span class="o">=</span> <span class="kc">False</span></code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
-      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
-  </span>
-
-<a href="#langclaw.config.schema.WorkflowsConfig.durable_steps" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>When <code>True</code>, completed workflow step results are persisted to a
-LangGraph <code>BaseStore</code> (a sibling SQLite file or the Postgres DSN, matching
-the checkpointer backend) instead of an in-process dict, so they survive a
-process restart.  Off by default.</p>
-<p>NOTE: this only <em>persists</em> step results — it does not re-run anything on its
-own.  Set <code>resume_on_startup</code> for that.  The store currently has no TTL or
-pruning, so it grows unbounded; keep an eye on it for long-lived deployments.</p>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-attribute">
-
-
-
 <h3 id="langclaw.config.schema.WorkflowsConfig.enabled" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">enabled</span> <span class="o">=</span> <span class="kc">False</span></code>
 
@@ -5185,8 +5133,8 @@ pruning, so it grows unbounded; keep an eye on it for long-lived deployments.</p
 
     <div class="doc doc-contents ">
 
-        <p>Enable the Workflow primitive.  Off by default — registering workflows
-is inert until this is set.</p>
+        <p>Enable workflows. Off by default — registering workflows is inert until
+this is set.</p>
 
     </div>
 
@@ -5209,32 +5157,8 @@ is inert until this is set.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Global ceiling on simultaneously-running workflow runs across the host,
-regardless of any single workflow's own budget.</p>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-attribute">
-
-
-
-<h3 id="langclaw.config.schema.WorkflowsConfig.max_depth" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">max_depth</span> <span class="o">=</span> <span class="mi">2</span></code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
-      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
-  </span>
-
-<a href="#langclaw.config.schema.WorkflowsConfig.max_depth" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Maximum nesting depth — how many levels a workflow may invoke other
-workflows.  Bounds recursive fan-out.</p>
+        <p>Global ceiling on simultaneously-running workflow runs (a run paused for
+review does not count).</p>
 
     </div>
 
@@ -5257,8 +5181,8 @@ workflows.  Bounds recursive fan-out.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Hard backstop on total steps a single run may execute.  Guards against a
-runaway loop in an operator-authored body.</p>
+        <p>Default LangGraph <code>recursion_limit</code> per run — a backstop against a loop
+that never ends. A workflow's own <code>max_steps</code> overrides it.</p>
 
     </div>
 
@@ -5268,45 +5192,46 @@ runaway loop in an operator-authored body.</p>
 
 
 
-<h3 id="langclaw.config.schema.WorkflowsConfig.resume_on_startup" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">resume_on_startup</span> <span class="o">=</span> <span class="kc">False</span></code>
+<h3 id="langclaw.config.schema.WorkflowsConfig.review_channel" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">review_channel</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span></code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
       <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
   </span>
 
-<a href="#langclaw.config.schema.WorkflowsConfig.resume_on_startup" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#langclaw.config.schema.WorkflowsConfig.review_channel" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
 
-        <p>When <code>True</code>, workflow runs left incomplete by a previous process (a crash
-/ kill) are re-run on startup from the run journal: completed steps replay
-from the durable step store and only the unfinished tail executes.  Off by
-default.  Requires <code>durable_steps</code> (the step store + run journal share one
-<code>BaseStore</code>); without it, enabling this logs a warning and does nothing.</p>
-<p>Caveats developers should know before relying on it:</p>
-<ul>
-<li><strong>Python-mode workflows only.</strong>  Runs whose spec is no longer registered, or
-  whose <code>mode</code> is <code>llm_authored</code>, are skipped (logged), not resumed.</li>
-<li><strong>Crash vs. clean failure.</strong>  A killed process leaves a run <code>running</code> and
-  so resumable; a workflow that raised a normal exception is marked <code>failed</code>
-  and is <em>not</em> retried (avoids looping on a deterministic bug).</li>
-<li><strong>No step-result invalidation.</strong>  Resume matches cached steps by a
-  deterministic <code>step_id</code> (<code>&lt;phase&gt;#&lt;seq&gt;</code>).  Editing a workflow body
-  between crash and restart can shift those IDs and replay stale results — bump
-  the workflow name or clear the store after changing a body you may resume.</li>
-<li><strong>Resumes under the default agent's permissions.</strong>  The resume step executor
-  is built from the default agent's role-filtered toolset, not the original
-  invoker's role/named-agent context — a resumed run may see a different
-  toolset than the run that crashed.</li>
-<li><strong>Blocking at startup.</strong>  Incomplete runs are replayed sequentially before
-  the gateway begins serving traffic, so a slow or hanging resumed run delays
-  startup.</li>
-<li><strong>One attempt.</strong>  A run that raises again during resume is marked <code>failed</code>
-  and not retried — even if the cause was transient.</li>
-</ul>
+        <p>Channel that also receives every review request (e.g. <code>"telegram"</code>), in
+addition to the chat that started the run — so runs started from the UI,
+the API, or cron still reach you. Requires <code>review_chat_id</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="langclaw.config.schema.WorkflowsConfig.review_chat_id" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">review_chat_id</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+<a href="#langclaw.config.schema.WorkflowsConfig.review_chat_id" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Chat on <code>review_channel</code> to send review requests to (for Telegram, your
+numeric chat / user id).</p>
 
     </div>
 

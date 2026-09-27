@@ -725,10 +725,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#schedule-a-saved-workflow" class="md-nav__link">
+  <a href="#schedule-a-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Schedule a saved workflow
+        Schedule a workflow
       
     </span>
   </a>
@@ -1218,10 +1218,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#schedule-a-saved-workflow" class="md-nav__link">
+  <a href="#schedule-a-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Schedule a saved workflow
+        Schedule a workflow
       
     </span>
   </a>
@@ -1341,11 +1341,11 @@
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Schedule the landscape workflow for &quot;agent frameworks&quot; every Monday
 </span></code></pre></div>
 <p>The agent translates this into a cron job via the <code>cron</code> tool.</p>
-<h2 id="schedule-a-saved-workflow">Schedule a saved workflow<a class="headerlink" href="#schedule-a-saved-workflow" title="Permanent link">&para;</a></h2>
-<p>Saved workflows scheduled via cron run their frozen body <strong>without any LLM call</strong> — deterministic, zero LLM cost:</p>
+<h2 id="schedule-a-workflow">Schedule a workflow<a class="headerlink" href="#schedule-a-workflow" title="Permanent link">&para;</a></h2>
+<p>A workflow scheduled via cron runs its fixed steps <strong>without an agent turn</strong> — deterministic, and the only model calls are the ones its own steps make:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Schedule workflow &#39;digest&#39; every day at 9am
 </span></code></pre></div>
-<p>On fire, the workflow runs verbatim. If the <code>.js</code> file is deleted, the job self-disarms.</p>
+<p>On fire, the workflow runs and its result goes to the channel that scheduled it. If the workflow no longer exists (e.g. its <code>.graph.json</code> file was deleted), the job removes itself.</p>
 <h2 id="manage-jobs">Manage jobs<a class="headerlink" href="#manage-jobs" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/cron list          → all scheduled jobs
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>/cron view &lt;id&gt;     → show job details

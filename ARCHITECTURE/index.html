@@ -955,10 +955,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#workflow-primitive-entry-points-runtime-durability" class="md-nav__link">
+  <a href="#workflows-entry-points-runner-reviews" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow Primitive — Entry Points, Runtime, Durability
+        Workflows — Entry Points, Runner, Reviews
       
     </span>
   </a>
@@ -1055,10 +1055,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#workflow-primitive-deterministic-orchestration" class="md-nav__link">
+  <a href="#workflows-deterministic-orchestration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow Primitive — Deterministic Orchestration
+        Workflows — Deterministic Orchestration
       
     </span>
   </a>
@@ -1408,10 +1408,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#workflow-primitive-entry-points-runtime-durability" class="md-nav__link">
+  <a href="#workflows-entry-points-runner-reviews" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow Primitive — Entry Points, Runtime, Durability
+        Workflows — Entry Points, Runner, Reviews
       
     </span>
   </a>
@@ -1508,10 +1508,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#workflow-primitive-deterministic-orchestration" class="md-nav__link">
+  <a href="#workflows-deterministic-orchestration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow Primitive — Deterministic Orchestration
+        Workflows — Deterministic Orchestration
       
     </span>
   </a>
@@ -1736,67 +1736,57 @@
 <li><code>metadata["workflow_name"]</code> / <code>metadata["workflow_input"]</code>: the workflow to run (and its JSON input) when <code>origin="workflow"</code>.</li>
 </ul>
 <p>All sources (channels, cron, subagents, workflows) converge on the <strong>same bus → <code>_handle()</code> pipeline</strong> — the decoupling that lets the bus backend swap between asyncio/RabbitMQ/Kafka without touching the gateway. <code>_handle</code> then forks by intent: <code>to="channel"</code> short-circuits to delivery, <code>origin="workflow"</code> runs a workflow, and everything else feeds the agent. The remaining bypass is commands (never hit the bus).</p>
-<h3 id="workflow-primitive-entry-points-runtime-durability">Workflow Primitive — Entry Points, Runtime, Durability<a class="headerlink" href="#workflow-primitive-entry-points-runtime-durability" title="Permanent link">&para;</a></h3>
-<p>A workflow (<code>@app.workflow</code>) is a typed, multi-step orchestration. It is reachable four ways, but they all land on one <code>WorkflowRuntime</code>. The agent invokes it as the <code>workflow_&lt;name&gt;</code> tool (per-message bridge); the other three start a <em>whole run</em> outside the LLM via <code>runtime.run_registered</code>, which rebuilds the step executor / Mode-2 callables from factories the agent builder registered at build time.</p>
+<h3 id="workflows-entry-points-runner-reviews">Workflows — Entry Points, Runner, Reviews<a class="headerlink" href="#workflows-entry-points-runner-reviews" title="Permanent link">&para;</a></h3>
+<p>A workflow is a LangGraph <code>StateGraph</code> — written in Python (<code>app.workflow(name, graph=builder)</code>) or loaded from a <code>workflows/&lt;name&gt;.graph.json</code> file. It is reachable four ways, and they all land on one <code>WorkflowRuntime</code> → <code>GraphWorkflowRunner</code>, which runs each run as one checkpointer thread (<code>workflow:&lt;run_id&gt;</code>).</p>
 <pre class="mermaid"><code>flowchart TB
     subgraph Entry["Entry points"]
         T["LLM tool call&lt;br/&gt;workflow_&amp;lt;name&amp;gt;"]
-        CMD["/workflows run &amp;lt;name&amp;gt; [json]"]
+        CMD["/workflows run · API POST /runs"]
         CR["cron _fire_job(workflow_name)"]
-        RS["startup: resume_incomplete()&lt;br/&gt;(resume_on_startup)"]
+        RS["startup: resume_incomplete()"]
     end
 
-    BR["bridge: _make_one_workflow_tool&lt;br/&gt;(executor_factory per call)"]
     BUS{{"Bus → _handle()&lt;br/&gt;origin='workflow'"}}
     HW["GatewayManager._handle_workflow&lt;br/&gt;RBAC allowlist gate"]
-    RR["runtime.run_registered(spec, input, run_id)"]
-    SR["runtime.start_run()"]
+    RT["WorkflowRuntime.run_graph&lt;br/&gt;(global max_concurrent_runs)"]
+    RUN["GraphWorkflowRunner&lt;br/&gt;astream → progress per node"]
 
-    T --&gt; BR --&gt; SR
-    CMD --&gt; BUS --&gt; HW --&gt; RR
+    T --&gt; RT
+    CMD --&gt; BUS --&gt; HW --&gt; RT
     CR --&gt; BUS
-    RR --&gt; SR
-    RS --&gt; RR
+    RT --&gt; RUN
+    RS --&gt; RUN
 
-    subgraph Dispatch["start_run — dispatch on spec.mode"]
-        PY["python: spec.fn(ctx, input)&lt;br/&gt;steps via StepExecutor"]
-        L2["llm_authored: author body once,&lt;br/&gt;replay frozen body thereafter"]
-        SV["saved: run frozen spec.script verbatim&lt;br/&gt;(no author step)"]
+    subgraph Sources["Workflow sources"]
+        PYG["Python StateGraph&lt;br/&gt;app.workflow(graph=...)"]
+        FILE[("workflows/&amp;lt;name&amp;gt;.graph.json")]
+        CMP["spec.py validate → compile.py&lt;br/&gt;→ StateGraph"]
     end
-    SR --&gt; PY
-    SR --&gt; L2
-    SR --&gt; SV
+    FILE --&gt; CMP
+    PYG --&gt; RUN
+    CMP --&gt; RUN
 
-    EX["build_toolset_executor&lt;br/&gt;(default agent's full toolset)"]
-    PY --&gt; EX
+    EX["steps(): build_toolset_executor&lt;br/&gt;(default agent's tools, model, subagents)"]
+    RUN --&gt; EX
 
-    subgraph Authoring["Runtime authoring (workflows + interpreter on, fs backend)"]
-        EV["eval program&lt;br/&gt;(ad-hoc 'run a workflow to …')"]
-        SW["write_file&lt;br/&gt;workflows/&amp;lt;name&amp;gt;.js"]
-        FILE[("workspace/workflows/&amp;lt;name&amp;gt;.js")]
-        WATCH["_ensure_agent_fresh: folder hash changed"]
-        REC["_reload_saved_workflows()&lt;br/&gt;reconcile → register (version++)"]
-        RB["registry.version change → rebuild"]
+    subgraph Durable["Same database as the conversation state"]
+        CP[("Checkpointer&lt;br/&gt;thread workflow:&amp;lt;run_id&amp;gt;")]
+        IDX[("RunIndex (BaseStore)&lt;br/&gt;status · trigger · reviews")]
     end
-    EV --&gt; SW --&gt; FILE
-    FILE --&gt; WATCH --&gt; REC --&gt; RB --&gt; T
-    FILE -. "startup: _reload_saved_workflows()" .-&gt; REC
+    RUN -. "checkpoint per node" .-&gt; CP
+    RUN -. "status, pending reviews" .-&gt; IDX
 
-    subgraph Stores["Durable stores (opt-in: durable_steps)"]
-        SS[("StepStore&lt;br/&gt;ns: workflow_steps/&amp;lt;run_id&amp;gt;")]
-        SC[("ScriptStore&lt;br/&gt;ns: workflow_scripts")]
-        RJ[("RunStore journal&lt;br/&gt;ns: workflow_runs")]
+    subgraph Review["Human review (interrupt)"]
+        ANS["answer: /workflows approve · API · UI · Telegram"]
+        CLAIM["ControlPlane.answer_review&lt;br/&gt;claim in RunIndex (first answer wins)"]
     end
-    PY -. "memoize each step" .-&gt; SS
-    L2 -. "freeze authored body" .-&gt; SC
-    SR -. "mark running/completed/failed" .-&gt; RJ
-    RJ -. "list_incomplete()" .-&gt; RS
-    SS -. "replay completed steps" .-&gt; RS</code></pre>
+    ANS --&gt; CLAIM --&gt; BUS</code></pre>
 <ul>
-<li><strong>One runtime, one ceiling.</strong> Every entry shares the cached <code>WorkflowRuntime</code> (so <code>max_concurrent_runs</code> is global). Progress (<code>ctx.phase</code> / <code>ctx.log</code> / Mode-2 authored body) projects to the channel through the same request-scoped sink the agent path installs.</li>
-<li><strong>RBAC is at the invocation boundary.</strong> Tool / command / cron / bus dispatch all consult the role's default-deny workflow allowlist (<code>allowed_workflow_names</code>). A workflow's <em>steps</em> call <code>tool.ainvoke</code> directly and bypass <code>ToolPermissionMiddleware</code>, so they run against the default agent's full toolset — constrain reachable tools via the workflow's <code>uses_tools</code>, not per-role tool RBAC.</li>
-<li><strong>Durability is opt-in.</strong> With <code>durable_steps</code>, completed steps and frozen Mode-2 bodies persist to a LangGraph <code>BaseStore</code> (a sibling SQLite file or the Postgres DSN). With <code>resume_on_startup</code>, the run journal replays runs left <code>"running"</code> by a crash: python-mode replays only the unfinished tail; <code>llm_authored</code> replays its frozen body (steps are not individually memoized, so resume is at-least-once).</li>
-<li><strong>Runtime authoring closes the loop (<code>mode="saved"</code>).</strong> When workflows <em>and</em> the interpreter are enabled (and the backend is filesystem-rooted), the agent saves a workflow by <strong>writing a file</strong> — no bespoke tool, just its ordinary <code>write_file</code>. It turns the throwaway <code>eval</code> script the user just ran into <code>workflows/&lt;name&gt;.js</code> (with <code>// @description</code> / <code>// @uses</code> header comments). <code>_ensure_agent_fresh</code> hashes that folder (alongside the AGENTS.md hash); on change it calls <code>_reload_saved_workflows()</code>, which reconciles the files into the registry (add/update/remove <code>mode="saved"</code> specs), bumping <code>registry.version</code> and rebuilding the <strong>default</strong> agent — so <code>workflow_&lt;name&gt;</code> goes live in the same session and reloads on restart. The folder is rooted at the backend's filesystem root so it matches where the agent's <code>write_file</code> lands; <code>state</code>/<code>store</code> backends have no host folder, so file-authoring is gated off there. A saved body runs in the same QuickJS sandbox as <code>eval</code>, reaching the workflow step toolset narrowed by <code>@uses</code>.</li>
+<li><strong>One runtime, one ceiling.</strong> Every entry shares the cached <code>WorkflowRuntime</code> (so <code>max_concurrent_runs</code> is global; a run paused for review holds no slot). Each finished node projects a progress line to the channel through the request-scoped sink the agent path installs.</li>
+<li><strong>RBAC is at the invocation boundary.</strong> Tool / command / cron / bus dispatch all consult the role's default-deny workflow allowlist (<code>allowed_workflow_names</code>). Nodes call tools in-process through the default agent's toolset and bypass <code>ToolPermissionMiddleware</code>.</li>
+<li><strong>Durability is the checkpointer.</strong> A workflow <em>is</em> a LangGraph graph, so the checkpointer snapshots it at every node; the <code>RunIndex</code> (a <code>BaseStore</code> on the same backend) answers what the checkpointer can't cheaply: which runs exist, their status, and who answered which review. On startup, <code>running</code> runs continue from their last checkpoint, and answers claimed just before a crash are applied.</li>
+<li><strong>Reviews are one record, many surfaces.</strong> A <code>human_review</code> node / <code>request_review()</code> calls LangGraph <code>interrupt()</code>. Any surface answers through <code>ControlPlane.answer_review</code>, which claims the review under a lock (first answer wins) <em>before</em> the run continues on the bus worker — so every surface sees the answer at once and the result reaches the channel that started the run.</li>
+<li><strong>Files go live without a restart.</strong> <code>_ensure_agent_fresh</code> hashes the workflows folder (alongside the AGENTS.md hash); on change, <code>_reload_workflow_files()</code> reconciles the registry and bumps <code>registry.version</code>, rebuilding the <strong>default</strong> agent so <code>workflow_&lt;name&gt;</code> appears in the same session.</li>
 </ul>
 <h2 id="design-vision-a-framework-not-an-app">Design Vision: A Framework, Not an App<a class="headerlink" href="#design-vision-a-framework-not-an-app" title="Permanent link">&para;</a></h2>
 <p>Langclaw's fundamental philosophy is to be a <strong>framework</strong> that developers build upon, similar to FastAPI or Flask, rather than a standalone application to be forked.</p>
@@ -1822,33 +1812,24 @@
 <h3 id="checkpointer-abstraction">Checkpointer Abstraction<a class="headerlink" href="#checkpointer-abstraction" title="Permanent link">&para;</a></h3>
 <p>Conversation state is handled by <code>BaseCheckpointerBackend</code>.
 - <strong>Why?</strong> AI agents require persistent memory across asynchronous channel events. Abstracting this allows swapping between in-memory (testing), SQLite (local deployments), and robust databases (production) without changing agent logic.</p>
-<h3 id="workflow-primitive-deterministic-orchestration">Workflow Primitive — Deterministic Orchestration<a class="headerlink" href="#workflow-primitive-deterministic-orchestration" title="Permanent link">&para;</a></h3>
-<p>A workflow (<code>@app.workflow</code>, <code>langclaw/workflows/</code>) is the deterministic
-counterpart to the code interpreter: where an <code>eval</code> script is LLM-authored and
-free-form, a workflow is a <em>named, typed, durable</em> orchestration with a Python
-body (Mode 1) or an LLM-authored-once-then-frozen body (Mode 2, <code>llm_authored</code>).</p>
+<h3 id="workflows-deterministic-orchestration">Workflows — Deterministic Orchestration<a class="headerlink" href="#workflows-deterministic-orchestration" title="Permanent link">&para;</a></h3>
+<p>A workflow (<code>langclaw/workflows/</code>) is the deterministic counterpart to the code
+interpreter: where an <code>eval</code> script is LLM-authored and free-form, a workflow is a
+<em>named, typed, checkpointed</em> LangGraph graph whose control flow is fixed.</p>
 <ul>
-<li><strong>Why a primitive, not just a tool?</strong> A workflow needs an identity (for RBAC,
-  resume, and observability), a typed I/O contract, and a budget — things a plain
-  tool lacks. The <code>WorkflowRuntime</code> owns run lifecycle, the global
-  <code>max_concurrent_runs</code> ceiling, per-run step budget, and timeout.</li>
+<li><strong>Why LangGraph, not a bespoke engine?</strong> A graph gives checkpointing (crash
+  resume), <code>interrupt()</code> (human review), a drawable shape (for UIs), and fan-out
+  (<code>Send</code>) for free, on the same checkpointer the agent already uses. langclaw
+  adds identity (RBAC, naming), entry points (tool, command, cron, API), a run
+  index, and a no-code file format that compiles to the same graph.</li>
 <li><strong>One runtime, many entry points.</strong> The agent reaches a workflow as the
-  <code>workflow_&lt;name&gt;</code> tool; operators via <code>/workflows run</code>; schedules via cron; and
-  crashed runs via startup resume. The non-tool entries call <code>run_registered</code>,
-  which rebuilds the step executor and Mode-2 callables from factories the agent
-  builder registered — so a run started off the bus still executes against the
-  same toolset the agent would use. This is what makes a workflow a first-class
-  <strong>bus message source</strong> (<code>origin="workflow"</code>), not just an agent tool.</li>
-<li><strong>Durability via <code>BaseStore</code>, not the checkpointer.</strong> A workflow is not a
-  LangGraph graph, so it has no channel-state to snapshot — only per-step results
-  and (for Mode 2) the authored body. These persist to a namespaced
-  <code>BaseStore</code> (<code>StepStore</code>, <code>ScriptStore</code>) with the run journal (<code>RunStore</code>)
-  tracking status. <code>resume_on_startup</code> replays the unfinished tail of a run a
-  crash left <code>"running"</code>.</li>
+  <code>workflow_&lt;name&gt;</code> tool; operators via <code>/workflows run</code>; schedules via cron; UIs
+  via the API; crashed runs via startup resume. The step executor is registered by
+  the agent builder, so a run started off the bus executes against the same
+  toolset the agent would use. This makes a workflow a first-class <strong>bus message
+  source</strong> (<code>origin="workflow"</code>), not just an agent tool.</li>
 <li><strong>RBAC at invocation, not per step.</strong> All entry points enforce the default-deny
-  workflow allowlist; step execution itself bypasses tool middleware (see the
-  diagram above), so <code>uses_tools</code> — not per-role tool RBAC — bounds a workflow's
-  reach.</li>
+  workflow allowlist; node execution itself bypasses tool middleware.</li>
 <li><strong>Reserved namespace.</strong> A workflow generates a <code>workflow_&lt;name&gt;</code> tool and the
   <code>/workflows</code> command into namespaces shared with <code>@app.tool</code> / <code>@app.command</code>.
   <code>langclaw/naming.py</code> is the single source of truth for the reserved prefix and
