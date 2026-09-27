@@ -342,3 +342,39 @@ async def test_the_workflow_end_to_end(acme, confidence, fix, posts_without_revi
         )
         assert done.status == "completed"
     assert (await scoped.store.get(row["bucket_key"]))["status"] == "posted"
+
+
+@needs_pg
+async def test_posted_invoices_export_to_saga_once(acme) -> None:
+    import io
+    import zipfile
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    with tenant_scope(client):
+        empty = await tools["accounting_export"].ainvoke({})
+        assert empty["exported"] == []
+        for row in rows:
+            posted = await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+            assert "posted" in posted, posted
+        out = await tools["accounting_export"].ainvoke({"target": "saga"})
+        assert sorted(out["exported"]) == sorted(r["bucket_key"] for r in rows)
+        assert out["key"].startswith("exports/saga/") and out["url"]
+        data, _ = await scoped.bucket.get(out["key"])
+        names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+        assert any(n.startswith("intrari/F_") for n in names)
+        assert any(n.startswith("iesiri/F_12345678_") for n in names)
+        assert (await scoped.store.get(rows[0]["bucket_key"]))["status"] == "exported"
+
+        assert (await tools["accounting_export"].ainvoke({}))["exported"] == []  # once
+        again = await tools["accounting_export"].ainvoke({"again": True})
+        assert len(again["exported"]) == len(rows)
+        nextup = await tools["accounting_export"].ainvoke({"target": "nextup"})
+        assert "NextUp" in nextup["error"]

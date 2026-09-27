@@ -8,6 +8,8 @@ Accounting tools — the steps of the ``accounting_proposal`` workflow.
 - ``journal_post``: posts an entry — only if the checks pass.
 - ``accounting_defer``: marks an invoice for manual booking.
 - ``accounting_queue``: starts the workflow for invoices waiting for an entry.
+- ``accounting_export``: exports posted invoices to accounting software (SAGA
+  import zip in the client's bucket under ``exports/<target>/``).
 
 All of them work inside the current client (tenant) only, like the document tools.
 """
@@ -15,10 +17,11 @@ All of them work inside the current client (tenant) only, like the document tool
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 from langclaw.accounting.checks import check_proposal
+from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.store import DocumentStoreError
@@ -30,7 +33,7 @@ if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus
     from langclaw.documents.tools import DocumentServices
 
-_ERRORS = (DocumentStoreError, JournalError, ValueError)
+_ERRORS = (DocumentStoreError, JournalError, ExportUnavailable, ValueError)
 _INVOICE_TYPES = ("invoice", "credit_note")
 
 
@@ -225,7 +228,58 @@ def build_accounting_tools(
             )
         return {"started": todo, "workflow": cfg.accounting.workflow}
 
-    fns = [accounting_context, accounting_check, journal_post, accounting_defer]
+    async def accounting_export(
+        target: str = "saga", date_from: str = "", date_to: str = "", again: bool = False
+    ) -> dict:
+        """Export this client's posted invoices for accounting software; returns a link.
+
+        Exported invoices get status "exported" and aren't exported twice unless
+        *again* is set.
+
+        Args:
+            target: "saga" (XML import zip) or "nextup" (not available yet).
+            date_from: Only invoices issued on or after this date (YYYY-MM-DD).
+            date_to: Only invoices issued on or before this date (YYYY-MM-DD).
+            again: Also include invoices already exported.
+        """
+        tenant = current_tenant()
+        own_cif = tenant.tax_id if tenant else ""
+        if not own_cif:
+            return {"error": "The client has no tax ID (CIF): set it on the client first."}
+        try:
+            exporter = make_exporter(target)
+            svc = services.current()
+            rows = [
+                r
+                for status in (("posted", "exported") if again else ("posted",))
+                for doc_type in _INVOICE_TYPES
+                for r in await svc.store.search(
+                    doc_type=doc_type,
+                    status=status,
+                    date_from=date_from,
+                    date_to=date_to,
+                    limit=200,
+                )
+            ]
+            batch = exporter.build(rows, own_cif=own_cif)  # an unavailable target fails here
+            if not rows:
+                return {"exported": [], "note": "Nothing to export: no posted invoices."}
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            key = f"exports/{exporter.name}/{stamp}-{batch.filename}"
+            if batch.exported:
+                await svc.bucket.put(key, batch.data, content_type=batch.content_type)
+                for done in batch.exported:
+                    await svc.store.save(
+                        done, {"status": "exported", "fields": {f"export_{exporter.name}": key}}
+                    )
+                url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        if not batch.exported:
+            return {"exported": [], "skipped": batch.skipped}
+        return {"key": key, "url": url, "exported": batch.exported, "skipped": batch.skipped}
+
+    fns = [accounting_context, accounting_check, journal_post, accounting_defer, accounting_export]
     if bus is not None:
         fns.append(accounting_queue)
     return [StructuredTool.from_function(coroutine=fn, parse_docstring=True) for fn in fns]

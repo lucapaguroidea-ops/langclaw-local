@@ -44,6 +44,26 @@ document, non-negative amounts, one side per line, balance re-checked inside the
 posting transaction. `partner_history` in the context comes from these entries,
 so proposals get more consistent as the accountant approves them.
 
+## Export to SAGA / NextUp
+
+`accounting_export(target="saga", date_from=, date_to=, again=False)` takes the
+client's **posted** invoices and builds one batch, stored in the client's bucket
+under `exports/<target>/<timestamp>-...` with a 24-hour download link. Exported
+invoices get status `exported` and aren't exported again unless `again=True`.
+
+- **`saga`** — a zip of SAGA C. "Import facturi XML" files
+  (`<Facturi><Factura><Antet>…<Detalii><Continut><Linie>`), one
+  `F_<cif>_<numar>_<dd-mm-yyyy>.xml` per invoice, in `intrari/` (the client is
+  `ClientCIF`) and `iesiri/` (the client is `FurnizorCIF`). SAGA books the
+  invoices itself; the langclaw journal entries aren't in the file. Invoices
+  missing a number, date, CIF or lines are listed under `skipped`.
+- **`nextup`** — **not implemented.** NextUp's API documentation wasn't
+  available, so the target fails with a clear error instead of guessing an API
+  (`langclaw/accounting/export/nextup.py` is the place to wire it).
+
+Targets live in one registry (`langclaw/accounting/export/__init__.py:EXPORTERS`);
+a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
+
 ## Limits
 
 - The checks work at the level of account classes and the usual counterparts, not
@@ -54,3 +74,5 @@ so proposals get more consistent as the accountant approves them.
 - Entries are single-currency (the invoice's); FX translation, fixed-asset
   depreciation, and non-invoice documents (receipts, bank statements) aren't
   covered yet.
+- The SAGA file follows the published import layout but hasn't been imported
+  into a real SAGA install yet — try one batch before relying on it.
