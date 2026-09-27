@@ -747,6 +747,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#closing-a-month" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing a month
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1324,6 +1335,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#closing-a-month" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing a month
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1476,6 +1498,25 @@ waiting invoices (<code>accounting_queue</code>) — or schedule that daily.</p>
 document, non-negative amounts, one side per line, balance re-checked inside the
 posting transaction. <code>partner_history</code> in the context comes from these entries,
 so proposals get more consistent as the accountant approves them.</p>
+<h2 id="closing-a-month">Closing a month<a class="headerlink" href="#closing-a-month" title="Permanent link">&para;</a></h2>
+<p><code>accounting_period_report(period="2026-09")</code> gives, for one client and month:</p>
+<ul>
+<li><strong>blockers</strong> — invoices dated in the month that still have no entry (filed,
+  needs review, deferred for manual booking);</li>
+<li><strong>trial_balance</strong> — debit / credit turnover and balance per account, from the
+  posted journal lines, and whether it balances;</li>
+<li><strong>vat</strong> — the D300 draft figures: sales and purchases by rate, reverse charge
+  (counted as both collected and deductible), collected, deductible, payable or
+  refundable. Credit notes count negative.</li>
+</ul>
+<p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers
+or the balance is off; otherwise it saves the report to
+<code>reports/&lt;period&gt;/close.json</code> in the client's bucket and <strong>locks</strong> the month:
+<code>journal_post</code> refuses any entry dated in it (<code>closed_periods</code> table in the
+client's schema). There's no reopen tool yet — reopening is a database change
+on purpose.</p>
+<p>These are figures for the accountant to check and file, not the ANAF D300 XML;
+generating the declaration file (DUKIntegrator) is a later slice.</p>
 <h2 id="export-to-saga-nextup">Export to SAGA / NextUp<a class="headerlink" href="#export-to-saga-nextup" title="Permanent link">&para;</a></h2>
 <p><code>accounting_export(target="saga", date_from=, date_to=, again=False)</code> takes the
 client's <strong>posted</strong> invoices and builds one batch, stored in the client's bucket
@@ -1506,6 +1547,8 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
   covered yet.</li>
 <li>The SAGA file follows the published import layout but hasn't been imported
   into a real SAGA install yet — try one batch before relying on it.</li>
+<li>Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
+  line that carries 0% needs the rate filled in before it adds up.</li>
 </ul>
 
 
