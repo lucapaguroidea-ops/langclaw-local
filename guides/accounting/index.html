@@ -1505,12 +1505,21 @@ so proposals get more consistent as the accountant approves them.</p>
   needs review, deferred for manual booking);</li>
 <li><strong>trial_balance</strong> — debit / credit turnover and balance per account, from the
   posted journal lines, and whether it balances;</li>
-<li><strong>vat</strong> — the D300 draft figures: sales and purchases by rate, reverse charge
+<li>
+<p><strong>vat</strong> — the D300 draft figures: sales and purchases by rate, reverse charge
   (counted as both collected and deductible), collected, deductible, payable or
-  refundable. Credit notes count negative.</li>
+  refundable. Credit notes count negative.</p>
+</li>
+<li>
+<p><strong>documents</strong> — which of the client's expected monthly documents are in. Set
+  them on the client's profile, e.g.
+  <code>"expected_documents": ["bank_statement", {"doc_type": "payroll", "label": "State de plată"}]</code>;
+  a type counts as present when any document of that <code>doc_type</code> is dated in the
+  month. Also lists the month's documents still marked <code>needs_review</code>.</p>
+</li>
 </ul>
-<p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers
-or the balance is off; otherwise it saves the report to
+<p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers,
+expected documents are missing, or the balance is off; otherwise it saves the report to
 <code>reports/&lt;period&gt;/close.json</code> in the client's bucket and <strong>locks</strong> the month:
 <code>journal_post</code> refuses any entry dated in it (<code>closed_periods</code> table in the
 client's schema). There's no reopen tool yet — reopening is a database change
