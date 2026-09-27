@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 NODE_TYPES = ("llm", "tool", "subagent", "branch", "human_review")
@@ -43,6 +44,17 @@ def node_template(node_type: str) -> dict[str, Any]:
     return copy.deepcopy(templates[node_type])
 
 
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+
+
+def _example(name: str) -> dict[str, Any]:
+    """A template kept as a file in ui/templates/ (one source for UI, docs, tests)."""
+    try:
+        return json.loads((_TEMPLATE_DIR / f"{name}.graph.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 TEMPLATES: dict[str, dict[str, Any]] = {
     "Blank (one LLM step)": {
         "description": "What this workflow does — the agent reads this to decide when to run it.",
@@ -71,6 +83,12 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "output": "draft.text",
     },
 }
+for _label, _name in (
+    ("Document intake (bucket → extract → review → file)", "document_intake"),
+    ("Bucket scan (start intake for new files)", "bucket_scan"),
+):
+    if _tpl := _example(_name):
+        TEMPLATES[_label] = _tpl
 
 
 def new_draft(template: str) -> dict[str, Any]:

@@ -1,0 +1,68 @@
+{
+  "description": "File one document from the bucket: read it, extract who/what/when, ask a human when unsure, save the record.",
+  "input": {
+    "key": {"type": "string", "description": "The file's key in the bucket."},
+    "filename": {"type": "string", "description": "Original file name."},
+    "mime_type": {"type": "string", "description": "Content type, if known."},
+    "caption": {"type": "string", "description": "Any note sent with the file."}
+  },
+  "nodes": {
+    "fetch": {"type": "tool", "tool": "bucket_read", "args": {"key": "{{input.key}}"}},
+    "classify": {
+      "type": "llm",
+      "system": "You file business documents. Extract facts only from the document; leave a field empty when it isn't there.",
+      "prompt": "File name: {{input.filename}}\nNote from the sender: {{input.caption}}\n\nDocument text:\n{{fetch.text}}",
+      "output": {
+        "doc_type": {"type": "string", "description": "invoice, contract, letter, receipt, statement, other"},
+        "sender": {"type": "string", "description": "Who issued or sent it."},
+        "receiver": {"type": "string", "description": "Who it is addressed to."},
+        "document_date": {"type": "string", "description": "The document's own date, YYYY-MM-DD, or empty."},
+        "amount": {"type": "number", "description": "Total amount, or 0 if none."},
+        "currency": {"type": "string", "description": "ISO code, e.g. EUR, or empty."},
+        "summary": {"type": "string", "description": "One or two sentences."},
+        "confidence": {"type": "number", "description": "0-1: how sure you are of sender, receiver and date."}
+      }
+    },
+    "check": {
+      "type": "branch",
+      "rules": [{"if": {"path": "classify.confidence", "op": "lt", "value": 0.75}, "then": "review"}],
+      "else": "save"
+    },
+    "review": {
+      "type": "human_review",
+      "message": "Please check this document's details before filing.",
+      "show": ["classify"],
+      "editable": "classify",
+      "on_reject": "mark_rejected"
+    },
+    "save": {
+      "type": "tool",
+      "tool": "documents_save",
+      "args": {
+        "bucket_key": "{{input.key}}",
+        "filename": "{{input.filename}}",
+        "doc_type": "{{classify.doc_type}}",
+        "sender": "{{classify.sender}}",
+        "receiver": "{{classify.receiver}}",
+        "document_date": "{{classify.document_date}}",
+        "amount": "{{classify.amount}}",
+        "currency": "{{classify.currency}}",
+        "summary": "{{classify.summary}}",
+        "status": "filed",
+        "fields": {"confidence": "{{classify.confidence}}"}
+      }
+    },
+    "mark_rejected": {
+      "type": "tool",
+      "tool": "documents_save",
+      "args": {"bucket_key": "{{input.key}}", "filename": "{{input.filename}}", "status": "rejected"}
+    }
+  },
+  "edges": [
+    {"from": "START", "to": "fetch"},
+    {"from": "fetch", "to": "classify"},
+    {"from": "classify", "to": "check"},
+    {"from": "review", "to": "save"}
+  ],
+  "output": "save"
+}

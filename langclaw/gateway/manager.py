@@ -1038,6 +1038,7 @@ class GatewayManager:
             return False
         from langclaw.documents.bucket import BucketError
         from langclaw.documents.intake import intake_files, store_attachments
+        from langclaw.documents.store import DocumentStoreError
         from langclaw.documents.tools import shared_services
 
         if not intake_files(msg.attachments):
@@ -1059,7 +1060,7 @@ class GatewayManager:
             inputs = await store_attachments(
                 shared_services(docs), msg.attachments, caption=msg.content or ""
             )
-        except BucketError as exc:
+        except (BucketError, DocumentStoreError) as exc:
             logger.error(f"Document intake failed: {exc}")
             await say(f"Couldn't save the document: {exc}")
             return True

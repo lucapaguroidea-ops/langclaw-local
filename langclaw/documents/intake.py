@@ -44,11 +44,16 @@ async def store_attachments(
 
     Raises:
         BucketError: an upload failed (the caller tells the user).
+        DocumentStoreError: the documents table couldn't be written.
     """
     inputs = []
     for att in intake_files(attachments):
         key = intake_key(services.config.intake_prefix, att.filename)
         await services.bucket.put(key, base64.b64decode(att.data), content_type=att.mime_type)
+        # A 'processing' row right away, so a bucket scan never queues it twice.
+        await services.store.save(
+            key, {"status": "processing", "filename": att.filename, "mime_type": att.mime_type}
+        )
         inputs.append(
             {
                 "key": key,

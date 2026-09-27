@@ -254,7 +254,8 @@ async def test_intake_stores_files_and_starts_the_workflow(bucket: Bucket, monke
     config = LangclawConfig()
     config.documents.enabled = True
     config.documents.intake_workflow = "document_intake"
-    services = DocumentServices(config.documents, bucket=bucket)
+    store = FakeStore()
+    services = DocumentServices(config.documents, bucket=bucket, store=store)
     monkeypatch.setattr(doc_tools, "shared_services", lambda _cfg: services)
 
     bus = _Bus()
@@ -288,6 +289,8 @@ async def test_intake_stores_files_and_starts_the_workflow(bucket: Bucket, monke
     assert (await bucket.get(wf_input["key"]))[0].startswith(b"%PDF")
     sent = mgr._channel_map["telegram"].sent[-1].content
     assert sent == "📥 Saved Invoice #7.pdf — running document_intake."
+    # marked 'processing' at once, so a bucket scan won't queue it again
+    assert store.rows[wf_input["key"]]["status"] == "processing"
 
 
 async def test_intake_off_leaves_attachments_to_the_agent(bucket: Bucket) -> None:
@@ -296,3 +299,153 @@ async def test_intake_off_leaves_attachments_to_the_agent(bucket: Bucket) -> Non
     assert intake_files([_attachment("a.pdf", b"x", AttachmentType.IMAGE)]) == []
     cfg = LangclawConfig()
     assert cfg.documents.intake_workflow == ""  # off by default
+
+
+# -- intake workflow + bucket scan (slice 7) ---------------------------------------------
+
+
+class FakeStore:
+    """In-memory stand-in for DocumentStore (same upsert semantics)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+
+    async def save(self, bucket_key: str, values: dict) -> dict:
+        row = self.rows.setdefault(bucket_key, {"bucket_key": bucket_key, "fields": {}})
+        values = {k: v for k, v in values.items() if v is not None}
+        row["fields"] = {**row["fields"], **values.pop("fields", {})}
+        row.update(values)
+        return dict(row)
+
+    async def get(self, bucket_key: str) -> dict | None:
+        return self.rows.get(bucket_key)
+
+    async def known_keys(self, keys: list[str]) -> set[str]:
+        return {k for k in keys if k in self.rows}
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.published: list = []
+
+    async def publish(self, msg) -> None:
+        self.published.append(msg)
+
+
+def _template(name: str) -> dict:
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "ui" / "templates" / f"{name}.graph.json"
+    return json.loads(path.read_text())
+
+
+def test_templates_are_valid_against_the_real_document_tools(bucket: Bucket) -> None:
+    import sys
+    from pathlib import Path
+
+    from langclaw.workflows.graph import parse_graph_spec
+
+    services = DocumentServices(DocumentsConfig(), bucket=bucket, store=FakeStore())
+    names = {t.name for t in build_document_tools(services, bus=_RecordingBus())}
+    for name in ("document_intake", "bucket_scan"):
+        parse_graph_spec(name, _template(name), available_tools=names)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+    import editor
+
+    assert any(t.get("nodes", {}).get("classify") for t in editor.TEMPLATES.values())
+
+
+async def test_start_intake_queues_each_new_file_once(bucket: Bucket) -> None:
+    await bucket.put("inbox/a.pdf", b"a")
+    await bucket.put("inbox/b.pdf", b"b")
+    await bucket.put("other/c.pdf", b"c")
+    store, bus = FakeStore(), _RecordingBus()
+    await store.save("inbox/b.pdf", {"status": "filed"})
+    services = DocumentServices(
+        DocumentsConfig(intake_workflow="document_intake"), bucket=bucket, store=store
+    )
+    tools = {
+        t.name: t
+        for t in build_document_tools(
+            services, bus=bus, report_to={"channel": "telegram", "chat_id": "99"}
+        )
+    }
+    first = await tools["documents_start_intake"].ainvoke({})
+    assert first == {"started": ["inbox/a.pdf"], "workflow": "document_intake"}
+    (run,) = bus.published
+    assert (run.origin, run.channel, run.chat_id) == ("workflow", "telegram", "99")
+    assert run.metadata["trigger"] == "scan"
+    assert json.loads(run.metadata["workflow_input"])["key"] == "inbox/a.pdf"
+    assert store.rows["inbox/a.pdf"]["status"] == "processing"
+    again = await tools["documents_start_intake"].ainvoke({})
+    assert again["started"] == [] and len(bus.published) == 1
+
+
+async def test_start_intake_needs_a_workflow_and_a_chat(bucket: Bucket) -> None:
+    services = DocumentServices(DocumentsConfig(), bucket=bucket, store=FakeStore())
+    assert "documents_start_intake" not in {t.name for t in build_document_tools(services)}
+    tool = next(
+        t
+        for t in build_document_tools(services, bus=_RecordingBus())
+        if t.name == "documents_start_intake"
+    )
+    assert "intake_workflow" in (await tool.ainvoke({}))["error"]
+    services.config.intake_workflow = "document_intake"
+    assert "review_chat_id" in (await tool.ainvoke({}))["error"]
+
+
+@pytest.mark.parametrize(
+    ("confidence", "answer", "status"),
+    [(0.95, None, "filed"), (0.4, "approve", "filed"), (0.4, "reject", "rejected")],
+)
+async def test_document_intake_runs_on_the_real_tools(
+    bucket: Bucket, confidence: float, answer: str | None, status: str
+) -> None:
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    await bucket.put(
+        "inbox/inv.pdf", make_pdf("Invoice from ACME to Globex"), content_type="application/pdf"
+    )
+    store = FakeStore()
+    services = DocumentServices(DocumentsConfig(), bucket=bucket, store=store)
+    real = build_toolset_executor(build_document_tools(services))
+    prompts: list[str] = []
+
+    async def executor(request):
+        if request.kind == "llm":  # the only fake: the model
+            prompts.append(request.payload["prompt"])
+            return request.schema(
+                doc_type="invoice",
+                sender="ACME",
+                receiver="Globex",
+                document_date="2026-09-01",
+                amount=120.5,
+                currency="EUR",
+                summary="An invoice.",
+                confidence=confidence,
+            )
+        return await real(request)
+
+    parsed = parse_graph_spec("document_intake", _template("document_intake"))
+    spec = WorkflowSpec(name="document_intake", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    wf_input = {"key": "inbox/inv.pdf", "filename": "inv.pdf", "mime_type": "", "caption": ""}
+    result = await runner.start(spec, wf_input, run_id="document_intake:1")
+    assert "Invoice from ACME to Globex" in prompts[0]
+    if answer:
+        assert result.status == "waiting" and "inbox/inv.pdf" not in store.rows
+        result = await runner.resume(
+            spec, "document_intake:1", {"action": answer, "by": "luca", "via": "ui"}
+        )
+    row = store.rows["inbox/inv.pdf"]
+    assert row["status"] == status
+    if status == "filed":
+        assert result.status == "completed"
+        assert (row["sender"], row["document_date"], row["amount"]) == (
+            "ACME",
+            "2026-09-01",
+            120.5,
+        )
+        assert row["fields"]["confidence"] == confidence

@@ -3,6 +3,8 @@ Document tools for the agent and workflow steps.
 
 - ``bucket_list`` / ``bucket_read`` / ``bucket_link`` / ``bucket_new_files``
 - ``documents_save`` / ``documents_search`` / ``documents_get``
+- ``documents_start_intake`` — queue the intake workflow for new bucket files
+  (needs the message bus; scheduled scans use it via a cron'd workflow)
 
 Built by :func:`build_document_tools` when ``documents.enabled``; they share one
 :class:`DocumentServices` (a bucket client and a pooled database connection).
@@ -11,6 +13,7 @@ Failures come back as ``{"error": ...}`` — never raised into the agent.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from langclaw.documents.bucket import Bucket, BucketError
@@ -20,6 +23,7 @@ from langclaw.documents.text import extract_text
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
 
+    from langclaw.bus.base import BaseMessageBus
     from langclaw.config.schema import DocumentsConfig
 
 _ERRORS = (BucketError, DocumentStoreError, ValueError)
@@ -66,9 +70,24 @@ def shared_services(config: DocumentsConfig) -> DocumentServices:
     return services
 
 
-def build_document_tools(services: DocumentServices) -> list[BaseTool]:
-    """The document tools, closed over *services*."""
+def build_document_tools(
+    services: DocumentServices,
+    *,
+    bus: BaseMessageBus | None = None,
+    report_to: dict[str, str] | None = None,
+) -> list[BaseTool]:
+    """The document tools, closed over *services*.
+
+    Args:
+        services: Shared bucket + store.
+        bus: The running message bus. ``documents_start_intake`` is only built
+            when a bus is given (it starts runs by publishing to it).
+        report_to: Default chat for intake runs started without a chat of
+            their own (scheduled scans): ``{"channel", "chat_id"}``.
+    """
     from langchain_core.tools import StructuredTool
+
+    from langclaw.bus.base import InboundMessage
 
     cfg = services.config
 
@@ -235,6 +254,60 @@ def build_document_tools(services: DocumentServices) -> list[BaseTool]:
             return {"error": str(exc)}
         return {"document": row} if row else {"error": f"No record for {bucket_key!r}."}
 
+    async def documents_start_intake(
+        prefix: str = "", limit: int = 20, channel: str = "", chat_id: str = ""
+    ) -> dict:
+        """Start the intake workflow for every bucket file not filed yet.
+
+        Each new file gets a 'processing' record first, so a second scan never
+        queues it twice. Results and review requests go to the given chat, else
+        to the configured review chat.
+
+        Args:
+            prefix: Only keys starting with this (default: the intake prefix).
+            limit: Maximum number of files to start (1-200).
+            channel: Channel to report to (e.g. telegram); default: the review channel.
+            chat_id: Chat to report to; default: the review chat.
+        """
+        if not cfg.intake_workflow:
+            return {"error": "No intake workflow: set documents.intake_workflow."}
+        target_channel = channel or (report_to or {}).get("channel", "")
+        target_chat = chat_id or (report_to or {}).get("chat_id", "")
+        if not (target_channel and target_chat):
+            return {
+                "error": "No chat to report to: pass channel and chat_id, or set "
+                "workflows.review_channel and workflows.review_chat_id."
+            }
+        try:
+            objects = await services.bucket.list(prefix or cfg.intake_prefix, limit=1000)
+            files = [o for o in objects if not o.key.endswith("/")]
+            known = await services.store.known_keys([o.key for o in files])
+            new = [o.key for o in files if o.key not in known][: max(1, min(limit, 200))]
+            for key in new:
+                await services.store.save(key, {"status": "processing"})
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        for key in new:
+            filename = key.rsplit("/", 1)[-1]
+            await bus.publish(
+                InboundMessage(
+                    channel=target_channel,
+                    user_id=target_chat,
+                    context_id=target_chat,
+                    chat_id=target_chat,
+                    content=f"run workflow {cfg.intake_workflow}",
+                    origin="workflow",
+                    metadata={
+                        "workflow_name": cfg.intake_workflow,
+                        "workflow_input": json.dumps(
+                            {"key": key, "filename": filename, "mime_type": "", "caption": ""}
+                        ),
+                        "trigger": "scan",
+                    },
+                )
+            )
+        return {"started": new, "workflow": cfg.intake_workflow}
+
     fns = [
         bucket_list,
         bucket_read,
@@ -244,4 +317,6 @@ def build_document_tools(services: DocumentServices) -> list[BaseTool]:
         documents_search,
         documents_get,
     ]
+    if bus is not None:
+        fns.append(documents_start_intake)
     return [StructuredTool.from_function(coroutine=fn, parse_docstring=True) for fn in fns]
