@@ -39,7 +39,8 @@ def _party_xml(tag: str, p: Party) -> str:
       <cac:Country><cbc:IdentificationCode>RO</cbc:IdentificationCode></cac:Country></cac:PostalAddress>
     <cac:PartyTaxScheme><cbc:CompanyID>{escape(p.cui)}</cbc:CompanyID>
       <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>
-    <cac:PartyLegalEntity><cbc:RegistrationName>{escape(p.name)}</cbc:RegistrationName>{legal}</cac:PartyLegalEntity>
+    <cac:PartyLegalEntity>
+      <cbc:RegistrationName>{escape(p.name)}</cbc:RegistrationName>{legal}</cac:PartyLegalEntity>
   </cac:Party></cac:{tag}>"""
 
 
@@ -88,7 +89,8 @@ def make_invoice(
         total_net += taxable
         total_vat += vat
         subtotals.append(
-            f"""<cac:TaxSubtotal><cbc:TaxableAmount currencyID="{currency}">{_money(taxable)}</cbc:TaxableAmount>
+            f"""<cac:TaxSubtotal>
+      <cbc:TaxableAmount currencyID="{currency}">{_money(taxable)}</cbc:TaxableAmount>
       <cbc:TaxAmount currencyID="{currency}">{_money(vat)}</cbc:TaxAmount>
       <cac:TaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>{_money(rate)}</cbc:Percent>
         <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal>"""

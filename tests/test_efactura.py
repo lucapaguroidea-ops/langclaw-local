@@ -38,7 +38,8 @@ MF_STYLE = """<?xml version="1.0" encoding="UTF-8"?>
   <cac:AccountingCustomerParty><cac:Party>
     <cac:PartyTaxScheme><cbc:CompanyID>RO987456123</cbc:CompanyID>
       <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>
-    <cac:PartyLegalEntity><cbc:RegistrationName>Buyer SRL</cbc:RegistrationName></cac:PartyLegalEntity>
+    <cac:PartyLegalEntity>
+      <cbc:RegistrationName>Buyer SRL</cbc:RegistrationName></cac:PartyLegalEntity>
   </cac:Party></cac:AccountingCustomerParty>
   <cac:PaymentMeans><cbc:PaymentMeansCode>31</cbc:PaymentMeansCode>
     <cac:PayeeFinancialAccount><cbc:ID>RO80RNCB0067054355123456</cbc:ID></cac:PayeeFinancialAccount>
@@ -206,7 +207,10 @@ async def test_anaf_client_lists_and_downloads() -> None:
                             "data_creare": "202609150930",
                             "cif": "12345678",
                             "id_solicitare": "5001",
-                            "detalii": "Factura cu id_incarcare=5001 emisa de cif_emitent=22000460 pentru cif_beneficiar=12345678",
+                            "detalii": (
+                                "Factura cu id_incarcare=5001 emisa de cif_emitent=22000460 "
+                                "pentru cif_beneficiar=12345678"
+                            ),
                             "tip": "FACTURA PRIMITA",
                             "id": "3001",
                         },
