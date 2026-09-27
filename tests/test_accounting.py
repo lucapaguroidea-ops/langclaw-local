@@ -156,6 +156,9 @@ async def acme():
     root = DocumentStore(PG)
     pool = await root._db()
     await pool.execute("DROP SCHEMA IF EXISTS tenant_acme CASCADE")
+    from langclaw.accounting.journal import Journal
+
+    Journal._ready.clear()  # the schema was dropped: the table cache is stale
     with moto.mock_aws():
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="docs")
