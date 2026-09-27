@@ -1,0 +1,53 @@
+{
+  "description": "Propose the journal entry for one filed invoice: gather the facts, let the model propose, check it deterministically, ask a person when in doubt, then post. Start it for waiting invoices with accounting_queue.",
+  "input": {
+    "key": {"type": "string", "description": "The invoice's key, e.g. efactura/received/123.xml"}
+  },
+  "nodes": {
+    "context": {"type": "tool", "tool": "accounting_context", "args": {"bucket_key": "{{input.key}}"}},
+    "propose": {
+      "type": "llm",
+      "system": "You are a Romanian chartered accountant (OMFP 1802/2014, Codul fiscal). Propose the journal entry for the invoice. Use the partner's history when it fits; the client's VAT regime decides the VAT account (4426 deductible, 4427 collected, 4428 when the client applies VAT on collection; none if not a VAT payer). Amounts in the invoice currency, two decimals. The entry must balance.",
+      "prompt": "Context (facts, don't change them):\n{{context}}",
+      "output": {
+        "lines": {"type": "array", "description": "Entry lines: objects {account, debit, credit, explanation}; each line is either a debit or a credit."},
+        "legal_basis": {"type": "string", "description": "Article / standard the treatment rests on."},
+        "reasoning": {"type": "string", "description": "Short explanation, in Romanian."},
+        "confidence": {"type": "number", "description": "0-1: how sure you are the accounts are right."}
+      }
+    },
+    "check": {"type": "tool", "tool": "accounting_check", "args": {"bucket_key": "{{input.key}}", "proposal": "{{propose}}"}},
+    "route": {
+      "type": "branch",
+      "rules": [
+        {"if": {"path": "check.ok", "op": "falsy"}, "then": "review"},
+        {"if": {"path": "propose.confidence", "op": "lt", "value": 0.9}, "then": "review"}
+      ],
+      "else": "post"
+    },
+    "review": {
+      "type": "human_review",
+      "message": "Check this journal entry before it's posted.",
+      "show": ["propose", "check", "recheck"],
+      "editable": "propose",
+      "on_reject": "defer"
+    },
+    "recheck": {"type": "tool", "tool": "accounting_check", "args": {"bucket_key": "{{input.key}}", "proposal": "{{propose}}"}},
+    "reroute": {
+      "type": "branch",
+      "rules": [{"if": {"path": "recheck.ok", "op": "falsy"}, "then": "review"}],
+      "else": "post"
+    },
+    "post": {"type": "tool", "tool": "journal_post", "args": {"bucket_key": "{{input.key}}", "proposal": "{{propose}}"}},
+    "defer": {"type": "tool", "tool": "accounting_defer", "args": {"bucket_key": "{{input.key}}", "reason": "Rejected in review."}}
+  },
+  "edges": [
+    {"from": "START", "to": "context"},
+    {"from": "context", "to": "propose"},
+    {"from": "propose", "to": "check"},
+    {"from": "check", "to": "route"},
+    {"from": "review", "to": "recheck"},
+    {"from": "recheck", "to": "reroute"}
+  ],
+  "output": "post"
+}

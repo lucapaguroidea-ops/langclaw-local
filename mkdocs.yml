@@ -89,6 +89,7 @@ nav:
     - Workflows: guides/workflows.md
     - Documents: guides/documents.md
     - Clients (tenants): guides/tenants.md
+    - Accounting proposals: guides/accounting.md
     - Subagents: guides/subagents.md
     - RBAC: guides/rbac.md
     - Scheduled Jobs: guides/cron.md

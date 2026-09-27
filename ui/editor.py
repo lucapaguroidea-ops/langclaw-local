@@ -87,6 +87,7 @@ for _label, _name in (
     ("Document intake (bucket → extract → review → file)", "document_intake"),
     ("Bucket scan (start intake for new files)", "bucket_scan"),
     ("e-Factura sync (import invoices from ANAF SPV)", "efactura_sync"),
+    ("Accounting proposal (propose → check → review → post)", "accounting_proposal"),
 ):
     if _tpl := _example(_name):
         TEMPLATES[_label] = _tpl
