@@ -16,7 +16,7 @@
         <link rel="prev" href="../workflows/">
       
       
-        <link rel="next" href="../subagents/">
+        <link rel="next" href="../tenants/">
       
       
         
@@ -669,6 +669,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#several-clients" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several clients
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scans-and-photos-ocr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -727,6 +738,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tenants/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clients (tenants)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1257,6 +1296,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#several-clients" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several clients
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scans-and-photos-ocr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1454,6 +1504,11 @@ away from conversation state and lets you back up / restore it on its own.</p>
 </table>
 <p>Failures come back as <code>{"error": "..."}</code> — a missing object, a bad date
 (<code>YYYY-MM-DD</code>), an unreachable database. The table is created on first use.</p>
+<h2 id="several-clients">Several clients<a class="headerlink" href="#several-clients" title="Permanent link">&para;</a></h2>
+<p>With <a href="../tenants/">clients (tenants)</a> enabled, every tool works inside the current
+client's own folder (<code>tenants/&lt;id&gt;/…</code>) and table (<code>tenant_&lt;id&gt;.documents</code>);
+keys like <code>inbox/…</code> are relative to it. A chat linked to no client gets no
+document access, and chat intake tells the sender so.</p>
 <h2 id="scans-and-photos-ocr">Scans and photos (OCR)<a class="headerlink" href="#scans-and-photos-ocr" title="Permanent link">&para;</a></h2>
 <p>Files with a text layer are read directly. When there's none — a scanned PDF, a
 phone photo of a receipt — and <code>OCR_MODEL</code> names a vision-capable model,

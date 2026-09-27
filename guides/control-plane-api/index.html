@@ -626,6 +626,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../tenants/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clients (tenants)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../subagents/" class="md-nav__link">
         
   
@@ -1437,7 +1465,7 @@ so chat returns a <strong>turn</strong> you poll:</p>
 </tr>
 <tr>
 <td><code>POST /v1/workflows/{name}/runs</code></td>
-<td>Start a run: <code>{"input"?}</code> → <code>202 {"run_id", "turn_id"}</code></td>
+<td>Start a run: <code>{"input"?, "tenant"?}</code> → <code>202 {"run_id", "turn_id"}</code> (<code>tenant</code>: run it for that client)</td>
 </tr>
 <tr>
 <td><code>GET /v1/workflows/{name}/runs</code></td>
@@ -1465,11 +1493,23 @@ so chat returns a <strong>turn</strong> you poll:</p>
 </tr>
 <tr>
 <td><code>GET /v1/documents</code></td>
-<td>Filed documents (read-only). <code>?q=</code> searches text — or ranks by meaning with <code>&amp;semantic=true</code> when <code>documents.embedding_model</code> is set — plus <code>sender</code>, <code>receiver</code>, <code>doc_type</code>, <code>date_from</code>, <code>date_to</code>, <code>status</code>, <code>limit</code>, and <code>field.&lt;name&gt;=&lt;text&gt;</code> for type-specific details (e.g. <code>field.jurisdiction=Delaware</code>). Returns <code>{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}</code> (<code>semantic</code>: whether meaning search is available); ranked rows carry <code>similarity</code> 0–1</td>
+<td>Filed documents (read-only). <code>?q=</code> searches text — or ranks by meaning with <code>&amp;semantic=true</code> when <code>documents.embedding_model</code> is set — plus <code>sender</code>, <code>receiver</code>, <code>doc_type</code>, <code>date_from</code>, <code>date_to</code>, <code>status</code>, <code>limit</code>, and <code>field.&lt;name&gt;=&lt;text&gt;</code> for type-specific details (e.g. <code>field.jurisdiction=Delaware</code>). With clients on, <code>tenant=&lt;id&gt;</code> is required. Returns <code>{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}</code> (<code>semantic</code>: whether meaning search is available); ranked rows carry <code>similarity</code> 0–1</td>
 </tr>
 <tr>
 <td><code>GET /v1/documents/{bucket_key}</code></td>
 <td>One record + a 1-hour download <code>link</code> for its file</td>
+</tr>
+<tr>
+<td><code>GET /v1/tenants</code> · <code>GET /v1/tenants/{id}</code></td>
+<td>Clients (with <code>LANGCLAW__TENANTS__ENABLED</code>)</td>
+</tr>
+<tr>
+<td><code>PUT /v1/tenants/{id}</code></td>
+<td>Create/replace a client: <code>{"name", "tax_id"?, "chats"?: ["telegram:-100…"], "review_chat"?, "profile"?}</code>. A chat already linked to another client is a 400.</td>
+</tr>
+<tr>
+<td><code>DELETE /v1/tenants/{id}</code></td>
+<td>Remove a client (its files and records are kept)</td>
 </tr>
 <tr>
 <td><code>GET /v1/schedules</code></td>
@@ -1491,7 +1531,8 @@ so chat returns a <strong>turn</strong> you poll:</p>
 <strong>404</strong> not found, <strong>409</strong> feature disabled (the message names the setting to
 turn on) or review already answered, <strong>503</strong> gateway not ready.</p>
 <p>Workflows need <code>LANGCLAW__WORKFLOWS__ENABLED=true</code>; schedules need
-<code>LANGCLAW__CRON__ENABLED=true</code>; documents need <code>LANGCLAW__DOCUMENTS__ENABLED=true</code>.</p>
+<code>LANGCLAW__CRON__ENABLED=true</code>; documents need <code>LANGCLAW__DOCUMENTS__ENABLED=true</code>;
+clients need <code>LANGCLAW__TENANTS__ENABLED=true</code>.</p>
 <h2 id="building-a-ui-with-appsmith">Building a UI with Appsmith<a class="headerlink" href="#building-a-ui-with-appsmith" title="Permanent link">&para;</a></h2>
 <p>Appsmith runs API queries <strong>server-side</strong>, so it can reach the private
 <code>railway.internal</code> address and the token never reaches the browser.</p>

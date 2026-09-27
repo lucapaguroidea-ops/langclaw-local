@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://langclaw.dev/reference/">
+        <link rel="canonical" href="https://langclaw.dev/guides/tenants/">
       
       
-        <link rel="prev" href="../ARCHITECTURE/">
+        <link rel="prev" href="../documents/">
       
       
-        <link rel="next" href="app/">
+        <link rel="next" href="../subagents/">
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>API Reference - langclaw</title>
+        <title>Clients (tenants) - langclaw</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#api-reference" class="md-skip">
+        <a href="#clients-tenants" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +94,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="langclaw" class="md-header__button md-logo" aria-label="langclaw" data-md-component="logo">
+    <a href="../.." title="langclaw" class="md-header__button md-logo" aria-label="langclaw" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              API Reference
+              Clients (tenants)
             
           </span>
         </div>
@@ -230,7 +230,7 @@
   
   
     <li class="md-tabs__item">
-      <a href=".." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -249,7 +249,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../getting-started/" class="md-tabs__link">
+      <a href="../../getting-started/" class="md-tabs__link">
         
   
   
@@ -266,11 +266,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../guides/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -286,13 +288,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
           
   
   
@@ -310,7 +310,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../blog/" class="md-tabs__link">
+      <a href="../../blog/" class="md-tabs__link">
         
   
   
@@ -345,7 +345,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="langclaw" class="md-nav__button md-logo" aria-label="langclaw" data-md-component="logo">
+    <a href="../.." title="langclaw" class="md-nav__button md-logo" aria-label="langclaw" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -375,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -402,7 +402,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -426,26 +426,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -463,7 +468,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -481,7 +486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -509,7 +514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/tools/" class="md-nav__link">
+      <a href="../tools/" class="md-nav__link">
         
   
   
@@ -537,7 +542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/channels/" class="md-nav__link">
+      <a href="../channels/" class="md-nav__link">
         
   
   
@@ -565,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/workflows/" class="md-nav__link">
+      <a href="../workflows/" class="md-nav__link">
         
   
   
@@ -593,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/documents/" class="md-nav__link">
+      <a href="../documents/" class="md-nav__link">
         
   
   
@@ -618,10 +623,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../guides/tenants/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clients (tenants)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -637,6 +669,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-separation-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the separation works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#for-developers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For developers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -649,7 +734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/subagents/" class="md-nav__link">
+      <a href="../subagents/" class="md-nav__link">
         
   
   
@@ -677,7 +762,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/rbac/" class="md-nav__link">
+      <a href="../rbac/" class="md-nav__link">
         
   
   
@@ -705,7 +790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/cron/" class="md-nav__link">
+      <a href="../cron/" class="md-nav__link">
         
   
   
@@ -733,7 +818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/control-plane-api/" class="md-nav__link">
+      <a href="../control-plane-api/" class="md-nav__link">
         
   
   
@@ -761,7 +846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/mcp/" class="md-nav__link">
+      <a href="../mcp/" class="md-nav__link">
         
   
   
@@ -789,7 +874,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
         
   
   
@@ -817,7 +902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/probe/" class="md-nav__link">
+      <a href="../probe/" class="md-nav__link">
         
   
   
@@ -845,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../PROBE/" class="md-nav__link">
+      <a href="../../PROBE/" class="md-nav__link">
         
   
   
@@ -873,7 +958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -901,7 +986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ARCHITECTURE/" class="md-nav__link">
+      <a href="../../ARCHITECTURE/" class="md-nav__link">
         
   
   
@@ -933,31 +1018,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -975,7 +1055,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -990,19 +1070,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
         
   
   
@@ -1018,7 +1089,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -1031,7 +1101,7 @@
   
   
     <li class="md-nav__item">
-      <a href="app/" class="md-nav__link">
+      <a href="../../reference/app/" class="md-nav__link">
         
   
   
@@ -1059,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="config/" class="md-nav__link">
+      <a href="../../reference/config/" class="md-nav__link">
         
   
   
@@ -1087,7 +1157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="context/" class="md-nav__link">
+      <a href="../../reference/context/" class="md-nav__link">
         
   
   
@@ -1124,7 +1194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../blog/" class="md-nav__link">
+      <a href="../../blog/" class="md-nav__link">
         
   
   
@@ -1164,6 +1234,47 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-separation-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the separation works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#for-developers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For developers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1187,7 +1298,7 @@
   
   
     <li class="md-path__item">
-      <a href=".." class="md-path__link">
+      <a href="../.." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -1205,10 +1316,10 @@
     
     
       <li class="md-path__item">
-        <a href="./" class="md-path__link">
+        <a href="../" class="md-path__link">
           
   <span class="md-ellipsis">
-    API Reference
+    Guides
   </span>
 
         </a>
@@ -1230,30 +1341,89 @@
   
 
 
-<h1 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
-<p>Auto-generated from source docstrings.</p>
+<h1 id="clients-tenants">Clients (tenants)<a class="headerlink" href="#clients-tenants" title="Permanent link">&para;</a></h1>
+<p>One langclaw deployment can serve several clients whose data must never mix —
+for example an accounting firm's client companies. Turn it on with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">LANGCLAW__TENANTS__ENABLED</span><span class="o">=</span><span class="nb">true</span>
+</span></code></pre></div>
+<p>Then add clients on the console's <strong>Clients</strong> page (or <code>PUT /v1/tenants/{id}</code>):</p>
 <table>
 <thead>
 <tr>
-<th>Module</th>
-<th>Contents</th>
+<th>Field</th>
+<th>What it's for</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><a href="app/">Langclaw</a></td>
-<td>The main application class</td>
+<td><code>id</code></td>
+<td>Short lowercase slug (<code>acme</code>). Names the client's storage folder and database schema, so it can't change later.</td>
 </tr>
 <tr>
-<td><a href="config/">Config</a></td>
-<td><code>LangclawConfig</code> and all sub-schemas</td>
+<td><code>name</code>, <code>tax_id</code></td>
+<td>Display name and fiscal code (CUI).</td>
 </tr>
 <tr>
-<td><a href="context/">Context</a></td>
-<td><code>LangclawContext</code> (per-request channel metadata) + workflow node helpers (<code>steps()</code>, <code>request_review()</code>)</td>
+<td><code>chats</code></td>
+<td>The chats that belong to this client, as <code>channel:chat_id</code> — e.g. <code>telegram:-1001234567890</code> for the client's Telegram group. A chat belongs to <strong>one</strong> client at most.</td>
+</tr>
+<tr>
+<td><code>review_chat</code></td>
+<td>Where this client's review requests also go.</td>
+</tr>
+<tr>
+<td><code>profile</code></td>
+<td>Company context (VAT payer, VAT on collection, tax regime, CAEN, anything else) for workflows to ground decisions in.</td>
 </tr>
 </tbody>
 </table>
+<h2 id="how-the-separation-works">How the separation works<a class="headerlink" href="#how-the-separation-works" title="Permanent link">&para;</a></h2>
+<p>The model never decides whose data it touches. Everything below is decided by
+code, from where a message came from:</p>
+<ol>
+<li><strong>The gateway resolves the client from the chat.</strong> A message from
+   <code>telegram:-100111</code> belongs to the client that lists that chat. Nothing a
+   user types or puts in message metadata can pick a different client. The only
+   messages that name their client explicitly are langclaw's own workflow
+   messages (chat intake, bucket scans, runs started from the console).</li>
+<li><strong>The client is current for the whole turn or run.</strong> Tools read it from
+   context (<code>langclaw.tenants.current_tenant()</code>), not from their arguments.</li>
+<li><strong>Runs remember their client.</strong> The client is stored on the run record, so a
+   run answered hours later — from any chat, the console, or after a restart —
+   continues for the same client. A run whose client was deleted fails instead of
+   running against the wrong data.</li>
+<li><strong>Document tools only see the current client's data.</strong> Files live under
+   <code>tenants/&lt;id&gt;/</code> in the bucket and records in the <code>tenant_&lt;id&gt;</code> database schema.
+   Keys the model passes are relative to that folder and can't climb out of it
+   (<code>../other/…</code> is refused).</li>
+<li><strong>No client, no documents.</strong> In a chat linked to no client, the document tools
+   and chat intake refuse with a message saying so. The agent still answers.</li>
+</ol>
+<p>Review requests go to the chat the run started in, the client's review chat, and
+the global review chat (<code>workflows.review_chat_id</code>), and they name the client.</p>
+<h2 id="for-developers">For developers<a class="headerlink" href="#for-developers" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langclaw.tenants</span><span class="w"> </span><span class="kn">import</span> <span class="n">current_tenant</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nd">@app</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">client_note</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">tenant</span> <span class="o">=</span> <span class="n">current_tenant</span><span class="p">()</span>   <span class="c1"># None when tenancy is off or the chat has no client</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="k">if</span> <span class="n">tenant</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;This chat isn&#39;t linked to a client.&quot;</span><span class="p">}</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;client&quot;</span><span class="p">:</span> <span class="n">tenant</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;vat_payer&quot;</span><span class="p">:</span> <span class="n">tenant</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;vat_payer&quot;</span><span class="p">)}</span>
+</span></code></pre></div>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>One database, one schema per client.</strong> Isolation is enforced by langclaw's
+  code paths, not by separate database credentials per client. The bucket is
+  also shared, with one prefix per client.</li>
+<li><strong>Chat-based only.</strong> There's no <code>/client</code> switch yet for staff who work across
+  several clients from one chat; give each client its own chat, or use the
+  console, which has a client picker.</li>
+<li><strong>Deleting a client keeps its data.</strong> Its files and records stay in its
+  folder and schema, and re-adding the same id finds them again.</li>
+<li><strong>Existing data isn't moved.</strong> Documents filed before tenancy was turned on
+  stay in the old, shared location and aren't visible under any client.</li>
+</ul>
 
 
 
@@ -1338,10 +1508,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.path", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "announce.dismiss"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.path", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "announce.dismiss"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
