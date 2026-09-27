@@ -120,9 +120,7 @@ async def inbox_cmd(ctx: CommandContext) -> str:
 
     response = await loop.run_in_executor(
         None,
-        lambda: (
-            service.users().messages().list(userId="me", maxResults=5, q="is:inbox").execute()
-        ),
+        lambda: service.users().messages().list(userId="me", maxResults=5, q="is:inbox").execute(),
     )
 
     messages = response.get("messages", [])

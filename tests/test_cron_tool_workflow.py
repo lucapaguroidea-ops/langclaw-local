@@ -1,9 +1,9 @@
-"""The agent-facing ``cron`` tool can schedule a saved workflow deterministically.
+"""The agent-facing ``cron`` tool can schedule a workflow deterministically.
 
 Without this, the only way to schedule recurring work is a natural-language
 ``task`` job whose ``message`` is re-authored freehand by the LLM on every fire.
 A ``workflow_name`` arg routes the job through ``origin="workflow"`` instead, so
-the frozen saved script runs verbatim (no LLM authoring) on each fire.
+its fixed steps run on each fire (no agent turn).
 """
 
 from __future__ import annotations

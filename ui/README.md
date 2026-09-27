@@ -2,7 +2,7 @@
 
 A small Streamlit app over the langclaw control-plane API
 (`docs/guides/control-plane-api.md`): **Chat**, **Workflows** (edit/save/run
-saved JS workflows), **Schedules**, and **Status**. The API token stays
+`.graph.json` workflow files), **Schedules**, and **Status**. The API token stays
 server-side; the browser only sees this app, behind a password.
 
 ## Deploy on Railway

@@ -39,7 +39,7 @@ A **Claw** is a running langclaw agent — the configured, multi-channel, role-g
 
     ---
 
-    Typed, multi-step, crash-resumable. Fan out with `ctx.parallel`, call the model directly with `ctx.llm`, delegate to isolated subagents. Every workflow is also a tool and a cron target.
+    LangGraph workflows, checkpointed and crash-resumable, that can pause for human review. Write them in Python or as no-code `.graph.json` files. Every workflow is also a tool and a cron target.
 
     [:octicons-arrow-right-24: Workflows guide](guides/workflows.md)
 
@@ -55,7 +55,7 @@ A **Claw** is a running langclaw agent — the configured, multi-channel, role-g
 
     ---
 
-    Ask the agent to schedule recurring tasks — or fire a saved workflow on cron — both hit the same pipeline as user messages.
+    Ask the agent to schedule recurring tasks — or fire a workflow on cron — both hit the same pipeline as user messages.
 
     [:octicons-arrow-right-24: Cron guide](guides/cron.md)
 

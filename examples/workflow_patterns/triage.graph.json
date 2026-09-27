@@ -1,0 +1,43 @@
+{
+  "description": "Triage an inbound ticket (file version of the `triage` pattern): classify it, search the web for security reports and questions, and write a routed brief.",
+  "input": {
+    "text": {"type": "string", "description": "The raw inbound ticket / report text."}
+  },
+  "nodes": {
+    "classify": {
+      "type": "llm",
+      "label": "Classify ticket",
+      "system": "You are a precise support-ticket router.",
+      "prompt": "Classify this support ticket as exactly one of: security, bug, feature_request, question.\n\n{{input.text}}",
+      "output": {
+        "category": {"type": "string", "description": "security | bug | feature_request | question"}
+      }
+    },
+    "route": {
+      "type": "branch",
+      "label": "Needs a web search?",
+      "rules": [
+        {"if": {"path": "classify.category", "op": "in", "value": ["security", "question"]}, "then": "search"}
+      ],
+      "else": "assess"
+    },
+    "search": {
+      "type": "tool",
+      "label": "Search the web",
+      "tool": "web_search",
+      "args": {"query": "{{input.text}} {{classify.category}}", "n": 3}
+    },
+    "assess": {
+      "type": "llm",
+      "label": "Write the brief",
+      "system": "You are a senior on-call engineer. Respond with a tight, skimmable assessment: severity (low/med/high), the most likely cause, and the one next action. Markdown, under 120 words. Cite any sources you were given.",
+      "prompt": "Category: {{classify.category}}\nTicket: {{input.text}}\nSources (may be empty): {{search}}"
+    }
+  },
+  "edges": [
+    {"from": "START", "to": "classify"},
+    {"from": "classify", "to": "route"},
+    {"from": "search", "to": "assess"}
+  ],
+  "output": "assess"
+}

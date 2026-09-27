@@ -25,7 +25,7 @@ from __future__ import annotations
 import contextvars
 from typing import Any
 
-from langclaw.workflows.context import StepExecutor, StepRequest, WorkflowStepError
+from langclaw.workflows.executor import StepExecutor, StepRequest, WorkflowStepError
 
 _CURRENT: contextvars.ContextVar[WorkflowSteps | None] = contextvars.ContextVar(
     "langclaw_workflow_steps", default=None
@@ -55,7 +55,6 @@ class WorkflowSteps:
             kind="llm",
             target=model,
             payload={"prompt": prompt, "system": system},
-            step_id="",
             schema=schema,
         )
         result = await self._executor(request)
@@ -65,14 +64,12 @@ class WorkflowSteps:
 
     async def tool(self, name: str, **kwargs: Any) -> Any:
         """Call a registered tool by name."""
-        return await self._executor(
-            StepRequest(kind="tool", target=name, payload=kwargs, step_id="")
-        )
+        return await self._executor(StepRequest(kind="tool", target=name, payload=kwargs))
 
     async def subagent(self, subagent_type: str, prompt: str) -> str:
         """Delegate to a registered subagent and return its final reply."""
         return await self._executor(
-            StepRequest(kind="subagent", target=subagent_type, payload=prompt, step_id="")
+            StepRequest(kind="subagent", target=subagent_type, payload=prompt)
         )
 
 

@@ -85,10 +85,10 @@ class GatewayManager:
         default_agent_spec: dict[str, Any] | None = None,
         workflow_runtime: Any | None = None,
         workflow_registry: Any | None = None,
-        workflow_run_store: Any | None = None,
-        saved_reload_cb: Callable[[], bool] | None = None,
+        workflows_reload_cb: Callable[[], bool] | None = None,
         agent_backend: Any | None = None,
-        saved_store: Any | None = None,
+        workflows_dir: Any | None = None,
+        workflow_file_errors: Callable[[], Any] | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
     ) -> None:
         self._config = config
@@ -107,14 +107,13 @@ class GatewayManager:
         self._cron_manager = cron_manager
         # Workflow-as-message-source (origin="workflow"): the runtime + registry
         # let the gateway run a named workflow directly (bus dispatch / cron),
-        # the run store backs `/workflows runs|status`, and the live-task map backs
+        # the run index backs `/workflows runs|status|reviews`, and the live-task map backs
         # `/workflows cancel` for runs the gateway itself started.
         self._workflow_runtime = workflow_runtime
         self._workflow_registry = workflow_registry
-        self._workflow_run_store = workflow_run_store
-        # Reconcile saved workflow files (agent-written workflows/<name>.js) into
-        # the registry when the folder changes; returns whether anything changed.
-        self._saved_reload_cb = saved_reload_cb
+        # Reconcile workflows/<name>.graph.json files into the registry when the
+        # folder changes; returns whether anything changed.
+        self._workflows_reload_cb = workflows_reload_cb
         self._workflow_runs: dict[str, asyncio.Task] = {}
         # Strong refs to fire-and-forget progress sends so the event loop does
         # not garbage-collect them mid-flight (only holds a weak ref otherwise).
@@ -153,8 +152,8 @@ class GatewayManager:
         # runtime-authored workflow triggers a rebuild and goes live as a
         # workflow_<name> tool in the same session.
         self._workflow_registry_versions: dict[str, int | None] = {}
-        # Track the last-seen content hash of the saved-workflows folder so a file
-        # the agent writes there is reconciled into the registry on the next turn.
+        # Track the last-seen content hash of the workflows folder so a file
+        # written there is reconciled into the registry on the next turn.
         self._workflows_dir_hashes: dict[str, str | None] = {}
 
         # Simple per-agent locks to avoid concurrent rebuilds.
@@ -182,11 +181,11 @@ class GatewayManager:
             agent_names=self._agent_map,
             cron_manager=cron_manager,
             workflow_registry=workflow_registry,
-            workflow_run_store=workflow_run_store,
             workflow_runtime=workflow_runtime,
             live_runs=self._workflow_runs,
-            saved_store=saved_store,
-            saved_reload_cb=saved_reload_cb,
+            workflows_dir=workflows_dir,
+            workflows_reload_cb=workflows_reload_cb,
+            workflow_file_errors=workflow_file_errors,
             mcp_servers=mcp_servers,
             sessions=self._sessions,
             checkpointer=checkpointer_backend.get(),
@@ -238,7 +237,7 @@ class GatewayManager:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def _compute_workflows_dir_hash(self) -> str:
-        """Return a stable hash of every workflow file (``*.js``, ``*.graph.json``).
+        """Return a stable hash of every ``*.graph.json`` workflow file.
 
         Names + contents, so adding, editing, or removing a workflow file changes
         the hash and triggers a reconcile. A missing folder hashes to empty.
@@ -246,8 +245,7 @@ class GatewayManager:
         directory = self._config.agents.workflows_dir
         try:
             parts: list[str] = []
-            files = [*directory.glob("*.js"), *directory.glob("*.graph.json")]
-            for path in sorted(files):
+            for path in sorted(directory.glob("*.graph.json")):
                 parts.append(path.name)
                 parts.append(path.read_text("utf-8"))
             blob = "\0".join(parts)
@@ -317,19 +315,19 @@ class GatewayManager:
         new_hash = self._compute_agents_md_hash(path)
         old_hash = self._agents_md_hashes.get(agent_name)
 
-        # Saved-workflow folder watch (default agent, file-authoring enabled): when
-        # the agent has written/edited/removed a workflows/<name>.js, reconcile the
+        # Workflow folder watch (default agent): when a workflows/<name>.graph.json
+        # was written/edited/removed (by the agent, the UI, or by hand), reconcile the
         # registry from disk *before* reading the version below — the reconcile
         # bumps registry.version, which the version check then turns into a rebuild.
         new_dir_hash: str | None = None
-        if agent_name == "default" and self._saved_reload_cb is not None:
+        if agent_name == "default" and self._workflows_reload_cb is not None:
             new_dir_hash = self._compute_workflows_dir_hash()
             old_dir_hash = self._workflows_dir_hashes.get(agent_name)
             if old_hash is not None and old_dir_hash is not None and new_dir_hash != old_dir_hash:
                 try:
-                    self._saved_reload_cb()
+                    self._workflows_reload_cb()
                 except Exception as exc:  # noqa: BLE001 — never break the turn
-                    logger.error("Saved-workflow reconcile failed: {}", exc)
+                    logger.error("Workflow file reconcile failed: {}", exc)
             self._workflows_dir_hashes[agent_name] = new_dir_hash
 
         # Workflow registry version — only the default agent carries
@@ -527,16 +525,13 @@ class GatewayManager:
                     return "No workflows registered."
                 lines = ["Registered workflows:"]
                 for w in workflows:
-                    tag = "" if w["mode"] == "python" else f" [{w['mode']}]"
+                    tag = " [file]" if w["source"] == "file" else ""
                     desc = f" — {w['description']}" if w["description"] else ""
                     lines.append(f"  {w['name']}{tag}{desc}")
                 return "\n".join(lines)
 
             if sub == "runs":
-                result = await plane.list_runs(limit=20)
-                if not result["journal_enabled"]:
-                    return "Run journal not enabled (set workflows.resume_on_startup)."
-                runs = result["runs"]
+                runs = (await plane.list_runs(limit=20))["runs"]
                 if not runs:
                     return "No workflow runs recorded."
                 # A sample of up to 20 runs; ordering is backend-dependent.
@@ -1044,14 +1039,14 @@ class GatewayManager:
         """
         meta = msg.metadata or {}
         name = meta.get("workflow_name", "")
-        # Reconcile saved workflows/<name>.js from disk *before* the lookup so a
+        # Reconcile workflows/<name>.graph.json from disk *before* the lookup so a
         # delete done straight in the folder (not via the agent) is reflected —
         # otherwise a stale in-memory spec would still run on this fire.
-        if self._saved_reload_cb is not None:
+        if self._workflows_reload_cb is not None:
             try:
-                self._saved_reload_cb()
+                self._workflows_reload_cb()
             except Exception as exc:
-                logger.error("Saved-workflow reconcile failed: {}", exc)
+                logger.error("Workflow file reconcile failed: {}", exc)
         spec = self._workflow_registry.get(name) if self._workflow_registry else None
         if self._workflow_runtime is None or spec is None:
             content = f"Unknown workflow {name!r}." if name else "No workflow specified."

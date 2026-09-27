@@ -22,12 +22,10 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _registry() -> WorkflowRegistry:
+    from tests.test_workflows import _graph
+
     reg = WorkflowRegistry()
-
-    async def body(ctx, inp):
-        return inp
-
-    reg.register(WorkflowSpec(name="echo", description="echo input", fn=body))
+    reg.register(WorkflowSpec(name="echo", description="echo input", graph=_graph()))
     return reg
 
 
@@ -199,10 +197,10 @@ async def test_workflow_errors_map_to_http_status(setup) -> None:
     _, _, client, _, _ = setup
     resp = await client.get("/v1/workflows/missing", headers=AUTH)
     assert resp.status == 404
-    # Saved workflows are off in this setup → 409 with the setting to change.
-    resp = await client.put("/v1/workflows/digest", json={"script": "x"}, headers=AUTH)
+    # No workflows folder in this setup → 409 naming the setting to change.
+    resp = await client.put("/v1/workflows/digest", json={"nodes": {}}, headers=AUTH)
     assert resp.status == 409
-    assert "INTERPRETER__ENABLED" in (await resp.json())["error"]
+    assert "WORKFLOWS__ENABLED" in (await resp.json())["error"]
 
 
 async def test_start_workflow_run_is_tracked_as_turn(setup) -> None:

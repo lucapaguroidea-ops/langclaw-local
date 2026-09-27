@@ -69,6 +69,13 @@ def _show_turn(turn: dict) -> None:
 
 # -- pages ---------------------------------------------------------------------
 
+_NEW_GRAPH = {
+    "description": "What this workflow does (the agent reads this).",
+    "nodes": {"answer": {"type": "llm", "prompt": "Summarise: {{input.text}}"}},
+    "edges": [{"from": "START", "to": "answer"}],
+    "output": "answer",
+}
+
 
 def page_chat(lc: LangclawClient) -> None:
     st.header("Chat")
@@ -108,27 +115,29 @@ def page_workflows(lc: LangclawClient) -> None:
     choice = st.selectbox("Open", names)
     current = {} if choice == names[0] else lc.workflow(choice)
     editable = choice == names[0] or current.get("editable", False)
+    if current.get("mermaid"):
+        with st.expander("Graph (Mermaid)"):
+            st.code(current["mermaid"], language="mermaid")
 
     with st.form("wf"):
         name = st.text_input(
             "Name (snake_case)", value=current.get("name", ""), disabled=choice != names[0]
         )
-        description = st.text_input("Description", value=current.get("description", ""))
-        script = st.text_area(
-            "Script (JavaScript; use inp, tools.phase, tools.output)",
-            value=current.get(
-                "script", 'tools.phase({name: "start"});\ntools.output({result: inp});'
-            ),
-            height=260,
+        graph_text = st.text_area(
+            "Workflow file (.graph.json — see docs/guides/workflows.md)",
+            value=json.dumps(current.get("graph", _NEW_GRAPH), indent=2),
+            height=360,
             disabled=not editable,
-            help=None if editable else "In-code (Python) workflows are read-only here.",
+            help=None if editable else "Workflows defined in Python code are read-only here.",
         )
         saved = st.form_submit_button("💾 Save", disabled=not editable)
     if saved:
         try:
-            lc.save_workflow(name, script, description)
+            lc.save_workflow(name, json.loads(graph_text))
             st.success(f"Saved {name}.")
             st.rerun()
+        except json.JSONDecodeError as exc:
+            st.error(f"Not valid JSON: {exc}")
         except LangclawError as exc:
             st.error(str(exc))
 

@@ -5,13 +5,13 @@ Blog: "Fan-out-and-synthesize"
 
 Real job: a competitive-landscape brief. Research each contender in its OWN subagent
 — an isolated context with its own web_search — so no contender's findings colour
-another's (the blog's defence against self-preferential bias). Then a single synthesis
-step folds the per-contender notes into one comparison across the dimensions you care
-about. Branch failures are isolated: one scout erroring doesn't sink the brief.
+another's. Then a single synthesis step folds the per-contender notes into one
+comparison across the dimensions you care about. Branch failures are isolated: one
+scout erroring is recorded as "no usable findings" instead of sinking the brief.
 
-This is the pattern where a subagent genuinely earns its keep: each leaf does
-multi-step work (search → read → summarise) with its own tools. The synthesis is a
-one-shot judgment over text, so it stays a lightweight model-backed tool.
+LangGraph shape: ``Send`` fans out one ``scout`` task per contender (each its own
+checkpointed task, run in parallel); their notes collect through an ``operator.add``
+reducer; ``synthesize`` runs once all scouts are done.
 
     /workflows run landscape {"subject": "agent framework",
         "contenders": ["LangGraph", "CrewAI", "AutoGen"],
@@ -20,9 +20,16 @@ one-shot judgment over text, so it stays a lightweight model-backed tool.
 
 from __future__ import annotations
 
+import operator
+from typing import Annotated
+
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from examples.workflow_patterns._app import make_app
+from langclaw.workflows import steps
 
 _COMPARE_SYS = (
     "You are an industry analyst. You are given research notes for several competing "
@@ -41,9 +48,68 @@ class Landscape(BaseModel):
     )
 
 
+class LandscapeState(TypedDict, total=False):
+    subject: str
+    contenders: list[str]
+    dimensions: list[str]
+    notes: Annotated[list[dict], operator.add]
+    report: str
+
+
+class ScoutTask(TypedDict):
+    name: str
+    subject: str
+    dimensions: list[str]
+
+
+def fan_out(state: LandscapeState) -> list[Send]:
+    return [
+        Send(
+            "scout",
+            {"name": n, "subject": state["subject"], "dimensions": state["dimensions"]},
+        )
+        for n in state["contenders"]
+    ]
+
+
+async def scout(task: ScoutTask) -> dict:
+    try:
+        text = await steps().subagent(
+            "scout",
+            f"Research '{task['name']}' as a {task['subject']}. "
+            f"Focus: {', '.join(task['dimensions'])}.",
+        )
+    except Exception:  # noqa: BLE001 — one failed branch must not sink the brief
+        text = ""
+    return {"notes": [{"name": task["name"], "text": (text or "").strip()}]}
+
+
+async def synthesize(state: LandscapeState) -> dict:
+    order = {n: i for i, n in enumerate(state["contenders"])}
+    blocks = [
+        f"### {n['name']}\n{n['text'] or '(no usable findings)'}"
+        for n in sorted(state["notes"], key=lambda n: order.get(n["name"], 0))
+    ]
+    table = await steps().llm(
+        f"Subject: {state['subject']}\nDimensions: {', '.join(state['dimensions'])}\n\n"
+        "Notes:\n\n" + "\n\n".join(blocks),
+        system=_COMPARE_SYS,
+    )
+    return {"report": f"# {state['subject'].title()} — landscape\n\n{table}"}
+
+
+def build() -> StateGraph:
+    builder = StateGraph(LandscapeState)
+    builder.add_node("scout", scout)
+    builder.add_node("synthesize", synthesize)
+    builder.add_conditional_edges(START, fan_out, ["scout"])
+    builder.add_edge("scout", "synthesize")
+    builder.add_edge("synthesize", END)
+    return builder
+
+
 def register(app):
-    # A real subagent: isolated context, its own web_search. ctx.subagent delegates
-    # to it and returns its final text.
+    # A real subagent: isolated context, its own web_search.
     app.subagent(
         "scout",
         description="Research one option and report tight, sourced notes.",
@@ -54,51 +120,17 @@ def register(app):
         ),
         tools=["web_search"],
     )
-
-    @app.workflow(
+    app.workflow(
         "landscape",
+        graph=build(),
         input=Landscape,
+        output_key="report",
         max_concurrency=5,
         description=(
             "Competitive-landscape brief: research each contender in its own parallel "
             "subagent, then synthesise one comparison table across the given dimensions."
         ),
     )
-    async def landscape(ctx, inp: Landscape) -> str:
-        ctx.phase("research")
-
-        def scout(name: str):
-            # Each branch is an isolated subagent: its own search, its own context.
-            return lambda c: c.subagent(
-                "scout",
-                f"Research '{name}' as a {inp.subject}. Focus: {', '.join(inp.dimensions)}.",
-            )
-
-        # return_exceptions=True → one failing scout yields an Exception in place
-        # instead of sinking the whole fan-out.
-        findings = await ctx.parallel(
-            [scout(name) for name in inp.contenders], return_exceptions=True
-        )
-
-        ctx.phase("synthesize")
-        blocks = []
-        for name, notes in zip(inp.contenders, findings, strict=False):
-            if isinstance(notes, Exception) or not (isinstance(notes, str) and notes.strip()):
-                ctx.log(f"{name}: research failed, noting as unknown")
-                blocks.append(f"### {name}\n(no usable findings)")
-                continue
-            ctx.log(f"{name}: scouted")
-            blocks.append(f"### {name}\n{notes.strip()}")
-
-        prompt = (
-            f"Subject: {inp.subject}\n"
-            f"Dimensions: {', '.join(inp.dimensions)}\n\n"
-            f"Notes:\n\n" + "\n\n".join(blocks)
-        )
-        # Synthesis is a one-shot judgment over the gathered notes → ctx.llm.
-        table = await ctx.llm(prompt, system=_COMPARE_SYS)
-        return f"# {inp.subject.title()} — landscape\n\n{table}"
-
     return app
 
 

@@ -1,60 +1,46 @@
 """
-Langclaw-native Workflow primitive (issue #38, Phase 1).
+Langclaw workflows — named, checkpointed LangGraph procedures.
 
-A *workflow* is an operator-authored async Python function, registered with
-``@app.workflow()``, that orchestrates multi-step agent work.  Unlike the
-interpreter (``eval``), which lets the LLM improvise a one-shot script, a
-workflow is durable, typed, named, and RBAC-gated — its steps round-trip
-through the same bus → gateway pipeline as ordinary messages, so rate limiting,
-channel context, and checkpointing are inherited rather than reimplemented.
+A workflow is a LangGraph ``StateGraph``, written in Python
+(``app.workflow("name", graph=builder)``) or as a ``workflows/<name>.graph.json``
+file. Runs are checkpointed on the gateway's checkpointer (crash-resumable), can
+pause for human review, and are exposed as ``workflow_<name>`` tools, the
+``/workflows`` command, cron jobs, and the control-plane API.
 
-Deep, isolation-testable modules:
-
-- :mod:`registry`  — ``WorkflowSpec`` + ``WorkflowRegistry`` (registration,
-  name-collision detection, Pydantic I/O binding).
-- :mod:`context`   — ``WorkflowContext``: the ``ctx.agent`` / ``ctx.subagent`` /
-  ``ctx.tool`` / ``ctx.parallel`` / ``ctx.phase`` step surface, with
-  deterministic step IDs for durable resume.
-- :mod:`runtime`   — ``WorkflowRuntime``: run lifecycle, per-run concurrency +
-  step-count budget, global ``max_concurrent_runs`` ceiling.
-- :mod:`resume`    — ``StepMemoizer`` + the ``StepStore`` protocol: memoize
-  per-step results so a re-run replays completed steps instead of re-running
-  them.  (The resume *trigger* — re-invoking a prior ``run_id`` — is not yet wired.)
-- :mod:`step_store` — ``StoreStepStore`` + ``make_step_store_backend``: the
-  durable ``StepStore`` over a LangGraph ``BaseStore`` (SQLite/Postgres), opt-in
-  via ``workflows.durable_steps``.
-- :mod:`authored`  — ``AuthoredScriptResolver``: Mode 2 (``llm_authored``) —
-  freeze the LLM-authored body so a run replays the same script on resume.
+- :mod:`registry` — ``WorkflowSpec`` + ``WorkflowRegistry`` (names, collisions).
+- :mod:`graph`    — the file format, compiler, runner, run index, and node helpers
+  (``steps()``, ``request_review()``).
+- :mod:`runtime`  — ``WorkflowRuntime``: the entry point every surface calls.
+- :mod:`executor` — ``StepRequest`` / ``build_toolset_executor``: how nodes reach
+  the live tools, model, and subagents.
+- :mod:`bridge`   — ``workflow_<name>`` agent tools and the prompt nudge.
+- :mod:`progress` — per-node progress lines projected to the invoking channel.
+- :mod:`store`    — the ``BaseStore`` backend (SQLite/Postgres) for run records.
 """
 
 from __future__ import annotations
 
-from langclaw.workflows.authored import (
-    AuthoredScriptResolver,
-    InMemoryScriptStore,
-    ScriptAuthor,
-    ScriptStore,
-    StoreScriptStore,
-)
 from langclaw.workflows.bridge import (
     WORKFLOW_TOOL_PREFIX,
-    build_toolset_executor,
     make_workflow_tools,
     resolve_workflow_ptc_names,
     workflow_system_prompt,
 )
-from langclaw.workflows.context import (
+from langclaw.workflows.executor import (
+    StepExecutor,
     StepRequest,
-    WorkflowBudgetExceeded,
-    WorkflowContext,
     WorkflowStepError,
+    build_toolset_executor,
 )
-from langclaw.workflows.js_runner import (
-    build_workflow_author,
-    build_workflow_script_runner,
-    resolve_workflow_tools,
-    select_workflow_tools,
-    unresolved_workflow_tools,
+from langclaw.workflows.graph import (
+    GraphRunResult,
+    GraphSpec,
+    GraphSpecError,
+    GraphWorkflowRunner,
+    ReviewAlreadyResolved,
+    RunIndex,
+    request_review,
+    steps,
 )
 from langclaw.workflows.progress import (
     emit_progress,
@@ -63,62 +49,38 @@ from langclaw.workflows.progress import (
     set_progress_sink,
 )
 from langclaw.workflows.registry import WorkflowRegistry, WorkflowSpec
-from langclaw.workflows.resume import InMemoryStepStore, StepMemoizer, StepStore
-from langclaw.workflows.run_store import RunStore, StoreRunStore
 from langclaw.workflows.runtime import WorkflowRuntime
-from langclaw.workflows.saved_store import (
-    SavedWorkflow,
-    SavedWorkflowStore,
-    parse_metadata,
-    render_saved_file,
-    validate_saved_name,
-)
-from langclaw.workflows.step_store import (
-    MemoryStepStoreBackend,
-    StepStoreBackend,
-    StoreStepStore,
-    make_step_store_backend,
+from langclaw.workflows.store import (
+    MemoryWorkflowStoreBackend,
+    WorkflowStoreBackend,
+    make_workflow_store_backend,
 )
 
 __all__ = [
-    "AuthoredScriptResolver",
-    "InMemoryScriptStore",
-    "InMemoryStepStore",
-    "MemoryStepStoreBackend",
-    "ScriptAuthor",
-    "ScriptStore",
-    "StepMemoizer",
-    "RunStore",
-    "SavedWorkflow",
-    "SavedWorkflowStore",
-    "StepStore",
-    "StepStoreBackend",
-    "StoreRunStore",
-    "StoreScriptStore",
-    "StoreStepStore",
+    "WORKFLOW_TOOL_PREFIX",
+    "GraphRunResult",
+    "GraphSpec",
+    "GraphSpecError",
+    "GraphWorkflowRunner",
+    "MemoryWorkflowStoreBackend",
+    "ReviewAlreadyResolved",
+    "RunIndex",
+    "StepExecutor",
     "StepRequest",
-    "WorkflowBudgetExceeded",
-    "WorkflowContext",
     "WorkflowRegistry",
     "WorkflowRuntime",
-    "WORKFLOW_TOOL_PREFIX",
     "WorkflowSpec",
     "WorkflowStepError",
+    "WorkflowStoreBackend",
     "build_toolset_executor",
-    "build_workflow_author",
-    "build_workflow_script_runner",
     "emit_progress",
-    "make_step_store_backend",
     "make_workflow_tools",
-    "parse_metadata",
-    "render_saved_file",
+    "make_workflow_store_backend",
     "render_workflow_progress",
+    "request_review",
     "reset_progress_sink",
     "resolve_workflow_ptc_names",
-    "resolve_workflow_tools",
-    "select_workflow_tools",
     "set_progress_sink",
-    "unresolved_workflow_tools",
-    "validate_saved_name",
+    "steps",
     "workflow_system_prompt",
 ]

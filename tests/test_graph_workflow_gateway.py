@@ -42,7 +42,7 @@ def _setup(confidence: float) -> tuple[GatewayManager, _Bus, FakeExecutor]:
     registry.register(graph_spec_of("doc_flow", DOC_FLOW))
     runtime = WorkflowRuntime(WorkflowsConfig(enabled=True))
     ex = FakeExecutor(confidence=confidence)
-    runtime.set_resume_executor_factory(lambda _rt: ex)
+    runtime.set_executor_factory(lambda _rt: ex)
     bus = _Bus()
     checkpointer = MagicMock()
     checkpointer.get.return_value = MagicMock()
@@ -140,12 +140,9 @@ async def test_workflow_tool_reports_pause_to_agent() -> None:
     registry = WorkflowRegistry()
     registry.register(graph_spec_of("doc_flow", DOC_FLOW))
     runtime = WorkflowRuntime(WorkflowsConfig(enabled=True))
-    runtime.set_resume_executor_factory(lambda _rt: FakeExecutor(confidence=0.2))
+    runtime.set_executor_factory(lambda _rt: FakeExecutor(confidence=0.2))
 
-    async def _factory(_: Any) -> Any:
-        return None
-
-    (tool,) = make_workflow_tools(registry, runtime, executor_factory=_factory)
+    (tool,) = make_workflow_tools(registry, runtime)
     text = await tool.ainvoke({"workflow_input": {"key": "a.pdf"}})
     assert "waiting for review" in text
     assert "/workflows approve doc_flow:" in text
@@ -154,7 +151,7 @@ async def test_workflow_tool_reports_pause_to_agent() -> None:
 def test_list_workflows_marks_file_graphs() -> None:
     mgr, _, _ = _setup(confidence=0.9)
     (wf,) = mgr._control_plane.list_workflows()
-    assert (wf["mode"], wf["source"]) == ("graph", "file")
+    assert (wf["source"], wf["editable"]) == ("file", True)
 
 
 async def test_answer_review_feeds_ui_and_telegram_from_one_record() -> None:

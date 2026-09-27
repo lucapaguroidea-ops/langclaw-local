@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from langclaw.workflows.context import StepRequest
+from langclaw.workflows.executor import StepRequest
 from langclaw.workflows.graph import (
     GraphSpecError,
     GraphWorkflowRunner,
@@ -84,10 +84,8 @@ def graph_spec_of(name: str, raw: dict[str, Any]) -> WorkflowSpec:
     spec = parse_graph_spec(name, raw)
     return WorkflowSpec(
         name=name,
-        fn=lambda *_: None,
-        description=spec.description,
-        mode="graph",
         graph=build_state_graph(spec),
+        description=spec.description,
         graph_spec=spec,
     )
 
@@ -368,7 +366,7 @@ def python_graph() -> WorkflowSpec:
     builder.add_edge(START, "classify")
     builder.add_edge("classify", "review")
     builder.add_edge("review", END)
-    return WorkflowSpec(name="py_doc", fn=lambda *_: None, mode="graph", graph=builder)
+    return WorkflowSpec(name="py_doc", graph=builder)
 
 
 async def test_python_graph_uses_steps_and_reviews() -> None:
@@ -382,12 +380,7 @@ async def test_python_graph_uses_steps_and_reviews() -> None:
 
 
 def test_steps_outside_a_run_is_a_clear_error() -> None:
-    from langclaw.workflows.context import WorkflowStepError
+    from langclaw.workflows.executor import WorkflowStepError
 
     with pytest.raises(WorkflowStepError, match="only available inside"):
         steps()
-
-
-def test_graph_mode_requires_a_graph() -> None:
-    with pytest.raises(ValueError, match="requires a LangGraph `graph`"):
-        WorkflowSpec(name="x", fn=lambda *_: None, mode="graph")

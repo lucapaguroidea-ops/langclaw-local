@@ -15,6 +15,7 @@ from langclaw.naming import (
     reserved_prefix_owner,
     workflow_tool_name,
 )
+from tests.test_workflows import _graph
 
 # --- pure helpers -----------------------------------------------------------
 
@@ -114,17 +115,12 @@ def test_both_guards_keep_workflow_tool_namespace_disjoint():
         return x
 
     with pytest.raises(ValueError, match="collides"):
-
-        @app.workflow("export", description="clashes with the export tool")
-        async def export_wf(ctx, inp):
-            return inp
+        app.workflow("export", graph=_graph(), description="clashes with the export tool")
 
     # (b) a tool can't claim the generated workflow tool name
     app2 = Langclaw()
 
-    @app2.workflow("report", description="generates tool workflow_report")
-    async def report_wf(ctx, inp):
-        return inp
+    app2.workflow("report", graph=_graph(), description="generates tool workflow_report")
 
     with pytest.raises(ValueError, match="reserved"):
 

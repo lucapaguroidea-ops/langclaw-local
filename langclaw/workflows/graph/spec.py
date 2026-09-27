@@ -51,7 +51,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 #: Node ids and ``save_as`` keys: snake_case, usable as template roots.
-_SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+SAFE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 #: Reserved names that cannot be node ids or ``save_as`` keys.
 _RESERVED = frozenset({"START", "END", "input", "__start__", "__end__"})
 #: A ``{{ path }}`` template placeholder.
@@ -272,7 +272,7 @@ def parse_graph_spec(
             all at once instead of one per save.
     """
     errors: list[str] = []
-    if not _SAFE_ID.match(name or ""):
+    if not SAFE_NAME.match(name or ""):
         errors.append(
             f"name {name!r}: use snake_case — a letter, then letters, digits or underscores"
         )
@@ -308,12 +308,12 @@ def _check_structure(
 
     result_keys: dict[str, str] = {}
     for nid, node in spec.nodes.items():
-        if not _SAFE_ID.match(nid) or nid in _RESERVED:
+        if not SAFE_NAME.match(nid) or nid in _RESERVED:
             errors.append(f"node {nid!r}: ids must be snake_case and not START/END/input")
         if node.type == "branch":
             continue  # a branch only routes; it stores no result
         key = spec.result_key(nid)
-        if node.save_as and (not _SAFE_ID.match(key) or key in _RESERVED):
+        if node.save_as and (not SAFE_NAME.match(key) or key in _RESERVED):
             errors.append(f"node {nid!r}: save_as {key!r} must be snake_case and not 'input'")
         if key in result_keys:
             errors.append(f"node {nid!r}: save_as {key!r} is already used by {result_keys[key]!r}")

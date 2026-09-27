@@ -31,6 +31,7 @@ Management (see :class:`~langclaw.gateway.control.ControlPlane`)::
 
     GET    /v1/status
     GET    /v1/workflows                 GET/PUT/DELETE /v1/workflows/{name}
+                                         (PUT body: the .graph.json content)
     POST   /v1/workflows/{name}/runs     {"input"?}  → 202 {"run_id", "turn_id"}
     GET    /v1/runs                      GET /v1/runs/{run_id}
     POST   /v1/runs/{run_id}/cancel
@@ -352,20 +353,10 @@ class ApiChannel(BaseChannel):
         return self._json(self._require_plane().get_workflow(request.match_info["name"]))
 
     async def _save_workflow(self, request: web.Request) -> web.Response:
+        # The body is the workflow file itself (see docs/guides/workflows.md);
+        # an invalid graph is a 400 listing every problem.
         body = await self._body(request)
-        script = body.get("script")
-        if not isinstance(script, str) or not script.strip():
-            raise ValueError("'script' is required.")
-        uses = body.get("uses_tools") or []
-        if not isinstance(uses, list) or not all(isinstance(u, str) for u in uses):
-            raise ValueError("'uses_tools' must be a list of tool names.")
-        saved = self._require_plane().save_workflow(
-            request.match_info["name"],
-            script=script,
-            description=str(body.get("description") or ""),
-            uses_tools=uses,
-        )
-        return self._json(saved)
+        return self._json(self._require_plane().save_workflow(request.match_info["name"], body))
 
     async def _delete_workflow(self, request: web.Request) -> web.Response:
         self._require_plane().delete_workflow(request.match_info["name"])

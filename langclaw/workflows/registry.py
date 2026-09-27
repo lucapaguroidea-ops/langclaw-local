@@ -1,32 +1,26 @@
 """
-Workflow registry and ``@app.workflow()`` binding (issue #38, Phase 1).
+Workflow registry — the named, collision-checked set of LangGraph workflows.
 
-A :class:`WorkflowRegistry` stores :class:`WorkflowSpec` entries — one per
-operator-authored workflow — and refuses to register a name that collides with
-an existing workflow or any reserved name (tools, subagents, named agents,
-commands), so dispatch is never ambiguous.
+A :class:`WorkflowRegistry` stores :class:`WorkflowSpec` entries and refuses a
+name that collides with an existing workflow or any reserved name (tools,
+subagents, named agents, commands), so dispatch is never ambiguous.
 
-This module is pure and import-light: it depends on nothing in the runtime or
-bus, so it can be unit-tested in isolation.
+Every workflow is a LangGraph ``StateGraph``, from one of two sources:
+
+- **code** — a developer's graph, ``app.workflow("name", graph=builder)``;
+- **file** — ``workflows/<name>.graph.json``, parsed into a
+  :class:`~langclaw.workflows.graph.spec.GraphSpec` and compiled to a graph
+  (editable from the UI or by the agent).
+
+This module is pure and import-light so it can be unit-tested in isolation.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
-
-#: The orchestration authoring modes a :class:`WorkflowSpec` may declare.
-#:
-#: - ``python``       — operator authors the async body (``@app.workflow``).
-#: - ``llm_authored`` — the LLM authors the body fresh per run from the contract.
-#: - ``saved``        — a body authored at runtime (a ``workflows/<name>.js`` file
-#:                      the agent writes) and frozen to disk; reused verbatim.
-#: - ``graph``        — a LangGraph ``StateGraph``: written in Python, or loaded
-#:                      from a ``workflows/<name>.graph.json`` file (checkpointed,
-#:                      resumable, and able to pause for human review).
-_VALID_MODES = frozenset({"python", "llm_authored", "saved", "graph"})
 
 
 @dataclass(slots=True)
@@ -34,80 +28,58 @@ class WorkflowSpec:
     """A registered workflow.
 
     Attributes:
-        name:         Unique handle used to invoke the workflow (tool name
-                      ``workflow_<name>``, ``/workflows run <name>``, cron, PTC).
-        fn:           The async body — ``async def (ctx, inp) -> output``.
-        description:  One-line human/LLM-facing summary.
-        input_model:  Optional Pydantic model validating the run input.
-        output_model: Optional Pydantic model validating the run output.
-        mode:         ``"python"`` (operator-authored, Phase 1) or
-                      ``"llm_authored"`` (Mode 2, later phase).
-        max_steps:        Per-workflow step-count budget (``None`` → use global).
-        max_concurrency:  Per-workflow fan-out width for ``ctx.parallel``.
-        timeout_s:        Per-run wall-clock budget in seconds (``None`` → none).
+        name:            Unique handle (tool ``workflow_<name>``, ``/workflows run``,
+                         cron, API).
+        graph:           The uncompiled LangGraph ``StateGraph``; the runner
+                         compiles it with the gateway checkpointer.
+        description:     What the workflow does — the tool description the LLM reads.
+        input_model:     Optional Pydantic model validating the run input.
+        output_model:    Optional Pydantic model describing the output (informational).
+        max_steps:       LangGraph ``recursion_limit`` per run (``None`` → global).
+        max_concurrency: Max nodes running in parallel within one run.
+        timeout_s:       Per-run wall-clock budget in seconds (``None`` → none).
+        uses_tools:      Tool names this workflow declares it needs.
+        output_key:      For a Python graph, the state key returned as the run's
+                         output (``""`` ⇒ the whole final state).
+        graph_spec:      The parsed file for a file-authored workflow; ``None`` for
+                         a graph written in Python.
     """
 
     name: str
-    fn: Callable[..., Any]
+    graph: Any
     description: str = ""
     input_model: type | None = None
     output_model: type | None = None
-    mode: str = "python"
     max_steps: int | None = None
     max_concurrency: int = 8
     timeout_s: float | None = None
-
     uses_tools: list[str] = field(default_factory=list)
-    """Tool names this workflow declares it needs, validated at registration."""
-
-    script: str | None = None
-    """The frozen JS body for ``mode="saved"`` (authored at runtime). ``None`` for
-    other modes."""
-
-    graph: Any = None
-    """The uncompiled LangGraph ``StateGraph`` for ``mode="graph"``."""
-
+    output_key: str = ""
     graph_spec: Any = None
-    """The parsed :class:`~langclaw.workflows.graph.spec.GraphSpec` when the graph
-    was loaded from a file (editable); ``None`` for a Python-authored graph."""
 
     def __post_init__(self) -> None:
-        if self.mode not in _VALID_MODES:
+        if self.graph is None or not hasattr(self.graph, "compile"):
             raise ValueError(
-                f"Workflow {self.name!r}: unknown mode {self.mode!r}. "
-                f"Expected one of {sorted(_VALID_MODES)}."
+                f"Workflow {self.name!r}: `graph` must be an uncompiled LangGraph "
+                "StateGraph (langclaw compiles it with the gateway checkpointer)."
             )
-        # An llm_authored workflow has no Python body — the description is the
-        # spec the LLM writes the body from, so it must be present.
-        if self.mode == "llm_authored" and not (self.description or "").strip():
-            raise ValueError(
-                f"Workflow {self.name!r}: mode='llm_authored' requires a non-empty "
-                "`description` — it is the spec the LLM authors the body from."
-            )
-        if self.mode == "graph" and self.graph is None:
-            raise ValueError(f"Workflow {self.name!r}: mode='graph' requires a LangGraph `graph`.")
-        # A saved workflow's body is its frozen `script`; without one there is
-        # nothing to run.
-        if self.mode == "saved" and not (self.script or "").strip():
-            raise ValueError(
-                f"Workflow {self.name!r}: mode='saved' requires a non-empty `script` "
-                "— the frozen JS body authored at runtime."
-            )
+
+    @property
+    def source(self) -> str:
+        """``"file"`` for a ``.graph.json`` workflow, ``"code"`` for a Python graph."""
+        return "file" if self.graph_spec is not None else "code"
 
     def validate_input(self, value: Any) -> Any:
         """Coerce/validate *value* against ``input_model`` when declared.
 
         Returns the validated model instance (or the raw value when no model is
-        declared).  Raises whatever the Pydantic model raises on bad input —
-        callers at the run boundary convert that to a clean error.
+        declared). Raises whatever the Pydantic model raises on bad input.
         """
         if self.input_model is None:
             return value
         if isinstance(value, self.input_model):
             return value
-        # Models often call ``workflow_<name>`` with the input as a JSON *string*
-        # rather than a structured object. Decode it first so the agent-tool path
-        # is as forgiving as ``/workflows run`` (which json-decodes before dispatch).
+        # Models often pass the input as a JSON *string*; decode it first.
         if isinstance(value, str):
             try:
                 value = json.loads(value)
@@ -123,16 +95,14 @@ class WorkflowRegistry:
 
     def __init__(self) -> None:
         self._by_name: dict[str, WorkflowSpec] = {}
-        # Monotonic counter bumped on every successful (de)registration. The
-        # gateway compares it to detect a runtime-authored (file-written)
-        # registration and rebuild the agent so the new `workflow_<name>` tool
-        # goes live in the same session — the registry-native analogue of the
-        # AGENTS.md content hash.
+        # Bumped on every (de)registration. The gateway compares it to rebuild the
+        # agent when a workflow file is added/edited/removed, so the matching
+        # `workflow_<name>` tool goes live in the same session.
         self._version = 0
 
     @property
     def version(self) -> int:
-        """Monotonic registry version — changes whenever a workflow is added."""
+        """Monotonic registry version — changes whenever a workflow is (de)registered."""
         return self._version
 
     def register(
@@ -143,12 +113,6 @@ class WorkflowRegistry:
     ) -> WorkflowSpec:
         """Register *spec*, rejecting name collisions.
 
-        Args:
-            spec:           The workflow to register.
-            reserved_names: Names already claimed by tools, subagents, named
-                            agents, or commands.  A clash raises ``ValueError``
-                            so ambiguous dispatch is impossible.
-
         Raises:
             ValueError: If the name is empty, already registered, or reserved.
         """
@@ -157,8 +121,7 @@ class WorkflowRegistry:
             raise ValueError("Workflow name must be a non-empty string.")
         if name in self._by_name:
             raise ValueError(f"Workflow {name!r} is already registered.")
-        reserved = set(reserved_names)
-        if name in reserved:
+        if name in set(reserved_names):
             raise ValueError(
                 f"Workflow name {name!r} collides with an existing tool, "
                 "subagent, agent, or command. Choose a unique name."
@@ -168,12 +131,7 @@ class WorkflowRegistry:
         return spec
 
     def unregister(self, name: str) -> bool:
-        """Remove the workflow registered under *name*; return whether one existed.
-
-        Bumps the version (like :meth:`register`) so a removal also triggers an
-        agent rebuild.  Used to roll back a runtime registration whose on-disk
-        persistence failed, so the registry never holds an unpersisted workflow.
-        """
+        """Remove the workflow registered under *name*; return whether one existed."""
         if name in self._by_name:
             del self._by_name[name]
             self._version += 1

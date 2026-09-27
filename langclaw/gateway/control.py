@@ -20,8 +20,10 @@ Errors are typed so every front end can map them consistently:
 from __future__ import annotations
 
 import dataclasses
+import json
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from langclaw.bus.base import InboundMessage
@@ -33,7 +35,6 @@ if TYPE_CHECKING:
     from langclaw.config.schema import LangclawConfig
     from langclaw.cron.scheduler import CronManager
     from langclaw.workflows import WorkflowRegistry
-    from langclaw.workflows.saved_store import SavedWorkflowStore
 
 
 class NotFoundError(LookupError):
@@ -45,10 +46,9 @@ class FeatureDisabledError(RuntimeError):
 
 
 _WORKFLOWS_OFF = "Workflows are disabled. Set LANGCLAW__WORKFLOWS__ENABLED=true."
-_SAVED_OFF = (
-    "Editing workflows needs saved workflows, which require both "
-    "LANGCLAW__WORKFLOWS__ENABLED=true and LANGCLAW__INTERPRETER__ENABLED=true "
-    "(plus the 'interpreter' extra) and a filesystem-rooted agent backend."
+_FILES_OFF = (
+    "Workflow files are unavailable: the gateway was started without a workflows "
+    "folder (set LANGCLAW__WORKFLOWS__ENABLED=true)."
 )
 _SCHEDULES_OFF = "Schedules are disabled. Set LANGCLAW__CRON__ENABLED=true."
 
@@ -63,13 +63,14 @@ class ControlPlane:
         agent_names: Names of the registered agents (``"default"`` first).
         cron_manager: Scheduler, or ``None`` when cron is disabled.
         workflow_registry: Workflow registry, or ``None`` when workflows are off.
-        workflow_run_store: Run journal, or ``None`` when not enabled.
         workflow_runtime: The workflow runtime (graph runs + reviews), or ``None``.
         live_runs: The gateway's map of run_id → task for runs it started.
-        saved_store: File store for saved (JS) workflows, or ``None`` when
-            file-authored workflows are unavailable.
-        saved_reload_cb: Reconciles saved files into the registry; called after
+        workflows_dir: Folder holding ``<name>.graph.json`` workflow files, or
+            ``None`` when workflow files are unavailable.
+        workflows_reload_cb: Reconciles the files into the registry; called after
             every save/delete so changes go live immediately.
+        workflow_file_errors: Returns validation errors of files that failed to
+            load, by name.
         mcp_servers: Per-server MCP load report (name, transport, tools, error).
         sessions: The gateway's SessionManager (conversation → thread id).
         checkpointer: LangGraph saver holding conversation state.
@@ -84,11 +85,11 @@ class ControlPlane:
         agent_names: Iterable[str],
         cron_manager: CronManager | None = None,
         workflow_registry: WorkflowRegistry | None = None,
-        workflow_run_store: Any | None = None,
         workflow_runtime: Any | None = None,
         live_runs: Mapping[str, asyncio.Task] | None = None,
-        saved_store: SavedWorkflowStore | None = None,
-        saved_reload_cb: Callable[[], bool] | None = None,
+        workflows_dir: Path | None = None,
+        workflows_reload_cb: Callable[[], bool] | None = None,
+        workflow_file_errors: Callable[[], Mapping[str, list[str]]] | None = None,
         mcp_servers: Iterable[Mapping[str, Any]] | None = None,
         sessions: Any | None = None,
         checkpointer: Any | None = None,
@@ -99,11 +100,11 @@ class ControlPlane:
         self._agent_names = list(agent_names)
         self._cron = cron_manager
         self._registry = workflow_registry
-        self._run_store = workflow_run_store
         self._runtime = workflow_runtime
         self._live_runs = live_runs if live_runs is not None else {}
-        self._saved_store = saved_store
-        self._saved_reload_cb = saved_reload_cb
+        self._workflows_dir = Path(workflows_dir) if workflows_dir is not None else None
+        self._workflows_reload_cb = workflows_reload_cb
+        self._workflow_file_errors = workflow_file_errors
         self._mcp_servers = [dict(m) for m in (mcp_servers or [])]
         self._sessions = sessions
         self._checkpointer = checkpointer
@@ -123,8 +124,7 @@ class ControlPlane:
             "agents": list(self._agent_names),
             "features": {
                 "workflows": self._registry is not None,
-                "saved_workflows": self._saved_store is not None,
-                "run_journal": self._run_store is not None,
+                "workflow_files": self._workflows_dir is not None,
                 "schedules": self._cron is not None,
                 "interpreter": bool(self._config.interpreter.enabled),
                 "mcp": bool(self._mcp_servers),
@@ -167,52 +167,71 @@ class ControlPlane:
         return self._registry
 
     def list_workflows(self) -> list[dict[str, Any]]:
-        """Return every registered workflow (without scripts)."""
+        """Return every registered workflow (without its graph)."""
         return [self._describe(spec) for spec in self.require_workflows().specs()]
 
     def get_workflow(self, name: str) -> dict[str, Any]:
-        """Return one workflow; saved workflows include their ``script``."""
+        """Return one workflow with a Mermaid drawing; file workflows include ``graph``."""
         spec = self.require_workflows().get(name)
         if spec is None:
             raise NotFoundError(f"Unknown workflow {name!r}.")
         described = self._describe(spec)
-        if described["editable"]:
-            described["script"] = spec.script
+        if spec.graph_spec is not None:
+            described["graph"] = json.loads(spec.graph_spec.to_file())
+        described["mermaid"] = spec.graph.compile().get_graph().draw_mermaid()
         return described
 
-    def save_workflow(
-        self,
-        name: str,
-        *,
-        script: str,
-        description: str = "",
-        uses_tools: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create or overwrite saved workflow *name* and make it live.
+    def workflow_file_errors(self) -> dict[str, list[str]]:
+        """Validation errors of workflow files that failed to load, by name."""
+        return dict(self._workflow_file_errors() if self._workflow_file_errors else {})
+
+    def validate_workflow(self, name: str, graph: Mapping[str, Any] | str) -> dict[str, Any]:
+        """Check a workflow file without saving it.
+
+        Returns:
+            ``{"valid": True}`` or ``{"valid": False, "errors": [...]}``.
+        """
+        from langclaw.workflows.graph import GraphSpecError, parse_graph_spec
+
+        try:
+            parse_graph_spec(name, dict(graph) if isinstance(graph, Mapping) else graph)
+        except GraphSpecError as exc:
+            return {"valid": False, "errors": exc.errors}
+        return {"valid": True, "errors": []}
+
+    def save_workflow(self, name: str, graph: Mapping[str, Any] | str) -> dict[str, Any]:
+        """Create or replace workflow file *name* and make it live.
 
         Raises:
-            FeatureDisabledError: File-authored workflows are unavailable.
-            ValueError: Invalid name, or *name* belongs to an in-code workflow.
+            FeatureDisabledError: Workflow files are unavailable.
+            ValueError: The graph is invalid (the message lists every problem), or
+                *name* belongs to a workflow registered in code.
         """
+        from langclaw.workflows.graph import GRAPH_SUFFIX, parse_graph_spec
+
         registry = self.require_workflows()
-        store = self._require_saved_store()
+        directory = self._require_workflows_dir()
         existing = registry.get(name)
-        if existing is not None and getattr(existing, "mode", "python") != "saved":
-            raise ValueError(f"{name!r} is an in-code workflow; saved workflows cannot replace it.")
-        store.save(name, script=script, description=description, uses_tools=uses_tools)
-        self._reload_saved()
-        spec = registry.get(name)
-        if spec is None:
-            return {"name": name, "description": description, "mode": "saved", "editable": True}
+        if existing is not None and existing.graph_spec is None:
+            raise ValueError(f"{name!r} is defined in code; a workflow file cannot replace it.")
+        spec = parse_graph_spec(name, dict(graph) if isinstance(graph, Mapping) else graph)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}{GRAPH_SUFFIX}").write_text(spec.to_file(), encoding="utf-8")
+        self._reload_files()
         return self.get_workflow(name)
 
     def delete_workflow(self, name: str) -> bool:
-        """Delete saved workflow *name*. Returns ``True`` when a file was removed."""
+        """Delete workflow file *name*. Returns ``True`` when a file was removed."""
+        from langclaw.workflows.graph import GRAPH_SUFFIX
+        from langclaw.workflows.graph.spec import SAFE_NAME
+
         self.require_workflows()
-        store = self._require_saved_store()
-        if not store.delete(name):
-            raise NotFoundError(f"No saved workflow {name!r}.")
-        self._reload_saved()
+        directory = self._require_workflows_dir()
+        path = directory / f"{name}{GRAPH_SUFFIX}"
+        if not SAFE_NAME.match(name) or not path.exists():
+            raise NotFoundError(f"No workflow file {name!r}.")
+        path.unlink()
+        self._reload_files()
         return True
 
     async def start_workflow(
@@ -251,21 +270,13 @@ class ControlPlane:
         return run_id
 
     async def list_runs(self, limit: int = 20, *, workflow: str = "") -> dict[str, Any]:
-        """Return recent runs: graph runs (newest first), then journaled legacy runs."""
+        """Return recent runs, newest first, optionally for one workflow."""
         self.require_workflows()
-        runs: list[dict[str, Any]] = []
         graph = self._graph_runner()
-        if graph is not None:
-            for record in await graph.index.list(workflow=workflow, limit=limit):
-                runs.append(self._describe_graph_run(record))
-        if self._run_store is not None:
-            for record in (await self._run_store.list_all())[-limit:]:
-                if not workflow or record.get("spec_name") == workflow:
-                    runs.append(self._describe_run(record))
-        return {
-            "journal_enabled": graph is not None or self._run_store is not None,
-            "runs": runs[:limit],
-        }
+        if graph is None:
+            return {"runs": []}
+        records = await graph.index.list(workflow=workflow, limit=limit)
+        return {"runs": [self._describe_graph_run(r) for r in records]}
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         """One graph run with its checkpointed state and per-step results."""
@@ -362,16 +373,12 @@ class ControlPlane:
         return getattr(self._runtime, "graph_runner", None) if self._runtime else None
 
     async def run_status(self, run_id: str) -> dict[str, Any]:
-        """Return a run's journaled status and whether it is live in this gateway."""
+        """Return a run's status and whether it is executing in this gateway now."""
         self.require_workflows()
         live = run_id in self._live_runs
         graph = self._graph_runner()
         if graph is not None and (record := await graph.index.get(run_id)) is not None:
             return {**self._describe_graph_run(record), "live": live}
-        if self._run_store is not None:
-            for record in await self._run_store.list_all():
-                if record.get("run_id") == run_id:
-                    return {**self._describe_run(record), "live": live}
         if live:
             return {"run_id": run_id, "status": "running", "live": True}
         raise NotFoundError(f"Unknown run {run_id!r}.")
@@ -455,29 +462,23 @@ class ControlPlane:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _require_saved_store(self) -> SavedWorkflowStore:
-        if self._saved_store is None:
-            raise FeatureDisabledError(_SAVED_OFF)
-        return self._saved_store
+    def _require_workflows_dir(self) -> Path:
+        if self._workflows_dir is None:
+            raise FeatureDisabledError(_FILES_OFF)
+        return self._workflows_dir
 
-    def _reload_saved(self) -> None:
-        if self._saved_reload_cb is not None:
-            self._saved_reload_cb()
+    def _reload_files(self) -> None:
+        if self._workflows_reload_cb is not None:
+            self._workflows_reload_cb()
 
     @staticmethod
     def _describe(spec: Any) -> dict[str, Any]:
-        mode = getattr(spec, "mode", "python")
         return {
             "name": spec.name,
             "description": spec.description or "",
-            "mode": mode,
-            "editable": mode == "saved",
-            # graph workflows: "file" (workflows/<name>.graph.json) or "code".
-            "source": (
-                ("file" if getattr(spec, "graph_spec", None) is not None else "code")
-                if mode == "graph"
-                else ("file" if mode == "saved" else "code")
-            ),
+            # "file": workflows/<name>.graph.json (editable); "code": a Python graph.
+            "source": spec.source,
+            "editable": spec.source == "file",
         }
 
     @staticmethod
@@ -493,14 +494,6 @@ class ControlPlane:
             "pending_reviews": sum(
                 1 for r in record.get("reviews", []) if r.get("decision") is None
             ),
-        }
-
-    @staticmethod
-    def _describe_run(record: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            "run_id": record.get("run_id"),
-            "workflow": record.get("spec_name"),
-            "status": record.get("status"),
         }
 
 

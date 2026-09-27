@@ -44,9 +44,9 @@ Then message the bot:
 
 ## Workflow Research
 
-A bot that exposes an operator-authored `@app.workflow()` — a durable, typed, multi-step routine the agent invokes as the `workflow_research` tool.
+A bot whose agent can run a checkpointed LangGraph workflow that **pauses for your approval** before delivering — the `workflow_research` tool.
 
-**What it shows:** `@app.workflow()`, Pydantic-typed input, `ctx.phase()` / `ctx.parallel()` / `ctx.tool()`, the default-deny `workflows` RBAC axis, and (with the interpreter on) Mode 1 — calling the workflow from an `eval` script.
+**What it shows:** `app.workflow(name, graph=builder)`, Pydantic-typed input, `Send` fan-out (one web search per angle, in parallel), `steps()` for tools and the model, `request_review()` for human-in-the-loop, and the default-deny `workflows` RBAC axis.
 
 Workflows are **off by default** — enable them first:
 
@@ -62,20 +62,22 @@ python examples/workflow_research.py
 > workflow tool stripped before the model sees it. This example sets
 > `default_role = "analyst"` so a fresh chat user reaches the workflow.
 
-The example registers the **same job two ways**:
-
-- `research` — `mode="python"` (**the recommended path**): the steps, fan-out, and phases are fixed Python — reviewed, typed, unit-testable, deterministic. This is how you should write workflows whose shape you know. When the *composition* varies per call but the building blocks don't, let the agent compose registered workflows via **Mode 1** (PTC, interpreter on) rather than reaching for Mode 2.
-- `research_auto` — `mode="llm_authored"` (**Mode 2 — experimental**): you declare only the contract (typed input, `uses_tools` allowlist, budget, description) and the LLM authors the JS body, frozen per run and run in the QuickJS sandbox over the allowlist. It's an escape hatch for genuinely-variable, low-stakes, supervised tasks — **not** a peer of the python path: the generated body isn't unit-testable, re-authors on every new run (so it's only deterministic within a run), and is codegen running without review. Prefer python or Mode 1 unless you specifically need it.
-
 Then message the bot:
 
-- *"Run the research workflow on quantum computing"* — calls `workflow_research` (python mode); fans out one `web_search` per angle in parallel, then synthesises a brief
-- *"Use research_auto for electric vehicles"* — calls `workflow_research_auto` (Mode 2); needs the interpreter extra (`pip install langclaw[interpreter]`), since the authored body runs in the QuickJS sandbox
-- *"Research electric vehicles and solar — use the workflow for each"* — with the interpreter on (`LANGCLAW__INTERPRETER__ENABLED=true`), the agent writes one `eval` script that calls `tools.workflowResearch(...)` per topic (Mode 1)
+- *"Research quantum computing"* — the agent calls `workflow_research`; it searches each angle in parallel, drafts a brief, and tells you it is waiting for review
+- `/workflows reviews` — see what's waiting
+- `/workflows approve <run_id>` — the brief is delivered; or `/workflows edit <run_id> {"draft": "..."}` to correct it first, or `/workflows reject <run_id>`
 
-Unlike a subagent (an LLM improvising in isolated context), a python workflow's steps are fixed code; a Mode-2 workflow's body is LLM-written but then frozen, typed, and RBAC-gated. In all cases the LLM only chooses *when* to run it and with *what* typed input.
+The paused run is checkpointed: restart the bot and you can still approve it.
 
-> Not yet wired (tracked as the live-gateway follow-up): `/workflow` slash commands, cron-fired workflows, live phase/step progress in chat, and durable resume in production. The agent-invoked path above works today.
+## Workflow Patterns
+
+Six orchestration patterns (classify-and-act, fan-out, adversarial verification, generate-and-filter, tournament, loop-until-done) as LangGraph workflows, plus `triage.graph.json` — the classify-and-act pattern as a no-code file.
+
+```bash
+LANGCLAW__WORKFLOWS__ENABLED=true uv run python -m examples.workflow_patterns
+uv run langclaw probe '/workflows'
+```
 
 ## Knowledge Base Bot
 

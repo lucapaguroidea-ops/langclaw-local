@@ -91,10 +91,9 @@ class LangclawClient:
     def workflow(self, name: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/workflows/{name}")
 
-    def save_workflow(self, name: str, script: str, description: str = "") -> dict[str, Any]:
-        return self._request(
-            "PUT", f"/v1/workflows/{name}", json={"script": script, "description": description}
-        )
+    def save_workflow(self, name: str, graph: dict[str, Any]) -> dict[str, Any]:
+        """Create/replace ``workflows/<name>.graph.json`` (400 lists every problem)."""
+        return self._request("PUT", f"/v1/workflows/{name}", json=graph)
 
     def delete_workflow(self, name: str) -> None:
         self._request("DELETE", f"/v1/workflows/{name}")

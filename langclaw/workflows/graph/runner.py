@@ -30,9 +30,10 @@ from langclaw.workflows.graph.steps import (
     reset_steps,
     set_steps,
 )
+from langclaw.workflows.progress import emit_progress
 
 if TYPE_CHECKING:
-    from langclaw.workflows.context import StepExecutor
+    from langclaw.workflows.executor import StepExecutor
     from langclaw.workflows.registry import WorkflowSpec
 
 ExecutorProvider = Callable[[], "StepExecutor | Awaitable[StepExecutor]"]
@@ -155,6 +156,8 @@ class GraphWorkflowRunner:
             first: Any = {"input": to_jsonable(run_input), "data": {}}
         else:
             first = run_input.model_dump() if hasattr(run_input, "model_dump") else run_input
+            if first is None:
+                first = {}  # no input → start from an empty state (LangGraph needs one)
         logger.info(f"Workflow {spec.name!r} run {run_id} started")
         return await self._drive(spec, run_id, first)
 
@@ -284,7 +287,7 @@ class GraphWorkflowRunner:
         if self._executor_provider is None:
 
             async def _unwired(request: Any) -> Any:
-                from langclaw.workflows.context import WorkflowStepError
+                from langclaw.workflows.executor import WorkflowStepError
 
                 raise WorkflowStepError(
                     "No tools/models are wired for workflow steps yet (the agent "
@@ -300,7 +303,7 @@ class GraphWorkflowRunner:
         config = self._config(spec, run_id)
         token = set_steps(WorkflowSteps(await self._executor(), run_id=run_id))
         try:
-            coro = graph.ainvoke(graph_input, config)
+            coro = self._stream(spec, run_id, graph, graph_input, config)
             if spec.timeout_s is not None:
                 await asyncio.wait_for(coro, timeout=spec.timeout_s)
             else:
@@ -312,6 +315,22 @@ class GraphWorkflowRunner:
         finally:
             reset_steps(token)
         return await self._settle(spec, run_id, graph, config)
+
+    @staticmethod
+    async def _stream(
+        spec: WorkflowSpec, run_id: str, graph: Any, graph_input: Any, config: dict[str, Any]
+    ) -> None:
+        """Run the graph, projecting each finished node to the channel as progress."""
+        async for update in graph.astream(graph_input, config, stream_mode="updates"):
+            for node in update:
+                if node.startswith("__"):
+                    continue
+                label = node
+                if spec.graph_spec is not None and node in spec.graph_spec.nodes:
+                    label = spec.graph_spec.nodes[node].label or node
+                emit_progress(
+                    {"kind": "phase", "workflow": spec.name, "run_id": run_id, "phase": label}
+                )
 
     async def _settle(
         self, spec: WorkflowSpec, run_id: str, graph: Any, config: dict[str, Any]
@@ -332,6 +351,8 @@ class GraphWorkflowRunner:
                 if spec.graph_spec.output
                 else values.get("data", {})
             )
+        elif spec.output_key:
+            output = values.get(spec.output_key)
         else:
             output = {k: v for k, v in values.items() if not k.startswith("__")}
         output = to_jsonable(output)
