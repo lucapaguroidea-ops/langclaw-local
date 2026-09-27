@@ -468,3 +468,33 @@ async def test_a_month_does_not_close_without_its_expected_documents(acme) -> No
         )
         closed = await tools["accounting_period_close"].ainvoke({"period": period})
         assert closed["closed"] == period
+
+
+@needs_pg
+async def test_outlook_facts_come_from_the_books(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    profile = {"vat_payer": True, "vat_period": "monthly", "employees": 2}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile=profile)
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    with tenant_scope(client):
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        facts = await tools["accounting_outlook"].ainvoke({"period": period, "months": 3})
+    assert {d["form"] for d in facts["deadlines"]} == {"D300", "D394", "D112"}
+    assert facts["thresholds"] == []  # a VAT payer, not micro
+    assert [m["period"] for m in facts["vat_trend"]["months"]][-1] == period
+    assert len(facts["vat_trend"]["months"]) == 3
+    sales = sum(
+        float(r["fields"]["total_net"])
+        for r in rows
+        if r["fields"]["direction"] == "out" and str(r["document_date"])[:4] == period[:4]
+    )
+    assert round(float(facts["revenue_ytd"]), 2) == round(sales, 2)
+    assert facts["unbooked_invoices"] == 0

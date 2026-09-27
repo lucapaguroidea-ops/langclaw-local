@@ -72,6 +72,29 @@ on purpose.
 These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration file (DUKIntegrator) is a later slice.
 
+## Advice: what's coming
+
+`accounting_outlook(period, months=6)` computes, for one client, the facts to
+advise on — nothing here is written by a model:
+
+- **deadlines** — returns due after the month, all on the 25th of the next
+  month: D300 and D394 (VAT payers; at quarter end when the profile has
+  `"vat_period": "quarterly"`), D112 (profile `employees`), D100 (profile
+  `"tax_regime": "micro"`, at quarter end).
+- **thresholds** — the year's net sales against the limits that would change
+  the client's regime: VAT registration (395,000 RON, for `"vat_payer": false`)
+  and the micro-enterprise ceiling (250,000 EUR in 2025, 100,000 EUR from 2026;
+  needs `eur_ron` on the profile). Flagged `warn` from 80%.
+- **vat_trend** — net VAT per month over the last *months*, the latest against
+  the average before it.
+- **unbooked_invoices** — the month's invoices still without an entry.
+
+The **monthly_advice** template (`ui/templates/monthly_advice.graph.json`) runs
+it, has the model write advice that must cite these facts, and pauses for a
+person to approve or edit it before it reaches the client. The limits live in
+`langclaw/accounting/outlook.py:LIMITS` — reference data for your accountant
+to review, like the VAT table.
+
 ## Export to SAGA / NextUp
 
 `accounting_export(target="saga", date_from=, date_to=, again=False)` takes the
@@ -106,3 +129,5 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   into a real SAGA install yet — try one batch before relying on it.
 - Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
   line that carries 0% needs the rate filled in before it adds up.
+- Advice covers deadlines, regime limits and the VAT trend only — cash flow,
+  payments and profit forecasts need bank data that isn't imported yet.

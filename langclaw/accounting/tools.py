@@ -10,6 +10,8 @@ Accounting tools — the steps of the ``accounting_proposal`` workflow.
 - ``accounting_queue``: starts the workflow for invoices waiting for an entry.
 - ``accounting_period_report`` / ``accounting_period_close``: a month's trial
   balance, VAT summary (D300 draft figures) and blockers; closing locks it.
+- ``accounting_outlook``: facts for forward-looking advice (deadlines, regime
+  thresholds, VAT trend) — the ``monthly_advice`` template turns them into advice.
 - ``accounting_export``: exports posted invoices to accounting software (SAGA
   import zip in the client's bucket under ``exports/<target>/``).
 
@@ -20,11 +22,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
+from langclaw.accounting.outlook import deadlines, thresholds, trend
 from langclaw.accounting.period import (
     blockers,
     document_state,
@@ -364,6 +368,62 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"closed": period, "report_key": key, "vat": report["vat"]}
 
+    async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
+        return [
+            r
+            for doc_type in _INVOICE_TYPES
+            for r in await svc.store.search(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            )
+        ]
+
+    async def accounting_outlook(period: str, months: int = 6) -> dict:
+        """Facts to advise a client on what's coming: returns due after the month,
+        how close the year's revenue is to regime limits, and the VAT trend.
+
+        Args:
+            period: The month just finished, as YYYY-MM.
+            months: How many months of VAT history to compare (2-12).
+        """
+        tenant = current_tenant()
+        try:
+            start, end = parse_period(period)
+            svc = services.current()
+            profile = _profile()
+            history = []
+            for back in range(max(2, min(months, 12)) - 1, -1, -1):
+                y, m = divmod(start.year * 12 + start.month - 1 - back, 12)
+                label = f"{y:04d}-{m + 1:02d}"
+                booked = [
+                    r
+                    for r in await _invoices(svc, *parse_period(label))
+                    if r.get("status") in ("posted", "exported")
+                ]
+                vat = vat_summary(booked)
+                history.append((label, vat["payable"] - vat["refundable"]))
+            year_docs = await _invoices(svc, date(start.year, 1, 1), end)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        revenue = Decimal(0)
+        for r in year_docs:
+            f = r.get("fields") or {}
+            if f.get("direction") == "out":
+                net = abs(Decimal(str(f.get("total_net") or 0)))
+                revenue += -net if r.get("doc_type") == "credit_note" else net
+        in_month = [d for d in year_docs if str(d.get("document_date") or "") >= str(start)]
+        facts: dict[str, Any] = {
+            "period": period,
+            "client": {"name": tenant.name if tenant else "", "profile": profile},
+            "deadlines": deadlines(period, profile),
+            "thresholds": thresholds(revenue, year=start.year, profile=profile),
+            "revenue_ytd": revenue,
+            "vat_trend": trend(history),
+            "unbooked_invoices": len(blockers(in_month)),
+        }
+        if len(year_docs) >= 200:
+            facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
+        return json.loads(json.dumps(facts, default=str))
+
     fns = [
         accounting_context,
         accounting_check,
@@ -372,6 +432,7 @@ def build_accounting_tools(
         accounting_export,
         accounting_period_report,
         accounting_period_close,
+        accounting_outlook,
     ]
     if bus is not None:
         fns.append(accounting_queue)
