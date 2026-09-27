@@ -32,6 +32,7 @@ from langclaw.workflows.authored import (
     ScriptStore,
 )
 from langclaw.workflows.context import StepExecutor, WorkflowContext
+from langclaw.workflows.graph.runner import GraphRunResult, GraphWorkflowRunner
 from langclaw.workflows.progress import emit_progress
 from langclaw.workflows.resume import StepMemoizer, StepStore
 from langclaw.workflows.run_store import RunStore
@@ -98,6 +99,52 @@ class WorkflowRuntime:
         self._resume_executor_factory: Callable[[Any], Any] | None = None
         self._author_factory: Callable[[Any], Any] | None = None
         self._script_runner_factory: Callable[[Any], Any] | None = None
+        # Drives mode="graph" workflows on the checkpointer (set by the app once
+        # the checkpointer is open; an in-memory runner until then).
+        self._graph_runner: GraphWorkflowRunner | None = None
+
+    @property
+    def graph_runner(self) -> GraphWorkflowRunner:
+        """The runner for ``mode="graph"`` workflows (in-memory until the app sets one)."""
+        if self._graph_runner is None:
+            self.set_graph_runner(GraphWorkflowRunner(max_steps=self._config.max_steps_per_run))
+        return self._graph_runner  # type: ignore[return-value]
+
+    def set_graph_runner(self, runner: GraphWorkflowRunner) -> None:
+        """Use *runner* for graph workflows; its steps use the live agent toolset."""
+        runner.set_executor_provider(self._graph_step_executor)
+        self._graph_runner = runner
+
+    async def _graph_step_executor(self) -> StepExecutor:
+        if self._resume_executor_factory is None:
+            raise RuntimeError(
+                "Graph workflow steps need the agent's toolset, which is not built yet."
+            )
+        maybe = self._resume_executor_factory(None)
+        return await maybe if isinstance(maybe, Awaitable) else maybe
+
+    async def run_graph(
+        self,
+        spec: WorkflowSpec,
+        run_input: Any,
+        *,
+        run_id: str,
+        trigger: str = "",
+        reply_to: dict[str, str] | None = None,
+    ) -> GraphRunResult:
+        """Start a ``mode="graph"`` run (returns when it finishes or pauses for review)."""
+        validated = spec.validate_input(run_input)
+        async with self._run_gate:
+            return await self.graph_runner.start(
+                spec, validated, run_id=run_id, trigger=trigger, reply_to=reply_to
+            )
+
+    async def continue_graph_review(
+        self, spec: WorkflowSpec, run_id: str, review: dict[str, Any]
+    ) -> GraphRunResult:
+        """Continue a graph run past a review already claimed via the runner."""
+        async with self._run_gate:
+            return await self.graph_runner.continue_review(spec, run_id, review)
 
     def set_resume_executor_factory(self, factory: Callable[[Any], Any]) -> None:
         """Register the executor factory used to build a resume-time step executor."""
@@ -119,7 +166,15 @@ class WorkflowRuntime:
         self._author_factory = author_factory
         self._script_runner_factory = script_runner_factory
 
-    async def run_registered(self, spec: WorkflowSpec, run_input: Any, *, run_id: str) -> Any:
+    async def run_registered(
+        self,
+        spec: WorkflowSpec,
+        run_input: Any,
+        *,
+        run_id: str,
+        trigger: str = "",
+        reply_to: dict[str, str] | None = None,
+    ) -> Any:
         """Run *spec* using the factories registered at agent-build time.
 
         The entry point for runs started **outside** the per-message tool bridge —
@@ -135,6 +190,10 @@ class WorkflowRuntime:
                 registered (e.g. workflows enabled but the builder did not wire
                 them).
         """
+        if spec.mode == "graph":
+            return await self.run_graph(
+                spec, run_input, run_id=run_id, trigger=trigger, reply_to=reply_to
+            )
         if spec.mode == "saved":
             if self._script_runner_factory is None:
                 raise RuntimeError(

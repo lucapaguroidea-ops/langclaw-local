@@ -6,6 +6,111 @@ A **workflow** is a typed, multi-step routine you register once and run many way
 LANGCLAW__WORKFLOWS__ENABLED=true   # workflows are off by default
 ```
 
+## LangGraph workflows (graph mode)
+
+A graph workflow is a LangGraph `StateGraph` run on the gateway's checkpointer:
+every node boundary is saved, a crash resumes from the last finished node, and a
+run can **pause for human review** until someone approves, edits, or rejects.
+Write one in Python or as a JSON file; both run the same way.
+
+### In Python
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import END, START, StateGraph
+from langclaw.workflows.graph import request_review, steps
+
+class Doc(TypedDict, total=False):
+    key: str
+    sender: str
+    approved: bool
+
+async def classify(state: Doc) -> dict:
+    text = await steps().tool("bucket_read", key=state["key"])   # langclaw tools
+    return {"sender": await steps().llm(f"Who sent this?\n{text}")}  # one model call
+
+def review(state: Doc) -> dict:
+    decision = request_review("Is the sender right?", data={"sender": state["sender"]})
+    return {"approved": decision["action"] != "reject"}
+
+builder = StateGraph(Doc)
+builder.add_node("classify", classify)
+builder.add_node("review", review)
+builder.add_edge(START, "classify")
+builder.add_edge("classify", "review")
+builder.add_edge("review", END)
+
+app.workflow("doc_intake", graph=builder, description="Classify and file a document")
+```
+
+Pass the **uncompiled** builder — langclaw compiles it with its checkpointer.
+The run input is the graph's input state; the output is its final state.
+
+### As a file: `workflows/<name>.graph.json`
+
+Files in the agent's `workflows/` folder load automatically (and reload when
+they change), so the UI or the agent can create and edit them:
+
+```json
+{
+  "description": "Classify a document and file it.",
+  "input": {"key": {"type": "string"}},
+  "nodes": {
+    "fetch":    {"type": "tool", "tool": "bucket_read", "args": {"key": "{{input.key}}"}},
+    "classify": {"type": "llm", "prompt": "Who sent this?\n{{fetch}}",
+                 "output": {"sender": {"type": "string"}, "confidence": {"type": "number"}}},
+    "check":    {"type": "branch",
+                 "rules": [{"if": {"path": "classify.confidence", "op": "lt", "value": 0.8},
+                            "then": "review"}],
+                 "else": "save"},
+    "review":   {"type": "human_review", "message": "Sender {{classify.sender}}?",
+                 "show": ["classify"], "editable": "classify"},
+    "save":     {"type": "tool", "tool": "documents_insert", "args": {"meta": "{{classify}}"}}
+  },
+  "edges": [
+    {"from": "START", "to": "fetch"},
+    {"from": "fetch", "to": "classify"},
+    {"from": "classify", "to": "check"},
+    {"from": "review", "to": "save"}
+  ],
+  "output": "save"
+}
+```
+
+| Node type | Does |
+|---|---|
+| `llm` | One model call. `output` fields ⇒ structured result; `model` overrides the default model. |
+| `tool` | Calls a registered tool with templated `args`. |
+| `subagent` | Delegates a `prompt` to a registered subagent. |
+| `branch` | Goes to the first rule whose `if` holds, else to `else`. Ops: `eq ne lt le gt ge in not_in contains exists not_exists truthy falsy`. |
+| `human_review` | Pauses the run. `show` picks what the reviewer sees; `editable` names the result they may correct; `on_reject` (default `END`) is where a rejection goes. |
+
+Each node's result is stored under its id (or `save_as`), and templates such as
+`{{input.key}}` or `{{classify.sender}}` read from those results. A node with no
+outgoing edge ends the run; `{"from": ["a", "b"], "to": "c"}` waits for both
+`a` and `b`. The validator reports every problem at once (unknown nodes, bad
+template keys, unreachable nodes, …); an invalid file is skipped with a warning.
+
+### Reviews
+
+When a run pauses, the channel that started it gets a message with the run id.
+Answer from any surface — the **first answer wins**, and later answers are told
+who answered and where:
+
+```
+/workflows reviews                     # everything waiting
+/workflows approve <run_id>
+/workflows reject <run_id>
+/workflows edit <run_id> {"classify": {"sender": "Globex"}}
+```
+
+Paused runs and their reviews live in the checkpointer and a run index in the
+same database, so they survive restarts. Runs interrupted by a crash continue
+from their last checkpoint on startup.
+
+!!! note "One gateway replica"
+    The first-answer-wins lock is per process; run a single gateway replica.
+
 ## Register a workflow
 
 ```python

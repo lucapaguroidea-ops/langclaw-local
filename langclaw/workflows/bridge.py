@@ -371,7 +371,11 @@ def _make_one_workflow_tool(
     async def _run(workflow_input: Any = None) -> str:
         run_id = f"{spec.name}:{uuid.uuid4().hex[:12]}"
         try:
-            if spec.mode == "saved":
+            if spec.mode == "graph":
+                output = await runtime.run_graph(
+                    spec, workflow_input, run_id=run_id, trigger="agent"
+                )
+            elif spec.mode == "saved":
                 if script_runner_factory is None:
                     raise WorkflowStepError(
                         f"workflow {spec.name!r} is mode='saved' but the script "
@@ -489,6 +493,8 @@ def workflow_system_prompt(registry: WorkflowRegistry, *, authoring: bool = Fals
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
+    if hasattr(value, "to_text"):  # GraphRunResult: output, or what it waits on
+        return value.to_text()
     if hasattr(value, "model_dump"):
         value = value.model_dump()
     try:

@@ -67,7 +67,13 @@ def test_list_and_get_workflow() -> None:
     plane = _plane(workflow_registry=_registry())
 
     assert plane.list_workflows() == [
-        {"name": "echo", "description": "echo input", "mode": "python", "editable": False}
+        {
+            "name": "echo",
+            "description": "echo input",
+            "mode": "python",
+            "editable": False,
+            "source": "code",
+        }
     ]
     assert plane.get_workflow("echo")["name"] == "echo"
     with pytest.raises(NotFoundError):

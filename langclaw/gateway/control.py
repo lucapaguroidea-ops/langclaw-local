@@ -64,6 +64,7 @@ class ControlPlane:
         cron_manager: Scheduler, or ``None`` when cron is disabled.
         workflow_registry: Workflow registry, or ``None`` when workflows are off.
         workflow_run_store: Run journal, or ``None`` when not enabled.
+        workflow_runtime: The workflow runtime (graph runs + reviews), or ``None``.
         live_runs: The gateway's map of run_id → task for runs it started.
         saved_store: File store for saved (JS) workflows, or ``None`` when
             file-authored workflows are unavailable.
@@ -84,6 +85,7 @@ class ControlPlane:
         cron_manager: CronManager | None = None,
         workflow_registry: WorkflowRegistry | None = None,
         workflow_run_store: Any | None = None,
+        workflow_runtime: Any | None = None,
         live_runs: Mapping[str, asyncio.Task] | None = None,
         saved_store: SavedWorkflowStore | None = None,
         saved_reload_cb: Callable[[], bool] | None = None,
@@ -98,6 +100,7 @@ class ControlPlane:
         self._cron = cron_manager
         self._registry = workflow_registry
         self._run_store = workflow_run_store
+        self._runtime = workflow_runtime
         self._live_runs = live_runs if live_runs is not None else {}
         self._saved_store = saved_store
         self._saved_reload_cb = saved_reload_cb
@@ -247,21 +250,124 @@ class ControlPlane:
         )
         return run_id
 
-    async def list_runs(self, limit: int = 20) -> dict[str, Any]:
-        """Return up to *limit* journaled runs (a sample; ordering is backend-dependent)."""
+    async def list_runs(self, limit: int = 20, *, workflow: str = "") -> dict[str, Any]:
+        """Return recent runs: graph runs (newest first), then journaled legacy runs."""
         self.require_workflows()
-        if self._run_store is None:
-            return {"journal_enabled": False, "runs": []}
-        records = await self._run_store.list_all()
+        runs: list[dict[str, Any]] = []
+        graph = self._graph_runner()
+        if graph is not None:
+            for record in await graph.index.list(workflow=workflow, limit=limit):
+                runs.append(self._describe_graph_run(record))
+        if self._run_store is not None:
+            for record in (await self._run_store.list_all())[-limit:]:
+                if not workflow or record.get("spec_name") == workflow:
+                    runs.append(self._describe_run(record))
         return {
-            "journal_enabled": True,
-            "runs": [self._describe_run(r) for r in records[-limit:]],
+            "journal_enabled": graph is not None or self._run_store is not None,
+            "runs": runs[:limit],
         }
+
+    async def get_run(self, run_id: str) -> dict[str, Any]:
+        """One graph run with its checkpointed state and per-step results."""
+        self.require_workflows()
+        graph = self._graph_runner()
+        record = await graph.index.get(run_id) if graph is not None else None
+        if record is None:
+            raise NotFoundError(f"Unknown run {run_id!r}.")
+        spec = self.require_workflows().get(record.get("workflow", ""))
+        run = await graph.get_run(spec, run_id)
+        return {**(run or record), "live": run_id in self._live_runs}
+
+    # ------------------------------------------------------------------
+    # Human review (graph workflows)
+    # ------------------------------------------------------------------
+
+    async def list_reviews(self, workflow: str = "") -> list[dict[str, Any]]:
+        """Every review waiting for an answer, oldest first."""
+        self.require_workflows()
+        graph = self._graph_runner()
+        if graph is None:
+            return []
+        return await graph.index.pending_reviews(workflow=workflow)
+
+    async def answer_review(
+        self,
+        run_id: str,
+        decision: Mapping[str, Any] | str,
+        *,
+        by: str,
+        via: str,
+        interrupt_id: str = "",
+        fallback_target: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Answer a paused run's review; the first answer wins.
+
+        The answer is recorded immediately (so every surface — Telegram, UI,
+        command — sees it at once), then the run continues on the bus worker
+        and delivers its result to the channel that started it.
+
+        Args:
+            run_id: The waiting run.
+            decision: ``"approve"`` / ``"reject"``, or ``{"action", "data", "comment"}``.
+            by: Who answered (user id or name), recorded on the review.
+            via: Where it was answered (``"telegram"``, ``"ui"``...).
+            interrupt_id: Which review, when a run has several; empty ⇒ oldest.
+            fallback_target: Where to deliver the result if the run has no
+                recorded origin (``channel``, ``user_id``, ``context_id``, ``chat_id``).
+
+        Returns:
+            The claimed review (with its ``decision``).
+
+        Raises:
+            NotFoundError: unknown run.
+            ValueError: malformed decision, or no pending review / already answered
+                (a :class:`ReviewAlreadyResolved`, whose message names who answered).
+        """
+        self.require_workflows()
+        graph = self._graph_runner()
+        record = await graph.index.get(run_id) if graph is not None else None
+        if record is None:
+            raise NotFoundError(f"Unknown run {run_id!r}.")
+        if isinstance(decision, str):
+            decision = {"action": decision}
+        from langclaw.workflows.graph import ReviewAlreadyResolved
+
+        try:
+            review = await graph.claim_review(
+                run_id, {**decision, "by": by, "via": via}, interrupt_id=interrupt_id
+            )
+        except ReviewAlreadyResolved as exc:
+            raise ValueError(str(exc)) from exc
+        target = dict(record.get("reply_to") or fallback_target or {})
+        if not target.get("channel"):
+            raise ValueError(f"Run {run_id} has no channel to continue on.")
+        await self._bus.publish(
+            InboundMessage(
+                channel=target["channel"],
+                user_id=target.get("user_id", ""),
+                context_id=target.get("context_id", "default"),
+                chat_id=target.get("chat_id", ""),
+                content=f"continue workflow {record.get('workflow')}",
+                origin="workflow",
+                metadata={
+                    "workflow_name": record.get("workflow", ""),
+                    "run_id": run_id,
+                    "review": review,
+                },
+            )
+        )
+        return review
+
+    def _graph_runner(self) -> Any | None:
+        return getattr(self._runtime, "graph_runner", None) if self._runtime else None
 
     async def run_status(self, run_id: str) -> dict[str, Any]:
         """Return a run's journaled status and whether it is live in this gateway."""
         self.require_workflows()
         live = run_id in self._live_runs
+        graph = self._graph_runner()
+        if graph is not None and (record := await graph.index.get(run_id)) is not None:
+            return {**self._describe_graph_run(record), "live": live}
         if self._run_store is not None:
             for record in await self._run_store.list_all():
                 if record.get("run_id") == run_id:
@@ -366,6 +472,27 @@ class ControlPlane:
             "description": spec.description or "",
             "mode": mode,
             "editable": mode == "saved",
+            # graph workflows: "file" (workflows/<name>.graph.json) or "code".
+            "source": (
+                ("file" if getattr(spec, "graph_spec", None) is not None else "code")
+                if mode == "graph"
+                else ("file" if mode == "saved" else "code")
+            ),
+        }
+
+    @staticmethod
+    def _describe_graph_run(record: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": record.get("run_id"),
+            "workflow": record.get("workflow"),
+            "status": record.get("status"),
+            "trigger": record.get("trigger", ""),
+            "started_at": record.get("started_at", ""),
+            "updated_at": record.get("updated_at", ""),
+            "error": record.get("error", ""),
+            "pending_reviews": sum(
+                1 for r in record.get("reviews", []) if r.get("decision") is None
+            ),
         }
 
     @staticmethod

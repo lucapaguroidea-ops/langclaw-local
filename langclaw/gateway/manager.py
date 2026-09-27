@@ -183,6 +183,7 @@ class GatewayManager:
             cron_manager=cron_manager,
             workflow_registry=workflow_registry,
             workflow_run_store=workflow_run_store,
+            workflow_runtime=workflow_runtime,
             live_runs=self._workflow_runs,
             saved_store=saved_store,
             saved_reload_cb=saved_reload_cb,
@@ -237,7 +238,7 @@ class GatewayManager:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def _compute_workflows_dir_hash(self) -> str:
-        """Return a stable hash of every ``*.js`` in the saved-workflows folder.
+        """Return a stable hash of every workflow file (``*.js``, ``*.graph.json``).
 
         Names + contents, so adding, editing, or removing a workflow file changes
         the hash and triggers a reconcile. A missing folder hashes to empty.
@@ -245,7 +246,8 @@ class GatewayManager:
         directory = self._config.agents.workflows_dir
         try:
             parts: list[str] = []
-            for path in sorted(directory.glob("*.js")):
+            files = [*directory.glob("*.js"), *directory.glob("*.graph.json")]
+            for path in sorted(files):
                 parts.append(path.name)
                 parts.append(path.read_text("utf-8"))
             blob = "\0".join(parts)
@@ -510,6 +512,9 @@ class GatewayManager:
           - ``/workflows run <name> [json]`` — start a run via the bus
             (``origin="workflow"``), mirroring ``/agent <name> <message>``.
           - ``/workflows cancel <run_id>`` — cancel a gateway-started live run.
+          - ``/workflows reviews`` — graph runs waiting for a person.
+          - ``/workflows approve|reject <run_id>`` / ``edit <run_id> <json>`` —
+            answer a review (first answer wins across Telegram, UI and commands).
         """
         plane = self._control_plane
 
@@ -578,9 +583,48 @@ class GatewayManager:
                     return str(exc)
                 return f"Cancelling run {run_id}."
 
+            if sub == "reviews":
+                reviews = await plane.list_reviews()
+                if not reviews:
+                    return "No reviews waiting."
+                lines = [f"Waiting for review ({len(reviews)}):"]
+                for r in reviews:
+                    lines.append(f"  {r['run_id']} ({r['workflow']}) — {r['message']}")
+                return "\n".join(lines)
+
+            if sub in ("approve", "reject", "edit"):
+                if len(ctx.args) < 2 or (sub == "edit" and len(ctx.args) < 3):
+                    extra = " <json>" if sub == "edit" else ""
+                    return f"Usage: /workflows {sub} <run_id>{extra}"
+                run_id = ctx.args[1]
+                decision: dict[str, Any] = {"action": sub}
+                if sub == "edit":
+                    try:
+                        decision["data"] = json.loads(" ".join(ctx.args[2:]))
+                    except ValueError as exc:
+                        return f"Edit data is not valid JSON: {exc}"
+                try:
+                    await plane.answer_review(
+                        run_id,
+                        decision,
+                        by=ctx.user_id,
+                        via=ctx.channel,
+                        fallback_target={
+                            "channel": ctx.channel,
+                            "user_id": ctx.user_id,
+                            "context_id": ctx.context_id,
+                            "chat_id": ctx.chat_id,
+                        },
+                    )
+                except (NotFoundError, ValueError) as exc:
+                    return str(exc)
+                verb = {"approve": "Approved", "reject": "Rejected", "edit": "Edited"}[sub]
+                return f"{verb} — continuing run {run_id}."
+
             return (
-                "Usage: /workflows [list | runs | status <run_id> | "
-                "run <name> [json] | cancel <run_id>]"
+                "Usage: /workflows [list | runs | status <run_id> | run <name> [json] | "
+                "cancel <run_id> | reviews | approve <run_id> | reject <run_id> | "
+                "edit <run_id> <json>]"
             )
 
         self._command_router.register("workflows", _cmd_workflow, "list/run/inspect workflows")
@@ -959,6 +1003,8 @@ class GatewayManager:
         """Render a workflow's output as channel-deliverable text."""
         if isinstance(value, str):
             return value
+        if hasattr(value, "to_text"):  # GraphRunResult: output, or what it waits on
+            return value.to_text()
         if hasattr(value, "model_dump"):
             value = value.model_dump()
         try:
@@ -1059,6 +1105,7 @@ class GatewayManager:
                 return
 
         run_id = meta.get("run_id") or f"{name}:{uuid.uuid4().hex[:12]}"
+        review = meta.get("review")
         if run_id in self._workflow_runs:
             await channel.send(
                 OutboundMessage(
@@ -1080,9 +1127,24 @@ class GatewayManager:
         self._workflow_runs[run_id] = asyncio.current_task()  # type: ignore[assignment]
         progress_token = set_progress_sink(self._make_workflow_progress_sink(msg, channel))
         try:
-            output = await self._workflow_runtime.run_registered(
-                spec, workflow_input, run_id=run_id
-            )
+            if review:
+                # A review answered via the control plane (Telegram, UI, command):
+                # already claimed there (first answer wins) — continue the run.
+                output = await self._workflow_runtime.continue_graph_review(spec, run_id, review)
+            else:
+                output = await self._workflow_runtime.run_registered(
+                    spec,
+                    workflow_input,
+                    run_id=run_id,
+                    trigger=meta.get("trigger")
+                    or ("cron" if meta.get("cron_job_id") else msg.channel),
+                    reply_to={
+                        "channel": msg.channel,
+                        "user_id": msg.user_id,
+                        "context_id": msg.context_id,
+                        "chat_id": msg.chat_id,
+                    },
+                )
             await channel.send(
                 OutboundMessage(
                     channel=msg.channel,

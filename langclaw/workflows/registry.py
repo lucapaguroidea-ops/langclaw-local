@@ -23,7 +23,10 @@ from typing import Any
 #: - ``llm_authored`` — the LLM authors the body fresh per run from the contract.
 #: - ``saved``        — a body authored at runtime (a ``workflows/<name>.js`` file
 #:                      the agent writes) and frozen to disk; reused verbatim.
-_VALID_MODES = frozenset({"python", "llm_authored", "saved"})
+#: - ``graph``        — a LangGraph ``StateGraph``: written in Python, or loaded
+#:                      from a ``workflows/<name>.graph.json`` file (checkpointed,
+#:                      resumable, and able to pause for human review).
+_VALID_MODES = frozenset({"python", "llm_authored", "saved", "graph"})
 
 
 @dataclass(slots=True)
@@ -61,6 +64,13 @@ class WorkflowSpec:
     """The frozen JS body for ``mode="saved"`` (authored at runtime). ``None`` for
     other modes."""
 
+    graph: Any = None
+    """The uncompiled LangGraph ``StateGraph`` for ``mode="graph"``."""
+
+    graph_spec: Any = None
+    """The parsed :class:`~langclaw.workflows.graph.spec.GraphSpec` when the graph
+    was loaded from a file (editable); ``None`` for a Python-authored graph."""
+
     def __post_init__(self) -> None:
         if self.mode not in _VALID_MODES:
             raise ValueError(
@@ -74,6 +84,8 @@ class WorkflowSpec:
                 f"Workflow {self.name!r}: mode='llm_authored' requires a non-empty "
                 "`description` — it is the spec the LLM authors the body from."
             )
+        if self.mode == "graph" and self.graph is None:
+            raise ValueError(f"Workflow {self.name!r}: mode='graph' requires a LangGraph `graph`.")
         # A saved workflow's body is its frozen `script`; without one there is
         # nothing to run.
         if self.mode == "saved" and not (self.script or "").strip():
