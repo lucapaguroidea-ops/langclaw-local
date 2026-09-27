@@ -105,6 +105,22 @@ exported from the bank) and call `bank_import(key)`:
    `paid_amount`, and, once nothing is left to pay, `paid_on` / `payment_ref` /
    `payment_tx`. Cash aging counts only what's still outstanding.
 
+4. Each applied payment is **booked** as a journal entry, with no model
+   involved:
+   - Money in: D bank / C the customer account the invoice was booked on
+     (4111 by default).
+   - Money out: D the supplier account (401 by default) / C bank.
+
+   The bank account is 5121 for RON and 5124 for foreign currency. To use
+   another account for an IBAN, set it on the profile, e.g.
+   `"bank_accounts": {"RO49…": "5121.01"}`.
+5. An unmatched debit described as a bank fee ("comision", "taxa bancara"…) is
+   booked D 627 / C bank.
+
+A payment dated in a **closed** month is still applied to the invoice, but it
+isn't booked. It's listed under `not_booked` with the reason, for the
+accountant.
+
 `bank_movements(unmatched_only=True)` lists what's still open.
 
 ## Advice: what's coming

@@ -27,6 +27,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fee, payment_entry
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
@@ -477,9 +478,32 @@ def build_accounting_tools(
                           payment_tx=tx["key"])  # fmt: skip
         await svc.store.save(bucket_key, {"fields": values})
 
+    async def _book(svc: DocumentServices, doc: dict[str, Any], entry: dict[str, Any]) -> str:
+        """Post a bank entry; ``""`` when posted (or already posted), else why not."""
+        try:
+            await Journal(svc.store).post(doc, entry, approved_by="bank")
+        except JournalError as exc:
+            return "" if "already posted" in str(exc) else str(exc)
+        return ""
+
+    async def _book_payment(
+        svc: DocumentServices, bucket_key: str, amount: Decimal, tx: dict[str, Any]
+    ) -> str:
+        """The journal entry for a payment applied to an invoice ("" or why not)."""
+        row = await svc.store.get(bucket_key) or {}
+        invoice_entry = await Journal(svc.store).get(bucket_key)
+        bank = bank_account(tx.get("account_iban", ""), tx.get("currency", "RON"), _profile())
+        doc = {**row, "bucket_key": f"bank/{tx['key']}/{bucket_key}",
+               "document_date": str(tx["booked"])}  # fmt: skip
+        entry = payment_entry(
+            row, str(amount), invoice_lines=(invoice_entry or {}).get("lines"), bank=bank
+        )
+        return await _book(svc, doc, entry)
+
     async def bank_import(key: str) -> dict:
-        """Import a bank statement (MT940 or CAMT.053) from the client's bucket and
-        match its movements to the invoices they pay. Safe to run twice.
+        """Import a bank statement (MT940 or CAMT.053) from the client's bucket, match
+        its movements to the invoices they pay and book them (payments: 5121 against
+        the invoice's partner account; bank fees: 627). Safe to run twice.
 
         Certain matches (amount plus invoice number, IBAN or partner name) mark the
         invoice paid; probable ones (amount only) are listed to confirm with
@@ -519,16 +543,36 @@ def build_accounting_tools(
             fresh = [t for t in statement.transactions if t.key in new]
             matches = match_payments(fresh, await _open_invoices(svc))
             by_key = {t.key: t for t in fresh}
+            booked, not_booked, fees = 0, [], []
             for m in matches:
                 keys = ",".join(a["bucket_key"] for a in m["allocations"])
                 await book.set_match(m["key"], keys, m["kind"], m["because"])
                 if m["kind"] in ("certain", "partial"):
                     t = by_key[m["key"]]
+                    tx = {"key": t.key, "booked": t.booked, "reference": t.reference,
+                          "account_iban": statement.iban, "currency": t.currency}  # fmt: skip
                     for a in m["allocations"]:
-                        await _apply_payment(
-                            svc, a["bucket_key"], Decimal(a["amount"]),
-                            {"key": t.key, "booked": t.booked, "reference": t.reference},
-                        )  # fmt: skip
+                        await _apply_payment(svc, a["bucket_key"], Decimal(a["amount"]), tx)
+                        why = await _book_payment(svc, a["bucket_key"], Decimal(a["amount"]), tx)
+                        if why:
+                            not_booked.append({"movement": t.key, "reason": why})
+                        else:
+                            booked += 1
+            matched = {m["key"] for m in matches}
+            for t in fresh:
+                if t.key in matched or t.amount >= 0:
+                    continue
+                if not is_bank_fee(f"{t.counterparty} {t.description}"):
+                    continue
+                bank = bank_account(statement.iban, t.currency, _profile())
+                doc = {"bucket_key": f"bank/{t.key}/fee", "document_date": t.booked,
+                       "fields": {"direction": "in"}, "sender": t.counterparty}  # fmt: skip
+                why = await _book(svc, doc, fee_entry(str(abs(t.amount)), bank=bank))
+                if why:
+                    not_booked.append({"movement": t.key, "reason": why})
+                    continue
+                await book.set_match(t.key, "", "fee", "bank fee")
+                fees.append({"key": t.key, "amount": str(t.amount), "description": t.description})
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {
@@ -540,8 +584,11 @@ def build_accounting_tools(
             "already_imported": len(statement.transactions) - len(new),
             "paid": [m for m in matches if m["kind"] == "certain"],
             "partial": [m for m in matches if m["kind"] == "partial"],
+            "fees": fees,
+            "booked_entries": booked,
+            "not_booked": not_booked,
             "to_confirm": [m for m in matches if m["kind"] == "probable"],
-            "unmatched": len(fresh) - len(matches),
+            "unmatched": len(fresh) - len(matches) - len(fees),
         }
 
     async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:
@@ -581,10 +628,12 @@ def build_accounting_tools(
             kind = "certain" if amount == left else "partial"
             await book.set_match(movement_key, bucket_key, kind, "confirmed")
             await _apply_payment(svc, bucket_key, amount, tx)
+            why = await _book_payment(svc, bucket_key, amount, tx)
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"paid" if kind == "certain" else "partly_paid": bucket_key,
-                "movement": movement_key, "left": str(left - amount)}  # fmt: skip
+                "movement": movement_key, "left": str(left - amount),
+                **({"not_booked": why} if why else {})}  # fmt: skip
 
     fns = [
         accounting_context,
