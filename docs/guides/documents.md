@@ -11,6 +11,7 @@ LANGCLAW__DOCUMENTS__ENABLED=true
 LANGCLAW__DOCUMENTS__DATABASE_URL=postgresql://...     # or DOCUMENTS_DATABASE_URL
 LANGCLAW__DOCUMENTS__INTAKE_WORKFLOW=document_intake   # optional, see below
 LANGCLAW__DOCUMENTS__OCR_MODEL=openrouter:google/gemini-2.5-flash  # optional: read scans
+LANGCLAW__DOCUMENTS__EMBEDDING_MODEL=openai/text-embedding-3-small # optional: search by meaning
 ```
 
 The bucket is any S3-compatible store. Each unset
@@ -34,6 +35,8 @@ Railway the bucket needs no extra settings.
 | `documents_save(bucket_key, sender, receiver, document_date, doc_type, amount, currency, summary, status, fields)` | Insert **or update** the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra `fields` merge into a JSON column |
 | `documents_search(text, sender, receiver, doc_type, date_from, date_to, status, limit)` | Filter filed documents (case-insensitive; `text` searches summary, file name, and extra fields) |
 | `documents_get(bucket_key)` | One record |
+| `documents_semantic_search(query, ...filters, limit)` | *With `EMBEDDING_MODEL`:* records ranked by meaning ("power bills" finds electricity invoices), each with a `similarity` 0–1; the same filters as `documents_search` narrow them |
+| `documents_reindex(limit)` | *With `EMBEDDING_MODEL`:* embed records saved before it was on (or whose embedding failed); repeat while `remaining` > 0 |
 | `documents_start_intake(prefix, limit, channel, chat_id)` | Start `INTAKE_WORKFLOW` for every new file. Each gets a `processing` record first, so a second scan never queues it twice. Reports to the given chat, else to `workflows.review_channel` / `review_chat_id` |
 
 Failures come back as `{"error": "..."}` — a missing object, a bad date
@@ -46,6 +49,15 @@ phone photo of a receipt — and `OCR_MODEL` names a vision-capable model,
 `bucket_read` renders each page (first `OCR_MAX_PAGES`) to an image and asks the
 model to transcribe it. The intake workflow needs no change: its `fetch` step
 just gets text back. OCR failures come back as a `note`, never an exception.
+
+## Search by meaning
+
+With `EMBEDDING_MODEL` set, `documents_save` also embeds each record (type,
+sender, receiver, date, summary, extra fields) through OpenRouter — or any
+OpenAI-compatible endpoint via `EMBEDDING_BASE_URL` — and stores the vector in the
+table's `embedding` column. If embedding fails the record is still saved and the
+result carries a `note`; `documents_reindex` catches it up later, as it does for
+records from before search was on. Vectors never go back to the model.
 
 ## Documents sent in chat
 
@@ -94,4 +106,7 @@ so scanned runs know where to report.
 - OCR is a vision-model call per page (first `OCR_MAX_PAGES` pages), used only
   when a file has no text layer. Pick a model that accepts images; a text-only
   model makes the call fail and `bucket_read` returns the error as a `note`.
-- Search is filter / substring based; semantic (vector) search isn't wired yet.
+- Semantic search compares vectors in plain SQL — no pgvector extension needed —
+  by scanning every embedded row. That's fast up to tens of thousands of documents;
+  beyond that, a pgvector index is the next step. Changing `EMBEDDING_MODEL` means
+  old vectors don't match new ones: clear the column and run `documents_reindex`.

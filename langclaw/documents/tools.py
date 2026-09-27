@@ -3,6 +3,7 @@ Document tools for the agent and workflow steps.
 
 - ``bucket_list`` / ``bucket_read`` / ``bucket_link`` / ``bucket_new_files``
 - ``documents_save`` / ``documents_search`` / ``documents_get``
+- ``documents_semantic_search`` / ``documents_reindex`` — with ``embedding_model``
 - ``documents_start_intake`` — queue the intake workflow for new bucket files
   (needs the message bus; scheduled scans use it via a cron'd workflow)
 
@@ -40,11 +41,13 @@ class DocumentServices:
         bucket: Bucket | None = None,
         store: DocumentStore | None = None,
         ocr: VisionOcr | None = None,
+        embeddings: Any | None = None,
     ) -> None:
         self.config = config
         self._bucket = bucket
         self._store = store
         self._ocr = ocr
+        self._embeddings = embeddings
 
     @property
     def bucket(self) -> Bucket:
@@ -62,6 +65,26 @@ class DocumentServices:
                 self.config.ocr_model, max_pages=self.config.ocr_max_pages
             )
         return self._ocr
+
+    @property
+    def embeddings(self) -> Any | None:
+        """The embeddings client, or ``None`` when no ``embedding_model`` is set."""
+        if self._embeddings is None and self.config.embedding_model:
+            from langclaw.documents.embeddings import build_embeddings
+
+            self._embeddings = build_embeddings(self.config)
+        return self._embeddings
+
+    async def embed_record(self, record: dict[str, Any]) -> str:
+        """Embed a saved record; returns a note on failure (``""`` on success)."""
+        from langclaw.documents.embeddings import document_text
+
+        try:
+            (vector,) = await self.embeddings.aembed_documents([document_text(record)])
+            await self.store.set_embedding(record["bucket_key"], vector)
+        except Exception as exc:  # noqa: BLE001 — the record is saved; search lags
+            return f"Saved, but not indexed for semantic search: {exc}"
+        return ""
 
     @property
     def store(self) -> DocumentStore:
@@ -104,6 +127,7 @@ def build_document_tools(
     from langclaw.bus.base import InboundMessage
 
     cfg = services.config
+    semantic = services.embeddings is not None
 
     async def bucket_list(prefix: str = "", limit: int = 50) -> dict:
         """List files in the document bucket, newest first.
@@ -224,9 +248,15 @@ def build_document_tools(
             "fields": fields or {},
         }
         try:
-            return {"saved": await services.store.save(bucket_key, values)}
+            saved = await services.store.save(bucket_key, values)
         except _ERRORS as exc:
             return {"error": str(exc)}
+        out: dict[str, Any] = {"saved": saved}
+        if semantic:
+            note = await services.embed_record(saved)
+            if note:
+                out["note"] = note
+        return out
 
     async def documents_search(
         text: str = "",
@@ -264,6 +294,63 @@ def build_document_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"documents": rows, "count": len(rows)}
+
+    async def documents_semantic_search(
+        query: str,
+        sender: str = "",
+        receiver: str = "",
+        doc_type: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        status: str = "",
+        limit: int = 10,
+    ) -> dict:
+        """Find filed documents by meaning, e.g. "power bills" finds electricity invoices.
+
+        Results are ranked by similarity (0-1); the optional filters narrow them.
+
+        Args:
+            query: What you're looking for, in plain words.
+            sender: Part of the sender's name.
+            receiver: Part of the receiver's name.
+            doc_type: Exact type, e.g. invoice.
+            date_from: Earliest document date, YYYY-MM-DD.
+            date_to: Latest document date, YYYY-MM-DD.
+            status: e.g. filed, needs_review.
+            limit: Maximum results (1-200).
+        """
+        try:
+            vector = await services.embeddings.aembed_query(query)
+            rows = await services.store.similar(
+                vector,
+                limit=limit,
+                sender=sender,
+                receiver=receiver,
+                doc_type=doc_type,
+                date_from=date_from,
+                date_to=date_to,
+                status=status,
+            )
+        except Exception as exc:  # noqa: BLE001 — embeddings or database, as text
+            return {"error": str(exc)}
+        return {"documents": rows, "count": len(rows)}
+
+    async def documents_reindex(limit: int = 100) -> dict:
+        """Index records saved before semantic search was turned on (or whose indexing failed).
+
+        Args:
+            limit: Records to index in this call (1-1000); repeat while "remaining" > 0.
+        """
+        try:
+            rows = await services.store.without_embedding(max(1, min(limit, 1000)))
+            done = 0
+            for row in rows:
+                if not await services.embed_record(row):
+                    done += 1
+            remaining = await services.store.count_without_embedding()
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"embedded": done, "remaining": remaining}
 
     async def documents_get(bucket_key: str) -> dict:
         """Get the filed record for one document.
@@ -340,6 +427,8 @@ def build_document_tools(
         documents_search,
         documents_get,
     ]
+    if semantic:
+        fns += [documents_semantic_search, documents_reindex]
     if bus is not None:
         fns.append(documents_start_intake)
     return [StructuredTool.from_function(coroutine=fn, parse_docstring=True) for fn in fns]

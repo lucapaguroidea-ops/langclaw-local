@@ -564,3 +564,103 @@ async def test_a_photo_sent_in_chat_is_stored_with_a_readable_name(bucket: Bucke
     (wf_input,) = await store_attachments(services, [photo], caption="receipt")
     assert wf_input["filename"] == "photo.jpg" and wf_input["key"].endswith("-photo.jpg")
     assert store.rows[wf_input["key"]]["status"] == "processing"
+
+
+# -- semantic search (embeddings) --------------------------------------------------------
+
+_VOCAB = ["invoice", "electricity", "power", "rent", "lease", "apartment", "flight", "ticket"]
+_SYNONYMS = {"power": "electricity", "lease": "rent", "apartment": "rent", "ticket": "flight"}
+
+
+class FakeEmbeddings:
+    """Deterministic 'meaning' vectors: one dimension per concept (synonyms merge)."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def _vec(self, text: str) -> list[float]:
+        words = [_SYNONYMS.get(w, w) for w in text.lower().replace(",", " ").split()]
+        return [float(words.count(c)) + 0.01 for c in _VOCAB]
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        return [self._vec(t) for t in texts]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        self.calls.append([text])
+        return self._vec(text)
+
+
+@needs_pg
+async def test_saved_documents_are_found_by_meaning(store: DocumentStore) -> None:
+    embed = FakeEmbeddings()
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=embed)
+    tools = {t.name: t for t in build_document_tools(services)}
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "a", "doc_type": "invoice", "summary": "electricity invoice for March"}
+    )
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "b", "doc_type": "contract", "summary": "apartment lease renewal"}
+    )
+    await tools["documents_save"].ainvoke({"bucket_key": "c", "summary": "flight ticket to Rome"})
+
+    found = await tools["documents_semantic_search"].ainvoke({"query": "rent", "limit": 2})
+    assert [d["bucket_key"] for d in found["documents"]][0] == "b"
+    assert found["documents"][0]["similarity"] > found["documents"][1]["similarity"]
+    assert "embedding" not in found["documents"][0]  # vectors stay out of the model's context
+    power = await tools["documents_semantic_search"].ainvoke({"query": "power bill"})
+    assert power["documents"][0]["bucket_key"] == "a"
+
+
+@needs_pg
+async def test_semantic_search_combines_with_filters(store: DocumentStore) -> None:
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=FakeEmbeddings())
+    tools = {t.name: t for t in build_document_tools(services)}
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "x", "summary": "rent March", "status": "filed"}
+    )
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "y", "summary": "rent April", "status": "rejected"}
+    )
+    found = await tools["documents_semantic_search"].ainvoke({"query": "rent", "status": "filed"})
+    assert [d["bucket_key"] for d in found["documents"]] == ["x"]
+
+
+@needs_pg
+async def test_a_failed_embedding_still_saves_the_record(store: DocumentStore) -> None:
+    class Down(FakeEmbeddings):
+        async def aembed_documents(self, texts):
+            raise RuntimeError("embeddings offline")
+
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=Down())
+    save = {t.name: t for t in build_document_tools(services)}["documents_save"]
+    out = await save.ainvoke({"bucket_key": "z", "summary": "rent"})
+    assert out["saved"]["bucket_key"] == "z" and "embeddings offline" in out["note"]
+
+
+@needs_pg
+async def test_reindex_embeds_records_saved_before_search_was_on(store: DocumentStore) -> None:
+    await store.save("old", {"summary": "electricity invoice"})
+    embed = FakeEmbeddings()
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=embed)
+    tools = {t.name: t for t in build_document_tools(services)}
+    assert await tools["documents_reindex"].ainvoke({}) == {"embedded": 1, "remaining": 0}
+    found = await tools["documents_semantic_search"].ainvoke({"query": "power"})
+    assert found["documents"][0]["bucket_key"] == "old"
+
+
+def test_semantic_tools_exist_only_with_an_embedding_model(monkeypatch) -> None:
+    from langclaw.documents import embeddings as emb_mod
+
+    names = {t.name for t in build_document_tools(DocumentServices(DocumentsConfig()))}
+    assert "documents_semantic_search" not in names and "documents_reindex" not in names
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    seen = {}
+    monkeypatch.setattr(emb_mod, "OpenAIEmbeddings", lambda **kw: seen.update(kw) or "E")
+    services = DocumentServices(DocumentsConfig(embedding_model="openai/text-embedding-3-small"))
+    assert services.embeddings == "E"
+    assert seen["model"] == "openai/text-embedding-3-small"
+    assert seen["base_url"] == "https://openrouter.ai/api/v1"
+    assert seen["api_key"] == "sk-or-test"
+    names = {t.name for t in build_document_tools(services)}
+    assert {"documents_semantic_search", "documents_reindex"} <= names
