@@ -33,6 +33,7 @@ from langclaw.workflows.graph.steps import (
 from langclaw.workflows.progress import emit_progress
 
 if TYPE_CHECKING:
+    from langclaw.config.schema import PermissionsConfig
     from langclaw.workflows.executor import StepExecutor
     from langclaw.workflows.registry import WorkflowSpec
 
@@ -113,6 +114,8 @@ class GraphWorkflowRunner:
         self._executor_provider = executor_provider
         self._max_steps = max_steps
         self._compiled: dict[str, tuple[int, Any]] = {}
+        #: RBAC definitions; when enabled, tool steps obey the run's role.
+        self.permissions: PermissionsConfig | None = None
         #: Called with ``(run_record, new_reviews)`` when a run pauses for review —
         #: the gateway sends the review requests (e.g. Telegram buttons).
         self.review_hook: ReviewHook | None = None
@@ -148,13 +151,23 @@ class GraphWorkflowRunner:
         run_id: str,
         trigger: str = "",
         reply_to: dict[str, str] | None = None,
+        role: str = "",
     ) -> GraphRunResult:
-        """Start a run and drive it until it finishes or pauses for review."""
+        """Start a run and drive it until it finishes or pauses for review.
+
+        *role* is the RBAC role of whoever started it; it's stored with the run
+        so every later step (after a review, after a crash) is checked against it.
+        """
         existing = await self.index.get(run_id)
         if existing is not None:
             raise ValueError(f"Run {run_id!r} already exists.")
         await self.index.create(
-            run_id, spec.name, to_jsonable(run_input), trigger=trigger, reply_to=reply_to
+            run_id,
+            spec.name,
+            to_jsonable(run_input),
+            trigger=trigger,
+            reply_to=reply_to,
+            role=role,
         )
         if spec.graph_spec is not None:
             first: Any = {"input": to_jsonable(run_input), "data": {}}
@@ -302,10 +315,26 @@ class GraphWorkflowRunner:
         maybe = self._executor_provider()
         return await maybe if isinstance(maybe, Awaitable) else maybe
 
+    async def _steps(self, run_id: str) -> WorkflowSteps:
+        """The run's steps, with tool RBAC for its recorded role when enabled."""
+        executor = await self._executor()
+        perms = self.permissions
+        if perms is None or not perms.enabled:
+            return WorkflowSteps(executor, run_id=run_id)
+        from langclaw.rbac import TOOLS, resolve_capability
+
+        record = await self.index.get(run_id) or {}
+        role = record.get("role") or perms.default_role
+
+        def allowed(name: str) -> bool:
+            return name in resolve_capability(TOOLS, perms, role, universe={name})
+
+        return WorkflowSteps(executor, run_id=run_id, role=role, allowed_tool=allowed)
+
     async def _drive(self, spec: WorkflowSpec, run_id: str, graph_input: Any) -> GraphRunResult:
         graph = self.compiled(spec)
         config = self._config(spec, run_id)
-        token = set_steps(WorkflowSteps(await self._executor(), run_id=run_id))
+        token = set_steps(await self._steps(run_id))
         try:
             coro = self._stream(spec, run_id, graph, graph_input, config)
             if spec.timeout_s is not None:

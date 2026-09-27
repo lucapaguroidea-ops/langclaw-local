@@ -178,3 +178,26 @@ async def test_answer_review_feeds_ui_and_telegram_from_one_record() -> None:
     )
     assert await mgr._control_plane.list_reviews() == []  # before the run even continues
     assert bus.published[0].channel == "telegram"  # result goes where the run started
+
+
+async def test_a_run_started_from_chat_carries_the_users_role_into_its_steps() -> None:
+    from langclaw.config.schema import PermissionsConfig, RoleConfig
+
+    mgr, bus, ex = _setup(confidence=0.99)
+    perms = PermissionsConfig(
+        enabled=True,
+        default_role="viewer",
+        roles={"clerk": RoleConfig(tools=["bucket_read"], workflows=["doc_flow"])},
+    )
+    mgr._config.permissions = perms
+    mgr._config.channels.telegram.user_roles = {"42": "clerk"}
+    mgr._workflow_runtime.permissions = perms
+    mgr._workflow_runtime.graph_runner.permissions = perms
+
+    await _run_command(mgr, "run", "doc_flow", '{"key": "a.pdf"}')
+    await _drain(mgr, bus)
+
+    assert ex.tools_called() == ["bucket_read"]  # documents_insert was refused
+    assert "may not use tool 'documents_insert'" in _texts(mgr)[-1]
+    (record,) = await mgr._workflow_runtime.graph_runner.index.list(limit=5)
+    assert (record["role"], record["status"]) == ("clerk", "failed")

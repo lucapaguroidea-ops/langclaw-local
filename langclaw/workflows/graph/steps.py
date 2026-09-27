@@ -23,6 +23,7 @@ one does::
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Callable
 from typing import Any
 
 from langclaw.workflows.executor import StepExecutor, StepRequest, WorkflowStepError
@@ -38,9 +39,19 @@ REVIEW_ACTIONS = ("approve", "edit", "reject")
 class WorkflowSteps:
     """langclaw capabilities available to the nodes of one workflow run."""
 
-    def __init__(self, executor: StepExecutor, *, run_id: str = "") -> None:
+    def __init__(
+        self,
+        executor: StepExecutor,
+        *,
+        run_id: str = "",
+        role: str = "",
+        allowed_tool: Callable[[str], bool] | None = None,
+    ) -> None:
         self._executor = executor
         self.run_id = run_id
+        #: RBAC role of whoever started the run ("" when permissions are off).
+        self.role = role
+        self._allowed_tool = allowed_tool
 
     async def llm(
         self,
@@ -71,9 +82,19 @@ class WorkflowSteps:
         the run stops and shows the error instead of "completing" with nothing
         done. Catch :class:`WorkflowStepError` in a code node to handle it.
 
+        With RBAC on, the tool must be granted to the role of whoever started
+        the run (``permissions.roles.<role>.tools``) — the same rule the agent
+        follows.
+
         Raises:
-            WorkflowStepError: the tool is missing or returned an error.
+            WorkflowStepError: the role may not use the tool, the tool is
+                missing, or it returned an error.
         """
+        if self._allowed_tool is not None and not self._allowed_tool(name):
+            raise WorkflowStepError(
+                f"The run's role {self.role!r} may not use tool {name!r} — grant it in "
+                f"permissions.roles.{self.role}.tools."
+            )
         result = await self._executor(StepRequest(kind="tool", target=name, payload=kwargs))
         error = tool_error(result)
         if error:

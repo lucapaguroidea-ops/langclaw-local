@@ -436,3 +436,63 @@ async def test_a_result_that_merely_mentions_error_is_not_a_failure() -> None:
         graph_spec_of("doc_flow", DOC_FLOW), {"key": "p.pdf"}, run_id="doc_flow:ok"
     )
     assert result.status == "completed"
+
+
+# -- RBAC inside workflow steps ------------------------------------------------
+
+
+def _perms(**roles: list[str]) -> Any:
+    from langclaw.config.schema import PermissionsConfig, RoleConfig
+
+    return PermissionsConfig(
+        enabled=True,
+        default_role="viewer",
+        roles={name: RoleConfig(tools=tools) for name, tools in roles.items()},
+    )
+
+
+async def test_tool_steps_obey_the_starting_users_role() -> None:
+    ex = FakeExecutor(confidence=0.95)
+    runner = runner_with(ex)
+    runner.permissions = _perms(clerk=["bucket_read"], admin=["*"])
+    spec = graph_spec_of("doc_flow", DOC_FLOW)
+
+    with pytest.raises(WorkflowStepError, match="role 'clerk' may not use tool 'documents_insert'"):
+        await runner.start(spec, {"key": "a.pdf"}, run_id="doc_flow:r1", role="clerk")
+    assert ex.tools_called() == ["bucket_read"]  # the forbidden tool never ran
+    record = await runner.index.get("doc_flow:r1")
+    assert record["status"] == "failed" and record["role"] == "clerk"
+
+    done = await runner.start(spec, {"key": "b.pdf"}, run_id="doc_flow:r2", role="admin")
+    assert done.status == "completed"
+
+
+async def test_the_role_still_applies_after_a_review_resumes_the_run() -> None:
+    ex = FakeExecutor(confidence=0.1)
+    runner = runner_with(ex)
+    runner.permissions = _perms(clerk=["bucket_read"])
+    spec = graph_spec_of("doc_flow", DOC_FLOW)
+    paused = await runner.start(spec, {"key": "c.pdf"}, run_id="doc_flow:r3", role="clerk")
+    assert paused.status == "waiting"
+    with pytest.raises(WorkflowStepError, match="documents_insert"):
+        await runner.resume(spec, "doc_flow:r3", {"action": "approve", "by": "boss"})
+
+
+async def test_a_run_without_a_role_gets_the_default_role() -> None:
+    ex = FakeExecutor()
+    runner = runner_with(ex)
+    runner.permissions = _perms(viewer=[])
+    with pytest.raises(WorkflowStepError, match="role 'viewer' may not use tool 'bucket_read'"):
+        await runner.start(graph_spec_of("doc_flow", DOC_FLOW), {"key": "d"}, run_id="doc_flow:r4")
+    assert ex.calls == []
+
+
+async def test_permissions_off_means_no_step_checks() -> None:
+    from langclaw.config.schema import PermissionsConfig
+
+    runner = runner_with(FakeExecutor())
+    runner.permissions = PermissionsConfig(enabled=False)
+    done = await runner.start(
+        graph_spec_of("doc_flow", DOC_FLOW), {"key": "e"}, run_id="doc_flow:r5", role="nobody"
+    )
+    assert done.status == "completed"

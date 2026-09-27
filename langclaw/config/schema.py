@@ -842,6 +842,26 @@ class DocumentsConfig(BaseModel):
     max_text_chars: int = 60_000
     """Cap on text returned by ``bucket_read`` (keeps prompts bounded)."""
 
+    ocr_model: str = ""
+    """Vision-capable model for scanned PDFs and photos, e.g.
+    ``openrouter:google/gemini-2.5-flash``. Used only when a file has no text
+    layer (one model call per page). Empty ⇒ no OCR: scans return a note.
+    With it set, photos sent in chat also go to ``intake_workflow``."""
+
+    ocr_max_pages: int = 10
+    """Read at most this many pages of a scanned PDF (bounds OCR cost)."""
+
+    embedding_model: str = ""
+    """Embedding model for semantic search, e.g. ``openai/text-embedding-3-small``.
+    Each saved record is embedded and ``documents_semantic_search`` /
+    ``documents_reindex`` are added. Empty ⇒ filter/substring search only."""
+
+    embedding_base_url: str = "https://openrouter.ai/api/v1"
+    """OpenAI-compatible embeddings endpoint (OpenRouter by default)."""
+
+    embedding_api_key: str = ""
+    """API key for ``embedding_base_url``. Empty ⇒ ``OPENROUTER_API_KEY``."""
+
     @model_validator(mode="after")
     def _env_fallback(self) -> DocumentsConfig:
         if not self.database_url:

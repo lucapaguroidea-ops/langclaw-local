@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 
 TEXT_TYPES = ("text/", "application/json", "application/xml", "application/csv")
+NO_OCR_HINT = "Set LANGCLAW__DOCUMENTS__OCR_MODEL to a vision model to read scans and photos."
 TEXT_SUFFIXES = (".txt", ".md", ".csv", ".json", ".xml", ".html", ".eml")
 
 
@@ -13,7 +14,8 @@ def extract_text(data: bytes, *, content_type: str = "", filename: str = "") -> 
 
     PDFs are read page by page (pypdf); text-like files are decoded as UTF-8.
     Anything else — and scanned PDFs, which have no text layer — returns empty
-    text with a *note* saying why (OCR is not supported yet).
+    text with a *note* saying why; :class:`langclaw.documents.ocr.VisionOcr`
+    reads those when ``documents.ocr_model`` is set.
     """
     name = filename.lower()
     kind = (content_type or "").lower()
@@ -21,7 +23,7 @@ def extract_text(data: bytes, *, content_type: str = "", filename: str = "") -> 
         return _pdf_text(data)
     if kind.startswith(TEXT_TYPES) or name.endswith(TEXT_SUFFIXES):
         return data.decode("utf-8", errors="replace"), ""
-    return "", f"No text extraction for {content_type or 'this file type'} (OCR isn't supported)."
+    return "", f"No text layer in {content_type or 'this file type'}. {NO_OCR_HINT}"
 
 
 def _pdf_text(data: bytes) -> tuple[str, str]:
@@ -36,5 +38,5 @@ def _pdf_text(data: bytes) -> tuple[str, str]:
         return "", f"Could not read the PDF: {exc}"
     text = "\n\n".join(f"[page {i}]\n{p}" for i, p in enumerate(pages, 1) if p)
     if not text:
-        return "", "The PDF has no text layer (probably scanned; OCR isn't supported)."
+        return "", f"The PDF has no text layer (probably scanned). {NO_OCR_HINT}"
     return text, ""

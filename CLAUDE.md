@@ -411,5 +411,7 @@ workflow no longer exists when the job fires, the job removes itself.
 
 **Honest limits:** the first-answer-wins lock is per process (one gateway
 replica). A step mid-flight at a crash re-runs (make side effects idempotent).
-Nodes call tools in-process through the default agent's toolset, so per-role
-tool RBAC doesn't filter them (workflow RBAC gates who can *start* one).
+Workflow RBAC gates who can *start* a run; with permissions on, the starter's
+role is stored on the run (`RunIndex` `role`) and every `steps().tool` call is
+checked against it via `resolve_capability(TOOLS, ...)` — also after a review or
+crash resume. `steps().llm` / `.subagent` aren't tool-gated.

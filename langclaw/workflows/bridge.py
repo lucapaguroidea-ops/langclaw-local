@@ -131,6 +131,7 @@ def _make_one_workflow_tool(
                 run_id=run_id,
                 trigger="agent",
                 reply_to=_origin(runtime),
+                role=getattr(getattr(runtime, "context", None), "user_role", "") or "",
             )
             return result.to_text()
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as text
