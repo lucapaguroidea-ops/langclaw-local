@@ -1645,6 +1645,21 @@ exported from the bank) and call <code>bank_import(key)</code>:</p>
 <p>Applied payments are recorded on the invoice as <code>payments</code> (list),
    <code>paid_amount</code>, and, once nothing is left to pay, <code>paid_on</code> / <code>payment_ref</code> /
    <code>payment_tx</code>. Cash aging counts only what's still outstanding.</p>
+<ol>
+<li>Each applied payment is <strong>booked</strong> as a journal entry, with no model
+   involved:</li>
+<li>Money in: D bank / C the customer account the invoice was booked on
+     (4111 by default).</li>
+<li>Money out: D the supplier account (401 by default) / C bank.</li>
+</ol>
+<p>The bank account is 5121 for RON and 5124 for foreign currency. To use
+   another account for an IBAN, set it on the profile, e.g.
+   <code>"bank_accounts": {"RO49…": "5121.01"}</code>.
+5. An unmatched debit described as a bank fee ("comision", "taxa bancara"…) is
+   booked D 627 / C bank.</p>
+<p>A payment dated in a <strong>closed</strong> month is still applied to the invoice, but it
+isn't booked. It's listed under <code>not_booked</code> with the reason, for the
+accountant.</p>
 <p><code>bank_movements(unmatched_only=True)</code> lists what's still open.</p>
 <h2 id="advice-whats-coming">Advice: what's coming<a class="headerlink" href="#advice-whats-coming" title="Permanent link">&para;</a></h2>
 <p><code>accounting_outlook(period, months=6)</code> computes, for one client, the facts to
