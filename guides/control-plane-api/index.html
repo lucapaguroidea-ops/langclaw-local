@@ -1528,6 +1528,10 @@ so chat returns a <strong>turn</strong> you poll:</p>
 <td>One record + a 1-hour download <code>link</code> for its file</td>
 </tr>
 <tr>
+<td><code>GET /v1/accounting/overview?period=YYYY-MM</code></td>
+<td>One client's month (<code>tenant=&lt;id&gt;</code> with clients on): <code>{"period", "report", "outlook", "bank"}</code> — the results of <code>accounting_period_report</code>, <code>accounting_outlook</code> and <code>bank_movements</code> (unmatched). A part that fails carries its own <code>error</code>. Needs <code>LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true</code></td>
+</tr>
+<tr>
 <td><code>GET /v1/tenants</code> · <code>GET /v1/tenants/{id}</code></td>
 <td>Clients (with <code>LANGCLAW__TENANTS__ENABLED</code>)</td>
 </tr>

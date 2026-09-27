@@ -780,6 +780,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#in-the-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In the console
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1390,6 +1401,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#in-the-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In the console
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-to-saga-nextup" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1621,6 +1643,19 @@ it, has the model write advice that must cite these facts, and pauses for a
 person to approve or edit it before it reaches the client. The limits live in
 <code>langclaw/accounting/outlook.py:LIMITS</code> — reference data for your accountant
 to review, like the VAT table.</p>
+<h2 id="in-the-console">In the console<a class="headerlink" href="#in-the-console" title="Permanent link">&para;</a></h2>
+<p>The <strong>Client overview</strong> page shows the chosen client and month. It uses
+<code>GET /v1/accounting/overview</code>, which runs the same tools as the agent.</p>
+<ul>
+<li><strong>Alerts:</strong> invoices without an entry, missing documents, limits close to being
+  crossed, overdue receivables, and unmatched bank movements.</li>
+<li><strong>Close tab:</strong> the VAT position, the expected documents and the trial balance.</li>
+<li><strong>Outlook tab:</strong> deadlines, limits, the bank balance, the 30-day projection
+  and aging.</li>
+<li><strong>Bank tab:</strong> the open movements.</li>
+</ul>
+<p>The page is read-only. Posting, closing a month and confirming a match happen
+in chat or in workflows.</p>
 <h2 id="export-to-saga-nextup">Export to SAGA / NextUp<a class="headerlink" href="#export-to-saga-nextup" title="Permanent link">&para;</a></h2>
 <p><code>accounting_export(target="saga", date_from=, date_to=, again=False)</code> takes the
 client's <strong>posted</strong> invoices and builds one batch, stored in the client's bucket
