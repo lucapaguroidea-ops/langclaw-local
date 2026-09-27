@@ -1431,8 +1431,8 @@ away from conversation state and lets you back up / restore it on its own.</p>
 <td>Insert <strong>or update</strong> the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra <code>fields</code> merge into a JSON column</td>
 </tr>
 <tr>
-<td><code>documents_search(text, sender, receiver, doc_type, date_from, date_to, status, limit)</code></td>
-<td>Filter filed documents (case-insensitive; <code>text</code> searches summary, file name, and extra fields)</td>
+<td><code>documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit)</code></td>
+<td>Filter filed documents (case-insensitive; <code>text</code> searches summary, file name, and extra fields). <code>fields</code> filters on type-specific details: <code>{"jurisdiction": "Delaware"}</code>, or <code>{"notice.days": "90"}</code> for a nested value</td>
 </tr>
 <tr>
 <td><code>documents_get(bucket_key)</code></td>
@@ -1490,8 +1490,12 @@ copy them to <code>workflows/&lt;name&gt;.graph.json</code> or save them from th
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  otherwise         → save (documents_save, status &quot;filed&quot;)
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  review rejected   → mark_rejected (status &quot;rejected&quot;)
 </span></code></pre></div>
-<p>Change the threshold in the <code>check</code> node. Add fields to <code>classify.output</code> and
-pass them to <code>save</code>'s <code>fields</code> to keep more.</p>
+<p>Besides the fixed fields, <code>classify</code> returns <code>details</code>: whatever else matters for
+<em>that kind</em> of document (an invoice's <code>tax_id</code> / <code>iban</code> / <code>due_date</code>, a contract's
+<code>jurisdiction</code> / <code>notice_days</code>), which <code>save</code> stores in <code>fields</code>. Every record can
+have different details; search them with <code>documents_search(fields=...)</code>, or the
+<strong>Fields</strong> box on the console's Documents page (<code>jurisdiction=Delaware</code>).
+Change the threshold in the <code>check</code> node.</p>
 <p><strong><code>bucket_scan</code></strong> is one step, <code>documents_start_intake</code>. It covers files that
 reach the bucket some other way, such as an upload or a sync. Schedule it by asking the
 agent, e.g. "run bucket_scan every day at 7", which uses the cron tool with
@@ -1502,6 +1506,10 @@ so scanned runs know where to report.</p>
 <li>OCR is a vision-model call per page (first <code>OCR_MAX_PAGES</code> pages), used only
   when a file has no text layer. Pick a model that accepts images; a text-only
   model makes the call fail and <code>bucket_read</code> returns the error as a <code>note</code>.</li>
+<li>Field filters are substring matches over the JSON <code>fields</code> column, so they
+  scan rows (like semantic search) — fine at tens of thousands of documents.
+  Details keep whatever names the model picks; describing the names you want in
+  the <code>details</code> output (as the template does) keeps them consistent.</li>
 <li>Semantic search compares vectors in plain SQL — no pgvector extension needed —
   by scanning every embedded row. That's fast up to tens of thousands of documents;
   beyond that, a pgvector index is the next step. Changing <code>EMBEDDING_MODEL</code> means
