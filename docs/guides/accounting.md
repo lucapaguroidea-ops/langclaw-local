@@ -112,6 +112,14 @@ advise on — nothing here is written by a model:
 - **vat_trend** — net VAT per month over the last *months*, the latest against
   the average before it.
 - **unbooked_invoices** — the month's invoices still without an entry.
+- **cash** — as of the month's last day, from invoices not yet `paid_on` (set by
+  bank matching):
+  - receivables and payables aged into not due / 1–30 / 31–60 / 61–90 / 90+
+    days overdue, with the five largest overdue partners;
+  - the bank balance, taken as the newest statement's closing balance for each IBAN;
+  - what falls due in the next 30 days;
+  - the balance projected over those 30 days. Overdue amounts are left out of
+    the projection, because they may never be paid.
 
 The **monthly_advice** template (`ui/templates/monthly_advice.graph.json`) runs
 it, has the model write advice that must cite these facts, and pauses for a
@@ -153,8 +161,8 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   into a real SAGA install yet — try one batch before relying on it.
 - Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
   line that carries 0% needs the rate filled in before it adds up.
-- Advice covers deadlines, regime limits and the VAT trend only — cash flow,
-  payments and profit forecasts need bank data that isn't imported yet.
+- Cash figures are only as complete as the imported statements and the
+  invoices' due dates; an invoice without a due date counts as not due.
 - Bank matching is one movement to one invoice. Partial payments, one payment
   for several invoices, and FX movements stay with the accountant
   (`bank_movements`).

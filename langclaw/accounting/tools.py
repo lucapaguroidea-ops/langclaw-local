@@ -33,7 +33,7 @@ from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
-from langclaw.accounting.outlook import deadlines, thresholds, trend
+from langclaw.accounting.outlook import cash_position, deadlines, thresholds, trend
 from langclaw.accounting.period import (
     blockers,
     document_state,
@@ -391,7 +391,8 @@ def build_accounting_tools(
 
     async def accounting_outlook(period: str, months: int = 6) -> dict:
         """Facts to advise a client on what's coming: returns due after the month,
-        how close the year's revenue is to regime limits, and the VAT trend.
+        how close the year's revenue is to regime limits, the VAT trend, and cash
+        (receivables / payables aging, bank balance, the next 30 days).
 
         Args:
             period: The month just finished, as YYYY-MM.
@@ -414,6 +415,10 @@ def build_accounting_tools(
                 vat = vat_summary(booked)
                 history.append((label, vat["payable"] - vat["refundable"]))
             year_docs = await _invoices(svc, date(start.year, 1, 1), end)
+            open_docs = await _invoices(svc, date(1900, 1, 1), end)
+            statements = await svc.store.search(
+                doc_type="bank_statement", date_to=end.isoformat(), limit=50
+            )
         except _ERRORS as exc:
             return {"error": str(exc)}
         revenue = Decimal(0)
@@ -422,6 +427,12 @@ def build_accounting_tools(
             if f.get("direction") == "out":
                 net = abs(Decimal(str(f.get("total_net") or 0)))
                 revenue += -net if r.get("doc_type") == "credit_note" else net
+        latest: dict[str, Decimal] = {}  # newest closing balance per account
+        for st in statements:  # newest first
+            f = st.get("fields") or {}
+            if f.get("iban") and f["iban"] not in latest and f.get("closing") is not None:
+                latest[f["iban"]] = Decimal(str(f["closing"]))
+        bank = sum(latest.values(), Decimal(0)) if latest else None
         in_month = [d for d in year_docs if str(d.get("document_date") or "") >= str(start)]
         facts: dict[str, Any] = {
             "period": period,
@@ -431,6 +442,7 @@ def build_accounting_tools(
             "revenue_ytd": revenue,
             "vat_trend": trend(history),
             "unbooked_invoices": len(blockers(in_month)),
+            "cash": cash_position(open_docs, on=end, bank_balance=bank),
         }
         if len(year_docs) >= 200:
             facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
