@@ -747,6 +747,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#export-to-saga-nextup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export to SAGA / NextUp
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1313,6 +1324,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#export-to-saga-nextup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export to SAGA / NextUp
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1454,6 +1476,24 @@ waiting invoices (<code>accounting_queue</code>) — or schedule that daily.</p>
 document, non-negative amounts, one side per line, balance re-checked inside the
 posting transaction. <code>partner_history</code> in the context comes from these entries,
 so proposals get more consistent as the accountant approves them.</p>
+<h2 id="export-to-saga-nextup">Export to SAGA / NextUp<a class="headerlink" href="#export-to-saga-nextup" title="Permanent link">&para;</a></h2>
+<p><code>accounting_export(target="saga", date_from=, date_to=, again=False)</code> takes the
+client's <strong>posted</strong> invoices and builds one batch, stored in the client's bucket
+under <code>exports/&lt;target&gt;/&lt;timestamp&gt;-...</code> with a 24-hour download link. Exported
+invoices get status <code>exported</code> and aren't exported again unless <code>again=True</code>.</p>
+<ul>
+<li><strong><code>saga</code></strong> — a zip of SAGA C. "Import facturi XML" files
+  (<code>&lt;Facturi&gt;&lt;Factura&gt;&lt;Antet&gt;…&lt;Detalii&gt;&lt;Continut&gt;&lt;Linie&gt;</code>), one
+  <code>F_&lt;cif&gt;_&lt;numar&gt;_&lt;dd-mm-yyyy&gt;.xml</code> per invoice, in <code>intrari/</code> (the client is
+  <code>ClientCIF</code>) and <code>iesiri/</code> (the client is <code>FurnizorCIF</code>). SAGA books the
+  invoices itself; the langclaw journal entries aren't in the file. Invoices
+  missing a number, date, CIF or lines are listed under <code>skipped</code>.</li>
+<li><strong><code>nextup</code></strong> — <strong>not implemented.</strong> NextUp's API documentation wasn't
+  available, so the target fails with a clear error instead of guessing an API
+  (<code>langclaw/accounting/export/nextup.py</code> is the place to wire it).</li>
+</ul>
+<p>Targets live in one registry (<code>langclaw/accounting/export/__init__.py:EXPORTERS</code>);
+a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt; ExportBatch</code>.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The checks work at the level of account classes and the usual counterparts, not
@@ -1464,6 +1504,8 @@ so proposals get more consistent as the accountant approves them.</p>
 <li>Entries are single-currency (the invoice's); FX translation, fixed-asset
   depreciation, and non-invoice documents (receipts, bank statements) aren't
   covered yet.</li>
+<li>The SAGA file follows the published import layout but hasn't been imported
+  into a real SAGA install yet — try one batch before relying on it.</li>
 </ul>
 
 
