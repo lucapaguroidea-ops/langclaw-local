@@ -10,6 +10,7 @@ uv add "langclaw[documents]"
 LANGCLAW__DOCUMENTS__ENABLED=true
 LANGCLAW__DOCUMENTS__DATABASE_URL=postgresql://...     # or DOCUMENTS_DATABASE_URL
 LANGCLAW__DOCUMENTS__INTAKE_WORKFLOW=document_intake   # optional, see below
+LANGCLAW__DOCUMENTS__OCR_MODEL=openrouter:google/gemini-2.5-flash  # optional: read scans
 ```
 
 The bucket is any S3-compatible store. Each unset
@@ -27,7 +28,7 @@ Railway the bucket needs no extra settings.
 | Tool | Does |
 |---|---|
 | `bucket_list(prefix, limit)` | Files in the bucket, newest first |
-| `bucket_read(key)` | A file's text — PDFs page by page, text files as-is (capped at `max_text_chars`). Scanned PDFs and images return a `note` instead: there's no OCR yet |
+| `bucket_read(key)` | A file's text — PDFs page by page, text files as-is (capped at `max_text_chars`). Scanned PDFs and photos go through OCR when `OCR_MODEL` is set (`"ocr": true` in the result); without it they return a `note` |
 | `bucket_link(key, expires_minutes)` | A temporary download link |
 | `bucket_new_files(prefix, limit)` | Files not yet in the `documents` table (for a scheduled scan) |
 | `documents_save(bucket_key, sender, receiver, document_date, doc_type, amount, currency, summary, status, fields)` | Insert **or update** the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra `fields` merge into a JSON column |
@@ -38,10 +39,18 @@ Railway the bucket needs no extra settings.
 Failures come back as `{"error": "..."}` — a missing object, a bad date
 (`YYYY-MM-DD`), an unreachable database. The table is created on first use.
 
+## Scans and photos (OCR)
+
+Files with a text layer are read directly. When there's none — a scanned PDF, a
+phone photo of a receipt — and `OCR_MODEL` names a vision-capable model,
+`bucket_read` renders each page (first `OCR_MAX_PAGES`) to an image and asks the
+model to transcribe it. The intake workflow needs no change: its `fetch` step
+just gets text back. OCR failures come back as a `note`, never an exception.
+
 ## Documents sent in chat
 
-With `INTAKE_WORKFLOW` set, a **file** sent in chat (a PDF or text document — not
-a photo, voice note, or video) is uploaded to
+With `INTAKE_WORKFLOW` set, a **file** sent in chat (a PDF or text document — and a
+**photo** too when `OCR_MODEL` is set; never a voice note or video) is uploaded to
 `<intake_prefix><YYYY-MM-DD>/<id>-<filename>` (default prefix `inbox/`) and the
 workflow starts right away, with no agent turn, getting:
 
@@ -82,5 +91,7 @@ so scanned runs know where to report.
 
 ## Limits
 
-- No OCR: scanned PDFs and photos have no text to read.
+- OCR is a vision-model call per page (first `OCR_MAX_PAGES` pages), used only
+  when a file has no text layer. Pick a model that accepts images; a text-only
+  model makes the call fail and `bucket_read` returns the error as a `note`.
 - Search is filter / substring based; semantic (vector) search isn't wired yet.

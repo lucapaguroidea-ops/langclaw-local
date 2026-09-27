@@ -1041,7 +1041,7 @@ class GatewayManager:
         from langclaw.documents.store import DocumentStoreError
         from langclaw.documents.tools import shared_services
 
-        if not intake_files(msg.attachments):
+        if not intake_files(msg.attachments, images=bool(docs.ocr_model)):
             return False
 
         async def say(text: str) -> None:

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from langclaw.bus.base import BaseMessageBus
     from langclaw.config.schema import DocumentsConfig
+    from langclaw.documents.ocr import VisionOcr
 
 _ERRORS = (BucketError, DocumentStoreError, ValueError)
 
@@ -38,16 +39,29 @@ class DocumentServices:
         *,
         bucket: Bucket | None = None,
         store: DocumentStore | None = None,
+        ocr: VisionOcr | None = None,
     ) -> None:
         self.config = config
         self._bucket = bucket
         self._store = store
+        self._ocr = ocr
 
     @property
     def bucket(self) -> Bucket:
         if self._bucket is None:
             self._bucket = Bucket(self.config.bucket)
         return self._bucket
+
+    @property
+    def ocr(self) -> VisionOcr | None:
+        """The OCR reader, or ``None`` when no ``ocr_model`` is configured."""
+        if self._ocr is None and self.config.ocr_model:
+            from langclaw.documents.ocr import VisionOcr
+
+            self._ocr = VisionOcr.from_spec(
+                self.config.ocr_model, max_pages=self.config.ocr_max_pages
+            )
+        return self._ocr
 
     @property
     def store(self) -> DocumentStore:
@@ -105,7 +119,10 @@ def build_document_tools(
         return {"files": [{"key": o.key, "size": o.size, "modified": o.modified} for o in objects]}
 
     async def bucket_read(key: str) -> dict:
-        """Read a file from the document bucket and extract its text (PDFs and text files).
+        """Read a file from the document bucket and extract its text.
+
+        PDFs and text files are read directly; scanned PDFs and photos go through
+        OCR when an OCR model is configured ("ocr": true in the result).
 
         Args:
             key: The file's key in the bucket, e.g. "inbox/invoice-001.pdf".
@@ -115,6 +132,10 @@ def build_document_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         text, note = extract_text(data, content_type=content_type, filename=key)
+        used_ocr = False
+        if not text and services.ocr is not None:
+            text, note = await services.ocr.read(data, content_type=content_type, filename=key)
+            used_ocr = bool(text)
         truncated = len(text) > cfg.max_text_chars
         out = {
             "key": key,
@@ -123,6 +144,8 @@ def build_document_tools(
             "text": text[: cfg.max_text_chars],
             "truncated": truncated,
         }
+        if used_ocr:
+            out["ocr"] = True
         if note:
             out["note"] = note
         return out

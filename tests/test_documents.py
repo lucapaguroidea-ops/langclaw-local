@@ -449,3 +449,118 @@ async def test_document_intake_runs_on_the_real_tools(
             120.5,
         )
         assert row["fields"]["confidence"] == confidence
+
+
+# -- OCR (vision model) ------------------------------------------------------------------
+
+
+class FakeVision:
+    """A chat model stand-in: records each call and 'reads' a fixed text."""
+
+    def __init__(self, text: str = "INVOICE 42 from ACME") -> None:
+        self.text = text
+        self.calls: list = []
+
+    async def ainvoke(self, messages):
+        from langchain_core.messages import AIMessage
+
+        self.calls.append(messages)
+        return AIMessage(content=self.text)
+
+
+def _images_in(call) -> list[str]:
+    (msg,) = call
+    return [b["image_url"]["url"] for b in msg.content if b.get("type") == "image_url"]
+
+
+async def test_ocr_reads_a_scanned_pdf_page_by_page() -> None:
+    from langclaw.documents.ocr import VisionOcr
+
+    vision = FakeVision()
+    ocr = VisionOcr(vision, max_pages=5)
+    text, note = await ocr.read(make_pdf(""), content_type="application/pdf", filename="scan.pdf")
+    assert text == "[page 1]\nINVOICE 42 from ACME" and note == ""
+    (url,) = _images_in(vision.calls[0])
+    assert url.startswith("data:image/png;base64,")
+
+
+async def test_ocr_reads_a_photo_directly() -> None:
+    from langclaw.documents.ocr import VisionOcr
+
+    vision = FakeVision("Receipt, total 12.50 EUR")
+    text, _ = await VisionOcr(vision).read(b"\xff\xd8jpeg", content_type="image/jpeg")
+    assert text == "Receipt, total 12.50 EUR"
+    assert _images_in(vision.calls[0]) == [
+        "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8jpeg").decode()
+    ]
+
+
+async def test_ocr_failure_is_a_note_not_a_crash() -> None:
+    from langclaw.documents.ocr import VisionOcr
+
+    class Down(FakeVision):
+        async def ainvoke(self, messages):
+            raise RuntimeError("model unavailable")
+
+    text, note = await VisionOcr(Down()).read(b"img", content_type="image/png")
+    assert text == "" and "model unavailable" in note
+
+
+async def test_bucket_read_falls_back_to_ocr_only_when_there_is_no_text(bucket: Bucket) -> None:
+    from langclaw.documents.ocr import VisionOcr
+
+    await bucket.put("inbox/scan.pdf", make_pdf(""), content_type="application/pdf")
+    await bucket.put("inbox/typed.pdf", make_pdf("Typed text"), content_type="application/pdf")
+    await bucket.put("inbox/photo.jpg", b"\xff\xd8jpeg", content_type="image/jpeg")
+    vision = FakeVision()
+    services = DocumentServices(DocumentsConfig(), bucket=bucket, ocr=VisionOcr(vision))
+    read = {t.name: t for t in build_document_tools(services)}["bucket_read"]
+
+    typed = await read.ainvoke({"key": "inbox/typed.pdf"})
+    assert "Typed text" in typed["text"] and not typed.get("ocr") and vision.calls == []
+    scan = await read.ainvoke({"key": "inbox/scan.pdf"})
+    assert scan["ocr"] is True and "INVOICE 42" in scan["text"]
+    photo = await read.ainvoke({"key": "inbox/photo.jpg"})
+    assert photo["ocr"] is True and photo["text"] == "INVOICE 42 from ACME"
+
+
+async def test_without_an_ocr_model_scans_keep_a_clear_note(bucket: Bucket) -> None:
+    await bucket.put("inbox/scan.pdf", make_pdf(""), content_type="application/pdf")
+    read = {t.name: t for t in _tools_list(bucket)}["bucket_read"]
+    out = await read.ainvoke({"key": "inbox/scan.pdf"})
+    assert out["text"] == "" and "LANGCLAW__DOCUMENTS__OCR_MODEL" in out["note"]
+
+
+def _tools_list(bucket: Bucket) -> list:
+    return build_document_tools(DocumentServices(DocumentsConfig(), bucket=bucket))
+
+
+def test_ocr_is_built_from_config_only_when_a_model_is_set(monkeypatch) -> None:
+    from langclaw.documents import ocr as ocr_mod
+
+    assert DocumentServices(DocumentsConfig()).ocr is None
+    monkeypatch.setattr(ocr_mod, "init_chat_model", lambda spec: FakeVision(spec))
+    services = DocumentServices(DocumentsConfig(ocr_model="openrouter:google/gemini-2.5-flash"))
+    assert services.ocr.model.text == "openrouter:google/gemini-2.5-flash"
+
+
+def test_photos_join_intake_only_when_ocr_can_read_them() -> None:
+    from langclaw.documents.intake import intake_files
+
+    photo = Attachment(type=AttachmentType.IMAGE, mime_type="image/jpeg", data="aGk=")
+    pdf = _attachment("a.pdf", b"x")
+    assert intake_files([photo, pdf]) == [pdf]
+    assert intake_files([photo, pdf], images=True) == [photo, pdf]
+
+
+async def test_a_photo_sent_in_chat_is_stored_with_a_readable_name(bucket: Bucket) -> None:
+    from langclaw.documents.intake import store_attachments
+
+    store = FakeStore()
+    services = DocumentServices(
+        DocumentsConfig(ocr_model="openrouter:x/vision"), bucket=bucket, store=store
+    )
+    photo = Attachment(type=AttachmentType.IMAGE, mime_type="image/jpeg", data="aGk=")
+    (wf_input,) = await store_attachments(services, [photo], caption="receipt")
+    assert wf_input["filename"] == "photo.jpg" and wf_input["key"].endswith("-photo.jpg")
+    assert store.rows[wf_input["key"]]["status"] == "processing"

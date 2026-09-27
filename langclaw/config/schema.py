@@ -842,6 +842,15 @@ class DocumentsConfig(BaseModel):
     max_text_chars: int = 60_000
     """Cap on text returned by ``bucket_read`` (keeps prompts bounded)."""
 
+    ocr_model: str = ""
+    """Vision-capable model for scanned PDFs and photos, e.g.
+    ``openrouter:google/gemini-2.5-flash``. Used only when a file has no text
+    layer (one model call per page). Empty ⇒ no OCR: scans return a note.
+    With it set, photos sent in chat also go to ``intake_workflow``."""
+
+    ocr_max_pages: int = 10
+    """Read at most this many pages of a scanned PDF (bounds OCR cost)."""
+
     @model_validator(mode="after")
     def _env_fallback(self) -> DocumentsConfig:
         if not self.database_url:
