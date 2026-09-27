@@ -1,0 +1,11 @@
+{
+  "description": "Start document_intake for every bucket file that isn't filed yet. Schedule it with the cron tool (workflow_name=bucket_scan).",
+  "input": {
+    "prefix": {"type": "string", "description": "Only keys starting with this (empty: the intake prefix)."}
+  },
+  "nodes": {
+    "scan": {"type": "tool", "tool": "documents_start_intake", "args": {"prefix": "{{input.prefix}}", "limit": 20}}
+  },
+  "edges": [{"from": "START", "to": "scan"}],
+  "output": "scan"
+}

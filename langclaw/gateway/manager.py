@@ -1027,6 +1027,63 @@ class GatewayManager:
                 return raw
         return raw
 
+    async def _intake_documents(self, msg: InboundMessage, channel: BaseChannel) -> bool:
+        """Store file attachments and start the intake workflow for each.
+
+        Returns ``True`` when the message was handled here (it had intake files
+        and ``documents.intake_workflow`` is set); otherwise the agent gets it.
+        """
+        docs = self._config.documents
+        if not (docs.enabled and docs.intake_workflow and msg.attachments):
+            return False
+        from langclaw.documents.bucket import BucketError
+        from langclaw.documents.intake import intake_files, store_attachments
+        from langclaw.documents.store import DocumentStoreError
+        from langclaw.documents.tools import shared_services
+
+        if not intake_files(msg.attachments):
+            return False
+
+        async def say(text: str) -> None:
+            await channel.send(
+                OutboundMessage(
+                    channel=msg.channel,
+                    user_id=msg.user_id,
+                    context_id=msg.context_id,
+                    chat_id=msg.chat_id,
+                    content=text,
+                    type="ai",
+                )
+            )
+
+        try:
+            inputs = await store_attachments(
+                shared_services(docs), msg.attachments, caption=msg.content or ""
+            )
+        except (BucketError, DocumentStoreError) as exc:
+            logger.error(f"Document intake failed: {exc}")
+            await say(f"Couldn't save the document: {exc}")
+            return True
+        names = ", ".join(i["filename"] for i in inputs)
+        await say(f"📥 Saved {names} — running {docs.intake_workflow}.")
+        for wf_input in inputs:
+            await self._bus.publish(
+                InboundMessage(
+                    channel=msg.channel,
+                    user_id=msg.user_id,
+                    context_id=msg.context_id,
+                    chat_id=msg.chat_id,
+                    content=f"run workflow {docs.intake_workflow}",
+                    origin="workflow",
+                    metadata={
+                        "workflow_name": docs.intake_workflow,
+                        "workflow_input": json.dumps(wf_input),
+                        "trigger": "intake",
+                    },
+                )
+            )
+        return True
+
     async def _handle_workflow(self, msg: InboundMessage, channel: BaseChannel) -> None:
         """Run the workflow named in *msg* metadata and deliver its output.
 
@@ -1232,6 +1289,11 @@ class GatewayManager:
         # the `/workflows run` command.
         if msg.origin == "workflow":
             await self._handle_workflow(msg, channel)
+            return
+
+        # Document intake: files sent in chat go to the bucket and straight into
+        # the configured intake workflow (no agent turn).
+        if await self._intake_documents(msg, channel):
             return
 
         # Message for main agent — resolve which agent handles this session.

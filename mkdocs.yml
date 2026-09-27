@@ -87,6 +87,7 @@ nav:
     - Tools: guides/tools.md
     - Channels: guides/channels.md
     - Workflows: guides/workflows.md
+    - Documents: guides/documents.md
     - Subagents: guides/subagents.md
     - RBAC: guides/rbac.md
     - Scheduled Jobs: guides/cron.md

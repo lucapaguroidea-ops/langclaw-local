@@ -22,7 +22,6 @@ from typing import Any
 
 import editor
 import streamlit as st
-import streamlit.components.v1 as components
 from client import LangclawClient, LangclawError
 
 st.set_page_config(page_title="Langclaw workflows", page_icon="🦀", layout="wide")
@@ -85,7 +84,9 @@ def _call(fn, *args: Any, **kwargs: Any) -> Any:
 
 
 def _mermaid(code: str, height: int = 480) -> None:
-    components.html(editor.mermaid_html(code, height=height), height=height, scrolling=True)
+    # The diagram text is HTML-escaped and Mermaid runs in strict mode, so labels
+    # (which the agent can write) can't inject markup into this iframe.
+    st.iframe(editor.mermaid_html(code, height=height).strip(), height=height)
 
 
 def _show_turn(turn: dict) -> None:

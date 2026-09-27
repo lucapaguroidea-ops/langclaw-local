@@ -10,6 +10,7 @@ Load priority (highest to lowest):
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -778,6 +779,76 @@ class McpConfig(BaseModel):
         return self
 
 
+class BucketConfig(BaseModel):
+    """An S3-compatible bucket (Railway Buckets, AWS S3, R2, MinIO...).
+
+    Each empty field falls back to the matching plain environment variable
+    Railway injects for a linked bucket — ``BUCKET_ENDPOINT``, ``BUCKET_NAME``,
+    ``BUCKET_ACCESS_KEY``, ``BUCKET_SECRET_KEY``, ``BUCKET_REGION`` — so a Railway
+    deploy needs no extra settings.
+    """
+
+    endpoint: str = ""
+    name: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    region: str = ""
+
+    @model_validator(mode="after")
+    def _railway_fallback(self) -> BucketConfig:
+        for field in ("endpoint", "name", "access_key", "secret_key", "region"):
+            if not getattr(self, field):
+                setattr(self, field, os.environ.get(f"BUCKET_{field.upper()}", ""))
+        return self
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.name and self.access_key and self.secret_key)
+
+
+class DocumentsConfig(BaseModel):
+    """Document tools: a bucket for files, and a ``documents`` table for what was
+    extracted from them (sender, receiver, date, summary, ...).
+
+    Off by default. When enabled, the agent and workflows get ``bucket_*`` and
+    ``documents_*`` tools, and (with ``intake_workflow``) a document sent in chat
+    is saved to the bucket and handed to that workflow.
+
+    Needs ``uv add "langclaw[documents]"``.
+
+    Env: ``LANGCLAW__DOCUMENTS__ENABLED=true``
+    """
+
+    enabled: bool = False
+    """Enable the document tools."""
+
+    bucket: BucketConfig = Field(default_factory=BucketConfig)
+    """Where files live (falls back to Railway's ``BUCKET_*`` variables)."""
+
+    database_url: str = ""
+    """Postgres for the ``documents`` table — keep it separate from the
+    checkpointer's database. Empty ⇒ the plain ``DOCUMENTS_DATABASE_URL``
+    environment variable."""
+
+    intake_workflow: str = ""
+    """Workflow to run when someone sends a document in chat: the file is saved
+    to the bucket under ``intake_prefix`` and the workflow gets ``{"key": ...,
+    "filename": ..., "mime_type": ...}``. Empty ⇒ documents go to the agent as
+    usual."""
+
+    intake_prefix: str = "inbox/"
+    """Bucket prefix for documents received in chat."""
+
+    max_text_chars: int = 60_000
+    """Cap on text returned by ``bucket_read`` (keeps prompts bounded)."""
+
+    @model_validator(mode="after")
+    def _env_fallback(self) -> DocumentsConfig:
+        if not self.database_url:
+            self.database_url = os.environ.get("DOCUMENTS_DATABASE_URL", "")
+        return self
+
+
 class LangclawConfig(BaseSettings):
     """
     Root configuration object. Merges JSON file + env vars.
@@ -822,6 +893,7 @@ class LangclawConfig(BaseSettings):
     interpreter: InterpreterConfig = Field(default_factory=InterpreterConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
     workflows: WorkflowsConfig = Field(default_factory=WorkflowsConfig)
+    documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     checkpointer: CheckpointerConfig = Field(default_factory=CheckpointerConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
