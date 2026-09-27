@@ -56,8 +56,14 @@ so proposals get more consistent as the accountant approves them.
   (counted as both collected and deductible), collected, deductible, payable or
   refundable. Credit notes count negative.
 
-`accounting_period_close(period, closed_by=)` refuses while there are blockers
-or the balance is off; otherwise it saves the report to
+- **documents** — which of the client's expected monthly documents are in. Set
+  them on the client's profile, e.g.
+  `"expected_documents": ["bank_statement", {"doc_type": "payroll", "label": "State de plată"}]`;
+  a type counts as present when any document of that `doc_type` is dated in the
+  month. Also lists the month's documents still marked `needs_review`.
+
+`accounting_period_close(period, closed_by=)` refuses while there are blockers,
+expected documents are missing, or the balance is off; otherwise it saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change

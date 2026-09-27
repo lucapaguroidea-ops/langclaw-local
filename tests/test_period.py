@@ -81,3 +81,23 @@ def test_blockers_are_invoices_without_an_entry() -> None:
         {"bucket_key": "e", "doc_type": "contract", "status": "filed"},
     ]
     assert [b["bucket_key"] for b in blockers(docs)] == ["c", "d"]
+
+
+def test_expected_documents_are_counted_per_type() -> None:
+    from langclaw.accounting.period import document_state
+
+    docs = [
+        {"bucket_key": "b1", "doc_type": "bank_statement", "status": "filed"},
+        {"bucket_key": "r1", "doc_type": "receipt", "status": "needs_review"},
+        {"bucket_key": "i1", "doc_type": "invoice", "status": "posted"},
+    ]
+    expected = ["bank_statement", {"doc_type": "payroll", "label": "State de plata"}]
+    state = document_state(docs, expected)
+    by = {e["doc_type"]: e for e in state["expected"]}
+    assert by["bank_statement"] == {"doc_type": "bank_statement", "label": "bank_statement",
+                                    "count": 1, "keys": ["b1"]}  # fmt: skip
+    assert state["missing"] == [{"doc_type": "payroll", "label": "State de plata"}]
+    assert state["needs_review"] == ["r1"]
+    assert document_state(docs, None)["missing"] == []
+    with pytest.raises(ValueError, match="expected_documents"):
+        document_state(docs, [{"label": "no type"}])
