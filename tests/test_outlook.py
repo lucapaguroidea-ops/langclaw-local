@@ -111,3 +111,12 @@ def test_the_monthly_loop_template_is_valid_against_the_real_tools() -> None:
     tools = [n["tool"] for n in spec["nodes"].values() if n["type"] == "tool"]
     assert tools == ["efactura_sync", "accounting_queue", "accounting_period_report",
                      "accounting_outlook"]  # fmt: skip
+
+
+def test_aging_counts_what_is_left_after_partial_payments() -> None:
+    from langclaw.accounting.outlook import cash_position
+
+    inv = _inv("s1", "out", 1000, "2026-09-01", partner="Alfa")
+    inv["fields"]["paid_amount"] = "400.00"
+    cash = cash_position([inv], on=date(2026, 9, 30))
+    assert cash["receivables"]["total"] == D("600.00")

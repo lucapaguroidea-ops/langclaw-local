@@ -92,6 +92,7 @@ def test_payments_match_invoices_by_amount_plus_a_second_signal() -> None:
     ]
     matches = {m.pop("reference"): m for m in match_payments(s.transactions, invoices)}
     assert matches["BT0001"].pop("key") == s.transactions[0].key
+    assert matches["BT0001"].pop("allocations") == [{"bucket_key": "sale", "amount": "1210.00"}]
     assert matches["BT0001"] == {
         "bucket_key": "sale", "kind": "certain", "because": "amount + invoice number"
     }  # fmt: skip
@@ -111,3 +112,48 @@ def test_amount_alone_is_only_probable_and_ambiguity_is_left_alone() -> None:
     assert two == []
     wrong_side = match_payments(s.transactions[:1], [_invoice("x", "in", "FC-0042", 1210.0)])
     assert wrong_side == []  # money in never pays a supplier invoice
+
+
+def _tx(amount, description="", counterparty=""):
+    from langclaw.accounting.bank.parse import Transaction
+
+    return Transaction("2026-09-20", D(str(amount)), "RON", reference="R1",
+                       counterparty=counterparty, description=description)  # fmt: skip
+
+
+def test_one_payment_for_several_invoices_named_in_the_description() -> None:
+    invoices = [
+        _invoice("a", "in", "F-101", 100.00, partner="Furnizor SRL"),
+        _invoice("b", "in", "F-102", 250.50, partner="Furnizor SRL"),
+        _invoice("c", "in", "F-103", 999.00, partner="Furnizor SRL"),
+    ]
+    (m,) = match_payments([_tx(-350.50, "plata F-101 si F-102")], invoices)
+    assert m["kind"] == "certain" and m["because"] == "sum of invoices named"
+    assert m["allocations"] == [{"bucket_key": "a", "amount": "100.00"},
+                                {"bucket_key": "b", "amount": "250.50"}]  # fmt: skip
+
+
+def test_one_payment_equal_to_a_unique_set_of_the_partners_invoices() -> None:
+    invoices = [
+        _invoice("a", "in", "1", 100.00, partner="Furnizor SRL"),
+        _invoice("b", "in", "2", 200.00, partner="Furnizor SRL"),
+        _invoice("c", "in", "3", 450.00, partner="Furnizor SRL"),
+        _invoice("x", "in", "4", 300.00, partner="Altul SRL"),
+    ]
+    (m,) = match_payments([_tx(-550, "plata", counterparty="FURNIZOR SRL")], invoices)
+    assert {a["bucket_key"] for a in m["allocations"]} == {"a", "c"}
+    assert m["because"] == "sum of the partner's open invoices"
+    ambiguous = [*invoices[:3], _invoice("d", "in", "5", 150.00, partner="Furnizor SRL"),
+                 _invoice("e", "in", "6", 150.00, partner="Furnizor SRL")]  # fmt: skip
+    # a+b and d+e both make 300 → leave it to a person
+    assert match_payments([_tx(-300, "plata", counterparty="Furnizor SRL")], ambiguous) == []
+
+
+def test_a_partial_payment_needs_the_invoice_number_and_counts_the_outstanding() -> None:
+    inv = _invoice("a", "out", "FC-7", 1000.00, partner="Client SRL")
+    (m,) = match_payments([_tx(400, "avans FC-7")], [inv])
+    assert m["kind"] == "partial" and m["allocations"] == [{"bucket_key": "a", "amount": "400.00"}]
+    assert match_payments([_tx(400, "avans")], [inv]) == []  # no number → no guess
+    inv["fields"]["paid_amount"] = "400.00"
+    (rest,) = match_payments([_tx(600, "rest FC-7")], [inv])
+    assert rest["kind"] == "certain" and rest["allocations"][0]["amount"] == "600.00"

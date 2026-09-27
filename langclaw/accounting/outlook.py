@@ -124,6 +124,8 @@ def _aging(invoices: list[dict[str, Any]], on: date) -> dict[str, Any]:
         gross = abs(Decimal(str(row.get("amount") or 0)))
         if row.get("doc_type") == "credit_note":
             gross = -gross
+        else:  # what's left after partial payments
+            gross -= Decimal(str(f.get("paid_amount") or 0))
         due = str(f.get("due_date") or "")[:10]
         late = (on - date.fromisoformat(due)).days if due else 0
         if late <= 0:
@@ -154,9 +156,10 @@ def _aging(invoices: list[dict[str, Any]], on: date) -> dict[str, Any]:
 def cash_position(
     invoices: list[dict[str, Any]], *, on: date, bank_balance: Decimal | None = None
 ) -> dict[str, Any]:
-    """Receivables and payables aging as of *on* (unpaid invoices only — ``paid_on``
-    comes from bank matching), what falls due in the next 30 days, and the bank
-    balance projected over them. Overdue amounts aren't counted in the projection."""
+    """Receivables and payables aging as of *on* — unpaid invoices only (``paid_on``
+    comes from bank matching), at what's still outstanding after partial payments —
+    what falls due in the next 30 days, and the bank balance projected over them.
+    Overdue amounts aren't counted in the projection."""
     unpaid = [r for r in invoices if not (r.get("fields") or {}).get("paid_on")]
     rec = _aging([r for r in unpaid if (r.get("fields") or {}).get("direction") == "out"], on)
     pay = _aging([r for r in unpaid if (r.get("fields") or {}).get("direction") == "in"], on)
