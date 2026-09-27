@@ -351,6 +351,14 @@ def create_claw_agent(
             )
 
         workflow_runtime.set_executor_factory(_workflow_executor_factory)
+    _manage_workflows_active = False
+    if config.workflows.enabled and workflow_runtime is not None and workflow_runtime.files:
+        # The agent can create/edit workflow files (validated, versioned) —
+        # e.g. from Telegram: "make a workflow that ...".
+        from langclaw.workflows.bridge import make_manage_workflows_tool
+
+        tools = tools + [make_manage_workflows_tool(workflow_runtime.files)]
+        _manage_workflows_active = True
     if _workflows_active:
         from langclaw.workflows import make_workflow_tools, resolve_workflow_ptc_names
 
@@ -384,10 +392,10 @@ def create_claw_agent(
         system_prompt = f"{system_prompt}\n\n{interpreter_system_prompt(config, tools)}"
 
     # Make workflows discoverable to the model (mirrors the interpreter nudge).
-    if _workflows_active:
+    if _workflows_active or _manage_workflows_active:
         from langclaw.workflows import workflow_system_prompt
 
-        nudge = workflow_system_prompt(workflow_registry)
+        nudge = workflow_system_prompt(workflow_registry, authoring=_manage_workflows_active)
         if nudge:
             system_prompt = f"{system_prompt}\n\n{nudge}"
 
@@ -519,6 +527,14 @@ def create_claw_agent(
     # to the executor factory's closure, which invokes each graph directly. Declarative
     # specs inherit the parent model/tools when unset — mirroring what create_deep_agent
     # does (graph.py) — since the compiler requires both to be present.
+    if config.workflows.enabled and workflow_runtime is not None:
+        # What workflow steps can reach — used to validate workflow files and
+        # offered to UIs as pickable names.
+        workflow_runtime.set_catalog(
+            tools=[t.name for t in _live_tools if getattr(t, "name", None)],
+            subagents=[s["name"] for s in final_subagents or [] if s.get("name")],
+        )
+
     if _workflows_active and final_subagents:
         from deepagents.middleware.subagents import SubAgentMiddleware
 

@@ -39,7 +39,7 @@ uv run pre-commit run --all-files  # Full pre-commit suite
 | Modify config schema | `langclaw/config/schema.py` (Pydantic Settings) |
 | Code interpreter (RLM) | `langclaw/interpreter/__init__.py` (PTC resolver + middleware factory) |
 | Probe harness (E2E feature testing) | `langclaw/testing/` (`probe()` core + `ProbeTransport` + WS/Telegram drivers); `langclaw gateway --probe` (WS-only seam in `app.py:_build_all_channels`) + `langclaw probe` CLI. Design: [docs/PROBE.md](docs/PROBE.md) |
-| Workflows (LangGraph, HITL) | `langclaw/workflows/graph/` — `spec.py` (`.graph.json` format + validator), `compile.py` (→ `StateGraph`), `runner.py` (checkpointed runs, reviews, crash resume), `runs.py` (run index, first-answer-wins), `steps.py` (`steps()` / `request_review()`); `app.workflow(name, graph=builder)`; `/workflows reviews|approve|reject|edit`. Guide: [docs/guides/workflows.md](docs/guides/workflows.md) |
+| Workflows (LangGraph, HITL) | `langclaw/workflows/graph/` — `spec.py` (`.graph.json` format + validator), `compile.py` (→ `StateGraph`), `runner.py` (checkpointed runs, reviews, crash resume), `runs.py` (run index, first-answer-wins), `steps.py` (`steps()` / `request_review()`); `workflows/files.py` (`WorkflowFiles`: the one validated + versioned write path, used by the API and the agent's `manage_workflows` tool); `app.workflow(name, graph=builder)`; `/workflows reviews|approve|reject|edit`. Guide: [docs/guides/workflows.md](docs/guides/workflows.md) |
 | Control-plane HTTP API (UIs) | `langclaw/gateway/control.py` (`ControlPlane`, shared with `/workflows`) + `langclaw/gateway/api.py` (`ApiChannel`). Guide: [docs/guides/control-plane-api.md](docs/guides/control-plane-api.md) |
 | MCP servers → tools | `langclaw/mcp.py` (`load_mcp_tools`, fail-soft per server) + `config.mcp.servers`; tools named `mcp_<server>_<tool>` (prefix reserved in `langclaw/naming.py`). Guide: [docs/guides/mcp.md](docs/guides/mcp.md) |
 | CLI commands | `langclaw/cli/app.py` (Typer) |
@@ -379,10 +379,16 @@ checkpointer, plus a `RunIndex` (`runs.py`) in a `BaseStore` on the same backend
 calls `resume_incomplete` (continue `running` runs from their last checkpoint;
 re-apply answers claimed before a crash). Nodes emit a progress line each.
 
+**Editing:** all writes go through `WorkflowFiles` (`runtime.files`): validate
+(errors block; unknown tools/subagents vs the runtime `catalog()` are warnings),
+snapshot the old file to `workflows/.history/<name>/`, write, reconcile. Both the
+API (`PUT /v1/workflows/{name}`, versions/restore) and the agent's
+`manage_workflows` tool use it. Code workflows can't be overwritten.
+
 **Reviews (HITL):** a paused run's reviews are answered via
-`ControlPlane.answer_review` (used by `/workflows approve|reject|edit`, and later
-the API/UI/Telegram buttons): it claims the review in the index (**first answer
-wins**; a late answer gets `ReviewAlreadyResolved` naming who answered), then
+`ControlPlane.answer_review` (used by `/workflows approve|reject|edit`,
+`POST /v1/runs/{id}/review`, and later Telegram buttons): it claims the review in the index (**first answer
+wins**; a late answer gets `ConflictError` → API 409 naming who answered), then
 publishes an `origin="workflow"` message with `metadata["review"]` so the run
 continues on the bus worker and delivers to the channel that started it
 (`GatewayManager._handle_workflow`). Keep side effects *after* `request_review` in

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from langclaw.config.schema import LangclawConfig
     from langclaw.cron.scheduler import CronManager
     from langclaw.workflows import WorkflowRegistry
+    from langclaw.workflows.files import WorkflowFiles
 
 
 class NotFoundError(LookupError):
@@ -43,6 +44,17 @@ class NotFoundError(LookupError):
 
 class FeatureDisabledError(RuntimeError):
     """The operation needs a feature that is disabled in config."""
+
+
+class ConflictError(RuntimeError):
+    """The request conflicts with the current state (e.g. a review already answered).
+
+    ``decision`` holds the earlier answer (who, where, what), when there is one.
+    """
+
+    def __init__(self, message: str, decision: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.decision = dict(decision or {})
 
 
 _WORKFLOWS_OFF = "Workflows are disabled. Set LANGCLAW__WORKFLOWS__ENABLED=true."
@@ -102,9 +114,19 @@ class ControlPlane:
         self._registry = workflow_registry
         self._runtime = workflow_runtime
         self._live_runs = live_runs if live_runs is not None else {}
-        self._workflows_dir = Path(workflows_dir) if workflows_dir is not None else None
-        self._workflows_reload_cb = workflows_reload_cb
         self._workflow_file_errors = workflow_file_errors
+        # One write path for workflow files, shared with the agent's manage_workflows
+        # tool: the runtime's when the app built one, else one over *workflows_dir*.
+        self._files = getattr(workflow_runtime, "files", None)
+        if self._files is None and workflows_dir is not None:
+            from langclaw.workflows.files import WorkflowFiles
+
+            self._files = WorkflowFiles(
+                workflows_dir,
+                registry=workflow_registry,
+                reload_cb=workflows_reload_cb,
+                catalog=getattr(workflow_runtime, "catalog", None),
+            )
         self._mcp_servers = [dict(m) for m in (mcp_servers or [])]
         self._sessions = sessions
         self._checkpointer = checkpointer
@@ -124,7 +146,7 @@ class ControlPlane:
             "agents": list(self._agent_names),
             "features": {
                 "workflows": self._registry is not None,
-                "workflow_files": self._workflows_dir is not None,
+                "workflow_files": self._files is not None,
                 "schedules": self._cron is not None,
                 "interpreter": bool(self._config.interpreter.enabled),
                 "mcp": bool(self._mcp_servers),
@@ -167,15 +189,44 @@ class ControlPlane:
         return self._registry
 
     def list_workflows(self) -> list[dict[str, Any]]:
-        """Return every registered workflow (without its graph)."""
-        return [self._describe(spec) for spec in self.require_workflows().specs()]
+        """Every workflow, plus workflow files that failed to load (``valid: False``)."""
+        registry = self.require_workflows()
+        out = [{**self._describe(spec), "valid": True} for spec in registry.specs()]
+        for name, errors in sorted(self.workflow_file_errors().items()):
+            if name not in registry:
+                out.append(
+                    {
+                        "name": name,
+                        "description": "",
+                        "source": "file",
+                        "editable": True,
+                        "valid": False,
+                        "errors": errors,
+                    }
+                )
+        return out
 
     def get_workflow(self, name: str) -> dict[str, Any]:
-        """Return one workflow with a Mermaid drawing; file workflows include ``graph``."""
+        """One workflow with a Mermaid drawing; file workflows include ``graph``.
+
+        A file that failed to load is returned too (``valid: False`` with its
+        ``errors`` and raw content), so an editor can fix it.
+        """
         spec = self.require_workflows().get(name)
         if spec is None:
-            raise NotFoundError(f"Unknown workflow {name!r}.")
-        described = self._describe(spec)
+            errors = self.workflow_file_errors().get(name)
+            if errors is None or self._files is None:
+                raise NotFoundError(f"Unknown workflow {name!r}.")
+            return {
+                "name": name,
+                "description": "",
+                "source": "file",
+                "editable": True,
+                "valid": False,
+                "errors": errors,
+                "graph": self._files.read(name),
+            }
+        described = {**self._describe(spec), "valid": True}
         if spec.graph_spec is not None:
             described["graph"] = json.loads(spec.graph_spec.to_file())
         described["mermaid"] = spec.graph.compile().get_graph().draw_mermaid()
@@ -185,54 +236,73 @@ class ControlPlane:
         """Validation errors of workflow files that failed to load, by name."""
         return dict(self._workflow_file_errors() if self._workflow_file_errors else {})
 
+    def catalog(self) -> dict[str, list[str]]:
+        """Tool and subagent names workflow steps can use (empty before the agent is built)."""
+        found = self._runtime.catalog() if self._runtime is not None else None
+        return dict(found or {"tools": [], "subagents": []})
+
     def validate_workflow(self, name: str, graph: Mapping[str, Any] | str) -> dict[str, Any]:
         """Check a workflow file without saving it.
 
         Returns:
-            ``{"valid": True}`` or ``{"valid": False, "errors": [...]}``.
+            ``{"valid", "errors", "warnings"}`` — errors block saving; warnings
+            (e.g. a tool that isn't available right now) don't.
         """
-        from langclaw.workflows.graph import GraphSpecError, parse_graph_spec
-
-        try:
-            parse_graph_spec(name, dict(graph) if isinstance(graph, Mapping) else graph)
-        except GraphSpecError as exc:
-            return {"valid": False, "errors": exc.errors}
-        return {"valid": True, "errors": []}
+        self.require_workflows()
+        return self._require_files().validate(name, graph)
 
     def save_workflow(self, name: str, graph: Mapping[str, Any] | str) -> dict[str, Any]:
-        """Create or replace workflow file *name* and make it live.
+        """Create or replace workflow file *name*, snapshot the old one, and make it live.
+
+        Returns:
+            The workflow (as :meth:`get_workflow`) plus ``created`` and ``warnings``.
 
         Raises:
             FeatureDisabledError: Workflow files are unavailable.
             ValueError: The graph is invalid (the message lists every problem), or
-                *name* belongs to a workflow registered in code.
+                *name* belongs to a workflow defined in code.
         """
-        from langclaw.workflows.graph import GRAPH_SUFFIX, parse_graph_spec
-
-        registry = self.require_workflows()
-        directory = self._require_workflows_dir()
-        existing = registry.get(name)
-        if existing is not None and existing.graph_spec is None:
-            raise ValueError(f"{name!r} is defined in code; a workflow file cannot replace it.")
-        spec = parse_graph_spec(name, dict(graph) if isinstance(graph, Mapping) else graph)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{name}{GRAPH_SUFFIX}").write_text(spec.to_file(), encoding="utf-8")
-        self._reload_files()
-        return self.get_workflow(name)
+        self.require_workflows()
+        saved = self._require_files().save(name, graph)
+        return {**self.get_workflow(name), **saved}
 
     def delete_workflow(self, name: str) -> bool:
-        """Delete workflow file *name*. Returns ``True`` when a file was removed."""
-        from langclaw.workflows.graph import GRAPH_SUFFIX
-        from langclaw.workflows.graph.spec import SAFE_NAME
+        """Delete workflow file *name* (its history is kept for restore)."""
+        from langclaw.workflows.files import WorkflowFileNotFound
 
         self.require_workflows()
-        directory = self._require_workflows_dir()
-        path = directory / f"{name}{GRAPH_SUFFIX}"
-        if not SAFE_NAME.match(name) or not path.exists():
-            raise NotFoundError(f"No workflow file {name!r}.")
-        path.unlink()
-        self._reload_files()
+        try:
+            self._require_files().delete(name)
+        except WorkflowFileNotFound as exc:
+            raise NotFoundError(str(exc)) from exc
         return True
+
+    def workflow_versions(self, name: str) -> list[dict[str, Any]]:
+        """Saved snapshots of workflow file *name*, newest first."""
+        self.require_workflows()
+        return self._require_files().versions(name)
+
+    def workflow_version(self, name: str, version: str) -> dict[str, Any]:
+        """One snapshot's content."""
+        from langclaw.workflows.files import WorkflowFileNotFound
+
+        self.require_workflows()
+        try:
+            graph = self._require_files().read_version(name, version)
+        except WorkflowFileNotFound as exc:
+            raise NotFoundError(str(exc)) from exc
+        return {"name": name, "version": version, "graph": graph}
+
+    def restore_workflow(self, name: str, version: str) -> dict[str, Any]:
+        """Make snapshot *version* current (the current file is snapshotted first)."""
+        from langclaw.workflows.files import WorkflowFileNotFound
+
+        self.require_workflows()
+        try:
+            self._require_files().restore(name, version)
+        except WorkflowFileNotFound as exc:
+            raise NotFoundError(str(exc)) from exc
+        return self.get_workflow(name)
 
     async def start_workflow(
         self,
@@ -269,13 +339,15 @@ class ControlPlane:
         )
         return run_id
 
-    async def list_runs(self, limit: int = 20, *, workflow: str = "") -> dict[str, Any]:
-        """Return recent runs, newest first, optionally for one workflow."""
+    async def list_runs(
+        self, limit: int = 20, *, workflow: str = "", status: str = ""
+    ) -> dict[str, Any]:
+        """Return recent runs, newest first, optionally for one workflow / status."""
         self.require_workflows()
         graph = self._graph_runner()
         if graph is None:
             return {"runs": []}
-        records = await graph.index.list(workflow=workflow, limit=limit)
+        records = await graph.index.list(workflow=workflow, status=status, limit=limit)
         return {"runs": [self._describe_graph_run(r) for r in records]}
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
@@ -331,8 +403,9 @@ class ControlPlane:
 
         Raises:
             NotFoundError: unknown run.
-            ValueError: malformed decision, or no pending review / already answered
-                (a :class:`ReviewAlreadyResolved`, whose message names who answered).
+            ValueError: malformed decision.
+            ConflictError: no pending review, or it was already answered (the
+                message names who answered, and where).
         """
         self.require_workflows()
         graph = self._graph_runner()
@@ -348,7 +421,7 @@ class ControlPlane:
                 run_id, {**decision, "by": by, "via": via}, interrupt_id=interrupt_id
             )
         except ReviewAlreadyResolved as exc:
-            raise ValueError(str(exc)) from exc
+            raise ConflictError(str(exc), exc.decision) from exc
         target = dict(record.get("reply_to") or fallback_target or {})
         if not target.get("channel"):
             raise ValueError(f"Run {run_id} has no channel to continue on.")
@@ -462,14 +535,10 @@ class ControlPlane:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _require_workflows_dir(self) -> Path:
-        if self._workflows_dir is None:
+    def _require_files(self) -> WorkflowFiles:
+        if self._files is None:
             raise FeatureDisabledError(_FILES_OFF)
-        return self._workflows_dir
-
-    def _reload_files(self) -> None:
-        if self._workflows_reload_cb is not None:
-            self._workflows_reload_cb()
+        return self._files
 
     @staticmethod
     def _describe(spec: Any) -> dict[str, Any]:

@@ -30,7 +30,7 @@ from langclaw.context import LangclawContext
 from langclaw.cron.scheduler import CronManager
 from langclaw.gateway.base import BaseChannel
 from langclaw.gateway.commands import CommandContext, CommandRouter
-from langclaw.gateway.control import ControlPlane, NotFoundError
+from langclaw.gateway.control import ConflictError, ControlPlane, NotFoundError
 from langclaw.gateway.utils import attachments_to_content_blocks, lookup_by_user
 from langclaw.session.manager import SessionManager
 from langclaw.utils import preview_message
@@ -611,7 +611,7 @@ class GatewayManager:
                             "chat_id": ctx.chat_id,
                         },
                     )
-                except (NotFoundError, ValueError) as exc:
+                except (NotFoundError, ValueError, ConflictError) as exc:
                     return str(exc)
                 verb = {"approve": "Approved", "reject": "Rejected", "edit": "Edited"}[sub]
                 return f"{verb} — continuing run {run_id}."

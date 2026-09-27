@@ -82,7 +82,13 @@ def test_list_and_get_workflow() -> None:
     plane = _plane(workflow_registry=_registry())
 
     assert plane.list_workflows() == [
-        {"name": "echo", "description": "echo input", "source": "code", "editable": False}
+        {
+            "name": "echo",
+            "description": "echo input",
+            "source": "code",
+            "editable": False,
+            "valid": True,
+        }
     ]
     assert plane.get_workflow("echo")["name"] == "echo"
     with pytest.raises(NotFoundError):
@@ -120,7 +126,11 @@ def test_save_rejects_an_invalid_graph_listing_every_problem(tmp_path) -> None:
     assert "no edge from START" in str(exc.value)
     assert "unknown key 'nope'" in str(exc.value)
     assert plane.validate_workflow("bad", bad)["valid"] is False
-    assert plane.validate_workflow("doc_flow", DOC_FLOW) == {"valid": True, "errors": []}
+    assert plane.validate_workflow("doc_flow", DOC_FLOW) == {
+        "valid": True,
+        "errors": [],
+        "warnings": [],
+    }
 
 
 def test_save_rejects_bad_name_and_code_workflow(tmp_path) -> None:

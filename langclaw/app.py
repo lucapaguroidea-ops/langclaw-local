@@ -743,7 +743,16 @@ class Langclaw:
         if not effective_config.workflows.enabled:
             return None
         if self._workflow_runtime is None:
-            self._workflow_runtime = WorkflowRuntime(effective_config.workflows)
+            from langclaw.workflows.files import WorkflowFiles
+
+            runtime = WorkflowRuntime(effective_config.workflows)
+            runtime.files = WorkflowFiles(
+                self._config.agents.workflows_dir,
+                registry=self._workflows,
+                reload_cb=self._reload_workflow_files,
+                catalog=runtime.catalog,
+            )
+            self._workflow_runtime = runtime
         return self._workflow_runtime
 
     def _reload_workflow_files(self) -> bool:

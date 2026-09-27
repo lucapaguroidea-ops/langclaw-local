@@ -113,6 +113,31 @@ from their last checkpoint on startup.
 !!! note "One gateway replica"
     The first-answer-wins lock is per process; run a single gateway replica.
 
+## Editing workflow files
+
+Every way of editing a workflow file goes through one validated, versioned path
+(`langclaw/workflows/files.py`):
+
+- **The agent** has a `manage_workflows` tool (when workflows are enabled): ask it
+  in Telegram to "make a workflow that …" and it validates, saves, and the new
+  `workflow_<name>` tool is live on its next turn. It can also list, read,
+  delete, and restore versions. Like any tool it's subject to RBAC — a role needs
+  `manage_workflows` in its `tools`.
+
+    !!! warning "Grant it like admin access"
+        Workflow steps call tools through the default agent's full toolset, not the
+        caller's role. A role with `manage_workflows` *and* `workflows: ["*"]` can
+        write and run a workflow that reaches tools the role can't call directly.
+        Give `manage_workflows` only to roles you'd trust with every tool.
+- **The API / UI** — `PUT /v1/workflows/{name}`, `POST .../validate`, and the
+  version endpoints ([control-plane guide](control-plane-api.md)).
+- **By hand** — edit the file on disk; it reloads on the next message.
+
+Saving checks the whole graph and reports every problem at once. A tool or
+subagent that isn't available right now is a *warning*, not an error (an MCP
+server may be down). Each save and delete keeps the previous file under
+`workflows/.history/<name>/` (the last 50), which `restore` brings back.
+
 ## Run a workflow
 
 **Via the agent** — each workflow is a `workflow_<name>` tool; the agent calls it

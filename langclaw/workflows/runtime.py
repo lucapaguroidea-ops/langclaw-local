@@ -19,6 +19,7 @@ from langclaw.workflows.graph.runner import GraphRunResult, GraphWorkflowRunner
 if TYPE_CHECKING:
     from langclaw.config.schema import WorkflowsConfig
     from langclaw.workflows.executor import StepExecutor
+    from langclaw.workflows.files import WorkflowFiles
     from langclaw.workflows.registry import WorkflowSpec
 
 #: ``(tool_runtime | None) -> StepExecutor`` (sync or async), set by the builder.
@@ -41,6 +42,9 @@ class WorkflowRuntime:
         self._run_gate = asyncio.Semaphore(max(1, config.max_concurrent_runs))
         self._executor_factory: ExecutorFactory | None = None
         self._graph_runner: GraphWorkflowRunner | None = None
+        self._catalog: dict[str, list[str]] | None = None
+        #: Validated, versioned access to workflow files (set by the app).
+        self.files: WorkflowFiles | None = None
         if runner is not None:
             self.set_graph_runner(runner)
 
@@ -49,6 +53,14 @@ class WorkflowRuntime:
     def set_executor_factory(self, factory: ExecutorFactory) -> None:
         """Register how nodes reach tools/models/subagents (called by the agent builder)."""
         self._executor_factory = factory
+
+    def set_catalog(self, *, tools: list[str], subagents: list[str]) -> None:
+        """Record the tool / subagent names workflow steps can reach (set by the builder)."""
+        self._catalog = {"tools": sorted(set(tools)), "subagents": sorted(set(subagents))}
+
+    def catalog(self) -> dict[str, list[str]] | None:
+        """``{"tools": [...], "subagents": [...]}``, or ``None`` before the agent is built."""
+        return self._catalog
 
     @property
     def graph_runner(self) -> GraphWorkflowRunner:
