@@ -780,6 +780,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-monthly-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The monthly loop
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#in-the-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1401,6 +1412,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-monthly-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The monthly loop
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#in-the-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1643,6 +1665,30 @@ it, has the model write advice that must cite these facts, and pauses for a
 person to approve or edit it before it reaches the client. The limits live in
 <code>langclaw/accounting/outlook.py:LIMITS</code> — reference data for your accountant
 to review, like the VAT table.</p>
+<h2 id="the-monthly-loop">The monthly loop<a class="headerlink" href="#the-monthly-loop" title="Permanent link">&para;</a></h2>
+<p>The <strong>accounting_month</strong> template (<code>ui/templates/accounting_month.graph.json</code>)
+does a client's month in one run:</p>
+<ol>
+<li><code>efactura_sync</code> imports new invoices from SPV.</li>
+<li><code>accounting_queue</code> starts <code>accounting_proposal</code> for every filed invoice
+   without an entry. These runs go on in parallel and ask for review where they
+   should.</li>
+<li><code>accounting_period_report</code> produces the month's report: blockers, expected
+   documents, the trial balance and VAT.</li>
+<li><code>accounting_outlook</code> produces the outlook: deadlines, limits and cash.</li>
+<li>The model drafts a status for the accountant and advice for the client.</li>
+<li>The run pauses for a person to approve or edit.</li>
+</ol>
+<p>With an empty <code>period</code> it works on <strong>last month</strong>. The period tools take <code>""</code>
+too (<code>resolve_period</code>), so a schedule never needs updating.</p>
+<p>To run it every month, create the workflow from the template in the console
+(New workflow → template). Then, <strong>in the client's chat</strong>, ask for it to be
+scheduled, e.g. "run accounting_month on the 1st of every month at 08:00". The
+<code>cron</code> tool stores <code>workflow_name</code>, and the run belongs to the client linked to
+that chat.</p>
+<p>Because the queued proposals run alongside the loop, the month report is taken
+when they start. Its blockers include the invoices just queued. Run the report
+again, or open the console's Client overview, once they're reviewed.</p>
 <h2 id="in-the-console">In the console<a class="headerlink" href="#in-the-console" title="Permanent link">&para;</a></h2>
 <p>The <strong>Client overview</strong> page shows the chosen client and month. It uses
 <code>GET /v1/accounting/overview</code>, which runs the same tools as the agent.</p>
