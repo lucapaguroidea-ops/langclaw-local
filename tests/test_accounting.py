@@ -679,3 +679,60 @@ async def test_partial_payments_add_up_until_the_invoice_is_paid(acme) -> None:
         assert f["paid_on"] == "2026-09-15" and len(f["payments"]) == 2
         assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
     assert facts["cash"]["receivables"]["total"] != "0.00"
+
+
+@needs_pg
+async def test_payments_and_fees_are_booked_in_the_journal(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    number, gross = sale["fields"]["invoice_number"], float(sale["amount"])
+    await scoped.bucket.put(
+        "bank/b1.sta", _mt940(("C", gross, f"incasare {number}"), ("D", 12.5, "Comision lunar"))
+    )
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        out = await tools["bank_import"].ainvoke({"key": "bank/b1.sta"})
+        assert out["booked_entries"] == 1 and out["not_booked"] == []
+        assert [f["amount"] for f in out["fees"]] == ["-12.50"] and out["unmatched"] == 0
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    journal = Journal(scoped.store)
+    tx_key = out["paid"][0]["key"]
+    entry = await journal.get(f"bank/{tx_key}/{sale['bucket_key']}")
+    assert [(x["account"], x["debit"], x["credit"]) for x in entry["lines"]] == [
+        ("5121", round(gross, 2), 0.0), ("4111", 0.0, round(gross, 2))]  # fmt: skip
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert report["trial_balance"]["balanced"]
+    assert accounts["4111"]["balance"] == "0.00"  # invoiced and collected
+    assert accounts["627"]["balance"] == "12.50"
+    assert float(accounts["5121"]["balance"]) == round(gross - 12.5, 2)
+
+
+@needs_pg
+async def test_a_payment_in_a_closed_month_is_applied_but_not_booked(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    await Journal(scoped.store).close_period("2026-09", closed_by="ana")
+    await scoped.bucket.put(
+        "bank/b2.sta",
+        _mt940(("C", float(sale["amount"]), f"incasare {sale['fields']['invoice_number']}")),
+    )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["bank_import"].ainvoke({"key": "bank/b2.sta"})
+    assert out["paid"] and out["booked_entries"] == 0
+    assert "closed" in out["not_booked"][0]["reason"]
+    assert (await scoped.store.get(sale["bucket_key"]))["fields"]["paid_on"]
