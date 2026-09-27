@@ -156,6 +156,24 @@ class ApiChannel(BaseChannel):
     async def send_ai_message(self, msg: OutboundMessage) -> None:
         self._record(msg, {"type": "ai", "content": msg.content, "metadata": {}})
 
+    async def send_review_request(
+        self, target: dict[str, str], request: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Record the review as a structured ``review`` message on the run's turn,
+        so a UI can show it (and answer via ``POST /v1/runs/{id}/review``)."""
+        from langclaw.bus.base import OutboundMessage
+
+        msg = OutboundMessage(
+            channel=self.name,
+            user_id=target.get("user_id", ""),
+            context_id=target.get("context_id", "default"),
+            chat_id=target.get("chat_id", ""),
+            content=request.get("message", ""),
+            type="ai",
+        )
+        self._record(msg, {"type": "review", "content": msg.content, "metadata": dict(request)})
+        return None
+
     async def send_tool_progress(self, msg: OutboundMessage) -> None:
         meta = msg.metadata or {}
         self._record(

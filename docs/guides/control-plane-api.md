@@ -44,8 +44,10 @@ curl "$URL/v1/turns/<turn_id>?wait=25" -H "Authorization: Bearer $TOKEN"
 ```
 
 - `messages` holds every output of the turn in order: `ai` text,
-  `tool_progress` (tool name and args in `metadata`), `tool_result`, or
-  `command`.
+  `tool_progress` (tool name and args in `metadata`), `tool_result`,
+  `command`, or `review` — a workflow run paused for review (`metadata` holds
+  `run_id`, `interrupt_id`, `data`, `editable`; answer it with
+  `POST /v1/runs/{run_id}/review`).
 - `wait` (0–120 s) long-polls; omit it to return immediately.
 - `context_id` selects the conversation thread (memory is kept per
   `user_id` + `context_id`). `agent_name` routes to a named agent.

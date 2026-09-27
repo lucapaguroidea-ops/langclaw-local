@@ -309,3 +309,17 @@ def test_agent_tool_runs_reply_to_the_chat_that_called_them() -> None:
     assert tool_origin(SimpleNamespace(context=ctx)) == _origin("telegram", "42")
     assert tool_origin(None) is None
     assert tool_origin(SimpleNamespace(context=LangclawContext())) is None
+
+
+async def test_api_channel_records_a_structured_review_message() -> None:
+    from langclaw.config.schema import ApiChannelConfig
+    from langclaw.gateway.api import ApiChannel
+
+    channel = ApiChannel(ApiChannelConfig(enabled=True, token="t" * 20))
+    turn = channel._new_turn("workflows", "run workflow doc_flow")
+    target = {"channel": "api", "user_id": "admin", "context_id": "workflows"}
+    ref = await channel.send_review_request({**target, "chat_id": turn.turn_id}, REQUEST)
+    assert ref is None
+    (message,) = turn.messages
+    assert message["type"] == "review" and message["content"] == "Sender ACME?"
+    assert message["metadata"]["run_id"] == "doc_flow:abc"

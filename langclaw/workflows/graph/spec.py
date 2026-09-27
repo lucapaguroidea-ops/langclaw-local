@@ -228,6 +228,55 @@ class GraphSpec(_Strict):
         node = self.nodes[node_id]
         return node.save_as or node_id
 
+    def to_mermaid(self) -> str:
+        """A readable Mermaid flowchart: step labels, branch conditions on arrows,
+        and approve / reject paths out of review steps."""
+        shapes = {
+            "llm": ('("', '")'),
+            "tool": ('["', '"]'),
+            "subagent": ('[["', '"]]'),
+            "branch": ('{"', '"}'),
+            "human_review": ('{{"', '"}}'),
+        }
+        icons = {"llm": "🧠", "tool": "🔧", "subagent": "🤖", "branch": "🔀", "human_review": "🙋"}
+
+        def ref(target: str) -> str:
+            return {START: "START", END: "END"}.get(target, f"n_{target}")
+
+        def esc(text: str) -> str:
+            return text.replace('"', "'").replace("\n", " ")
+
+        lines = ["flowchart TD", '  START(["start"])', '  END(["end"])']
+        for nid, node in self.nodes.items():
+            left, right = shapes[node.type]
+            label = esc(node.label or nid)
+            lines.append(f"  n_{nid}{left}{icons[node.type]} {label}{right}")
+        for edge in self.edges:
+            for src in edge.sources:
+                node = self.nodes.get(src)
+                tag = "|approve|" if node is not None and node.type == "human_review" else ""
+                lines.append(f"  {ref(src)} -->{tag} {ref(edge.to)}")
+        for nid, node in self.nodes.items():
+            if node.type == "branch":
+                for rule in node.rules:
+                    cond = rule.if_
+                    value = (
+                        ""
+                        if cond.op in ("exists", "not_exists", "truthy", "falsy")
+                        else (f" {json.dumps(cond.value)}")
+                    )
+                    text = esc(f"{cond.path} {cond.op}{value}")
+                    lines.append(f'  n_{nid} -->|"{text}"| {ref(rule.then)}')
+                lines.append(f"  n_{nid} -->|otherwise| {ref(node.else_)}")
+            elif node.type == "human_review":
+                lines.append(f"  n_{nid} -.->|reject| {ref(node.on_reject)}")
+                has_out = any(nid in e.sources for e in self.edges)
+                if not has_out:
+                    lines.append(f"  n_{nid} -->|approve| END")
+            elif not any(nid in e.sources for e in self.edges):
+                lines.append(f"  n_{nid} --> END")
+        return "\n".join(lines)
+
     def to_file(self) -> str:
         """Serialize to the canonical on-disk JSON (name omitted: it's the filename)."""
         data = self.model_dump(by_alias=True, exclude_defaults=True, exclude={"name"})

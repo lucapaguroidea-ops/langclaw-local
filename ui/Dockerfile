@@ -3,7 +3,7 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py client.py ./
+COPY app.py client.py editor.py ./
 
 # Railway injects PORT; default for local runs.
 ENV PORT=8501

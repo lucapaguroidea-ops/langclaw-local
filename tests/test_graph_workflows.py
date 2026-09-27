@@ -384,3 +384,16 @@ def test_steps_outside_a_run_is_a_clear_error() -> None:
 
     with pytest.raises(WorkflowStepError, match="only available inside"):
         steps()
+
+
+def test_mermaid_for_files_shows_labels_conditions_and_review_paths() -> None:
+    raw = json.loads(json.dumps(DOC_FLOW))
+    raw["nodes"]["fetch"]["label"] = 'Read "the" file'
+    drawing = parse_graph_spec("doc_flow", raw).to_mermaid()
+    assert drawing.startswith("flowchart TD")
+    assert "n_fetch[\"🔧 Read 'the' file\"]" in drawing  # quotes can't break the syntax
+    assert 'n_check -->|"classify.confidence lt 0.8"| n_review' in drawing
+    assert "n_check -->|otherwise| n_save" in drawing
+    assert "n_review -->|approve| n_save" in drawing
+    assert "n_review -.->|reject| END" in drawing
+    assert "n_save --> END" in drawing

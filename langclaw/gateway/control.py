@@ -231,7 +231,11 @@ class ControlPlane:
         described = {**self._describe(spec), "valid": True}
         if spec.graph_spec is not None:
             described["graph"] = json.loads(spec.graph_spec.to_file())
-        described["mermaid"] = spec.graph.compile().get_graph().draw_mermaid()
+        described["mermaid"] = (
+            spec.graph_spec.to_mermaid()
+            if spec.graph_spec is not None
+            else spec.graph.compile().get_graph().draw_mermaid()
+        )
         return described
 
     def workflow_file_errors(self) -> dict[str, list[str]]:
