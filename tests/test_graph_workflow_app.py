@@ -107,7 +107,7 @@ async def test_runs_and_reviews_persist_across_app_restarts(tmp_path: Path) -> N
         cfg = app._config
         cp = make_checkpointer_backend("sqlite", db_path=cfg.checkpointer.sqlite.db_path, dsn="")
         await stack.enter_async_context(cp)
-        await app._open_workflow_stores(stack, cfg.checkpointer, cfg.workflows)
+        await app._open_workflow_stores(stack, cfg.checkpointer, cfg)
         app._reload_workflow_files()
         app._attach_graph_runner(cfg, cp.get())
         runtime = app._workflow_runtime

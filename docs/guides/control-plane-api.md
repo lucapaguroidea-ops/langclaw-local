@@ -71,15 +71,18 @@ curl "$URL/v1/turns/<turn_id>?wait=25" -H "Authorization: Bearer $TOKEN"
 | `GET /v1/workflows/{name}/versions` | Saved versions, newest first |
 | `GET /v1/workflows/{name}/versions/{version}` | One saved version |
 | `POST /v1/workflows/{name}/versions/{version}/restore` | Make that version current |
-| `POST /v1/workflows/{name}/runs` | Start a run: `{"input"?}` → `202 {"run_id", "turn_id"}` |
+| `POST /v1/workflows/{name}/runs` | Start a run: `{"input"?, "tenant"?}` → `202 {"run_id", "turn_id"}` (`tenant`: run it for that client) |
 | `GET /v1/workflows/{name}/runs` | That workflow's runs (`?status=&limit=`) |
 | `GET /v1/runs` | Recent runs (`?workflow=&status=&limit=`) |
 | `GET /v1/runs/{run_id}` | One run: status, trigger, reviews (with answers), final state, and each step's result |
 | `POST /v1/runs/{run_id}/cancel` | Cancel a run executing in this gateway |
 | `GET /v1/reviews` | Reviews waiting for an answer (`?workflow=`) |
 | `POST /v1/runs/{run_id}/review` | Answer a review: `{"action": "approve" \| "edit" \| "reject", "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}`. The run continues on the channel that started it. A second answer is a **409** whose `decision` says who answered first, and where. |
-| `GET /v1/documents` | Filed documents (read-only). `?q=` searches text — or ranks by meaning with `&semantic=true` when `documents.embedding_model` is set — plus `sender`, `receiver`, `doc_type`, `date_from`, `date_to`, `status`, `limit`, and `field.<name>=<text>` for type-specific details (e.g. `field.jurisdiction=Delaware`). Returns `{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}` (`semantic`: whether meaning search is available); ranked rows carry `similarity` 0–1 |
+| `GET /v1/documents` | Filed documents (read-only). `?q=` searches text — or ranks by meaning with `&semantic=true` when `documents.embedding_model` is set — plus `sender`, `receiver`, `doc_type`, `date_from`, `date_to`, `status`, `limit`, and `field.<name>=<text>` for type-specific details (e.g. `field.jurisdiction=Delaware`). With clients on, `tenant=<id>` is required. Returns `{"documents", "count", "mode": "filter"\|"text"\|"semantic", "semantic"}` (`semantic`: whether meaning search is available); ranked rows carry `similarity` 0–1 |
 | `GET /v1/documents/{bucket_key}` | One record + a 1-hour download `link` for its file |
+| `GET /v1/tenants` · `GET /v1/tenants/{id}` | Clients (with `LANGCLAW__TENANTS__ENABLED`) |
+| `PUT /v1/tenants/{id}` | Create/replace a client: `{"name", "tax_id"?, "chats"?: ["telegram:-100…"], "review_chat"?, "profile"?}`. A chat already linked to another client is a 400. |
+| `DELETE /v1/tenants/{id}` | Remove a client (its files and records are kept) |
 | `GET /v1/schedules` | Scheduled jobs |
 | `POST /v1/schedules` | `{"name", "channel", "user_id", "message" \| "workflow_name", "cron_expr" \| "every_seconds", "chat_id"?, "workflow_input"?}` |
 | `DELETE /v1/schedules/{id}` | Remove a scheduled job |
@@ -92,7 +95,8 @@ Errors are `{"error": "..."}`: **400** invalid input, **401** bad token,
 turn on) or review already answered, **503** gateway not ready.
 
 Workflows need `LANGCLAW__WORKFLOWS__ENABLED=true`; schedules need
-`LANGCLAW__CRON__ENABLED=true`; documents need `LANGCLAW__DOCUMENTS__ENABLED=true`.
+`LANGCLAW__CRON__ENABLED=true`; documents need `LANGCLAW__DOCUMENTS__ENABLED=true`;
+clients need `LANGCLAW__TENANTS__ENABLED=true`.
 
 ## Building a UI with Appsmith
 

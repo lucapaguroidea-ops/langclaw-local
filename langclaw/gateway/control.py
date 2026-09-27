@@ -107,8 +107,11 @@ class ControlPlane:
         mcp_servers: Iterable[Mapping[str, Any]] | None = None,
         sessions: Any | None = None,
         checkpointer: Any | None = None,
+        tenants: Any | None = None,
     ) -> None:
         self._config = config
+        #: Clients (tenants), or ``None`` when client separation is off.
+        self._tenants = tenants
         self._bus = bus
         self._channels = list(channels)
         self._agent_names = list(agent_names)
@@ -158,6 +161,7 @@ class ControlPlane:
                 "documents": bool(self._config.documents.enabled),
                 "ocr": bool(self._config.documents.ocr_model),
                 "semantic_search": bool(self._config.documents.embedding_model),
+                "tenants": self._tenants is not None,
             },
             "mcp_servers": self._mcp_servers,
         }
@@ -166,15 +170,80 @@ class ControlPlane:
     # Documents (read-only: the UI's view of the documents table)
     # ------------------------------------------------------------------
 
-    def _documents(self) -> Any:
-        if self.documents is not None:
-            return self.documents
-        if not self._config.documents.enabled:
-            raise FeatureDisabledError("Documents are off: set LANGCLAW__DOCUMENTS__ENABLED=true.")
-        from langclaw.documents.tools import shared_services
+    async def _documents(self, tenant: str = "") -> Any:
+        """The document services to read — one client's view when clients are on.
 
-        self.documents = shared_services(self._config.documents)
-        return self.documents
+        Raises:
+            FeatureDisabledError: documents are off.
+            ValueError: clients are on and no *tenant* was given.
+            NotFoundError: *tenant* isn't a client.
+        """
+        if self.documents is None:
+            if not self._config.documents.enabled:
+                raise FeatureDisabledError(
+                    "Documents are off: set LANGCLAW__DOCUMENTS__ENABLED=true."
+                )
+            from langclaw.documents.tools import shared_services
+
+            self.documents = shared_services(
+                self._config.documents, require_tenant=self._tenants is not None
+            )
+        if self._tenants is None:
+            return self.documents
+        if not tenant:
+            raise ValueError("Pick a client: documents are kept per client.")
+        await self._tenant_or_404(tenant)
+        return self.documents.scoped(tenant)
+
+    # ------------------------------------------------------------------
+    # Clients (tenants)
+    # ------------------------------------------------------------------
+
+    def _require_tenants(self) -> Any:
+        if self._tenants is None:
+            raise FeatureDisabledError("Clients are off: set LANGCLAW__TENANTS__ENABLED=true.")
+        return self._tenants
+
+    async def _tenant_or_404(self, tenant_id: str) -> Any:
+        tenant = await self._require_tenants().get(tenant_id)
+        if tenant is None:
+            raise NotFoundError(f"No client {tenant_id!r}.")
+        return tenant
+
+    async def list_tenants(self) -> dict[str, Any]:
+        """Every client, by id."""
+        return {"tenants": [t.model_dump() for t in await self._require_tenants().list()]}
+
+    async def get_tenant(self, tenant_id: str) -> dict[str, Any]:
+        return (await self._tenant_or_404(tenant_id)).model_dump()
+
+    async def save_tenant(self, tenant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Create or replace client *tenant_id* from *body* (``name`` required).
+
+        Raises:
+            ValueError: invalid fields, or a chat already linked to another client.
+        """
+        from pydantic import ValidationError
+
+        from langclaw.tenants import Tenant
+
+        registry = self._require_tenants()
+        fields = {
+            k: v for k, v in dict(body).items() if k not in ("id", "created_at", "updated_at")
+        }
+        try:
+            tenant = Tenant(id=tenant_id, **fields)
+        except ValidationError as exc:
+            problems = "; ".join(
+                f"{'.'.join(str(p) for p in e['loc']) or 'client'}: {e['msg']}"
+                for e in exc.errors()
+            )
+            raise ValueError(f"Invalid client: {problems}") from None
+        return (await registry.save(tenant)).model_dump()
+
+    async def delete_tenant(self, tenant_id: str) -> bool:
+        """Remove a client (its files and records stay; see the tenancy guide)."""
+        return await self._require_tenants().delete(tenant_id)
 
     async def list_documents(
         self,
@@ -189,9 +258,11 @@ class ControlPlane:
         status: str = "",
         fields: dict[str, str] | None = None,
         limit: int = 50,
+        tenant: str = "",
     ) -> dict[str, Any]:
         """Filtered documents; with *q*, a text match — or ranked by meaning when
-        *semantic* and an embedding model is configured.
+        *semantic* and an embedding model is configured. With clients on, one
+        *tenant*'s documents (required).
 
         Returns ``{"documents", "count", "mode", "semantic"}`` where ``mode`` is
         ``filter`` / ``text`` / ``semantic`` (what was actually done) and
@@ -199,7 +270,7 @@ class ControlPlane:
         """
         from langclaw.documents.store import DocumentStoreError
 
-        services = self._documents()
+        services = await self._documents(tenant)
         filters = {
             "sender": sender,
             "receiver": receiver,
@@ -222,12 +293,12 @@ class ControlPlane:
             raise ValueError(str(exc)) from exc
         return {"documents": rows, "count": len(rows), "mode": mode, "semantic": can_rank}
 
-    async def get_document(self, bucket_key: str) -> dict[str, Any]:
+    async def get_document(self, bucket_key: str, *, tenant: str = "") -> dict[str, Any]:
         """One record plus a temporary download link for its file (``""`` if the
-        bucket can't make one)."""
+        bucket can't make one). With clients on, from *tenant*'s documents."""
         from langclaw.documents.bucket import BucketError
 
-        services = self._documents()
+        services = await self._documents(tenant)
         row = await services.store.get(bucket_key)
         if row is None:
             raise NotFoundError(f"No document {bucket_key!r}.")
@@ -400,14 +471,18 @@ class ControlPlane:
         user_id: str,
         context_id: str,
         chat_id: str = "",
+        tenant: str = "",
     ) -> str:
         """Start a run by publishing an ``origin="workflow"`` message.
 
         Progress and the final output are delivered to *channel* like any other
-        workflow run. Returns the new ``run_id``.
+        workflow run. *tenant* runs it for that client (its steps then reach only
+        that client's data). Returns the new ``run_id``.
         """
         if self.require_workflows().get(name) is None:
             raise NotFoundError(f"Unknown workflow {name!r}.")
+        if tenant:
+            await self._tenant_or_404(tenant)
         run_id = f"{name}:{uuid.uuid4().hex[:12]}"
         await self._bus.publish(
             InboundMessage(
@@ -421,6 +496,7 @@ class ControlPlane:
                     "workflow_name": name,
                     "workflow_input": workflow_input,
                     "run_id": run_id,
+                    **({"tenant": tenant} if tenant else {}),
                 },
             )
         )
@@ -562,20 +638,24 @@ class ControlPlane:
         record = await graph.index.get(run_id) or {}
         for review in record.get("reviews", []):
             if review["interrupt_id"] == interrupt_id:
-                return _request_of(record, review)
+                return _request_of(record, review, await self._run_tenant(record))
         return None
 
     async def notify_review_requests(
         self, record: Mapping[str, Any], reviews: list[dict[str, Any]]
     ) -> None:
-        """Send each new review request to where the run started and to the
-        configured review chat (``workflows.review_channel`` / ``review_chat_id``),
+        """Send each new review request to where the run started, to the run's
+        client's review chat, and to the configured review chat
+        (``workflows.review_channel`` / ``review_chat_id``),
         once per chat, and remember where each went."""
         graph = self._graph_runner()
         targets: list[dict[str, str]] = []
         reply_to = dict(record.get("reply_to") or {})
         if reply_to.get("channel"):
             targets.append(reply_to)
+        tenant = await self._run_tenant(record)
+        if tenant is not None and tenant.review_target():
+            targets.append(tenant.review_target())
         cfg = self._config.workflows
         if cfg.review_channel and cfg.review_chat_id:
             targets.append(
@@ -594,7 +674,7 @@ class ControlPlane:
                 continue
             seen.add(where)
             for review in reviews:
-                request = _request_of(record, review)
+                request = _request_of(record, review, tenant)
                 try:
                     ref = await channel.send_review_request(target, request)
                 except Exception as exc:  # noqa: BLE001 — one channel failing must not stop others
@@ -604,8 +684,15 @@ class ControlPlane:
                     notice = {"channel": target["channel"], "chat_id": where[1], **ref}
                     await graph.index.add_notice(record["run_id"], review["interrupt_id"], notice)
 
+    async def _run_tenant(self, record: Mapping[str, Any]) -> Any | None:
+        """The client a run record belongs to (``None`` if none / unknown)."""
+        tenant_id = record.get("tenant") or ""
+        if not tenant_id or self._tenants is None:
+            return None
+        return await self._tenants.get(tenant_id)
+
     async def _mark_resolved(self, record: Mapping[str, Any], review: dict[str, Any]) -> None:
-        request = _request_of(record, review)
+        request = _request_of(record, review, await self._run_tenant(record))
         for notice in review.get("notices", []):
             channel = self._channel(notice.get("channel", ""))
             if channel is None:
@@ -733,6 +820,7 @@ class ControlPlane:
             "workflow": record.get("workflow"),
             "status": record.get("status"),
             "trigger": record.get("trigger", ""),
+            "tenant": record.get("tenant", ""),
             "started_at": record.get("started_at", ""),
             "updated_at": record.get("updated_at", ""),
             "error": record.get("error", ""),
@@ -742,11 +830,14 @@ class ControlPlane:
         }
 
 
-def _request_of(record: Mapping[str, Any], review: Mapping[str, Any]) -> dict[str, Any]:
+def _request_of(
+    record: Mapping[str, Any], review: Mapping[str, Any], tenant: Any | None = None
+) -> dict[str, Any]:
     """The channel-facing view of one review (see :mod:`langclaw.gateway.reviews`)."""
     return {
         "run_id": record["run_id"],
         "workflow": record.get("workflow", ""),
+        "client": tenant.name if tenant is not None else "",
         "key": review.get("key", ""),
         "interrupt_id": review["interrupt_id"],
         "message": review.get("message", ""),

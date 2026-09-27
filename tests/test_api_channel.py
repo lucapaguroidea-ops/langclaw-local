@@ -284,7 +284,7 @@ async def test_documents_routes(setup) -> None:
         async def list_documents(self, **kw):
             return {"documents": [], "count": 0, "mode": "semantic", "semantic": True, "kw": kw}
 
-        async def get_document(self, key):
+        async def get_document(self, key, tenant=""):
             return {"document": {"bucket_key": key}, "link": ""}
 
     plane = channel._plane
@@ -300,3 +300,35 @@ async def test_documents_routes(setup) -> None:
     assert body["kw"]["q"] == "rent" and body["kw"]["semantic"] is True and body["kw"]["limit"] == 5
     detail = await client.get("/v1/documents/inbox/2026-09-27/a-b.pdf", headers=AUTH)
     assert (await detail.json())["document"]["bucket_key"] == "inbox/2026-09-27/a-b.pdf"
+
+
+async def test_tenant_routes(setup) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.tenants import TenantRegistry
+
+    channel, bus, client, _cron, _router = setup
+    off = await client.get("/v1/tenants", headers=AUTH)
+    assert off.status == 409 and "TENANTS__ENABLED" in (await off.json())["error"]
+
+    channel._plane._tenants = TenantRegistry(InMemoryStore())
+    put = await client.put(
+        "/v1/tenants/acme",
+        json={"name": "ACME SRL", "chats": ["telegram:-100acme"]},
+        headers=AUTH,
+    )
+    assert put.status == 200 and (await put.json())["id"] == "acme"
+    bad = await client.put("/v1/tenants/acme", json={"name": "x", "chats": ["oops"]}, headers=AUTH)
+    assert bad.status == 400 and "channel:chat_id" in (await bad.json())["error"]
+    listed = await (await client.get("/v1/tenants", headers=AUTH)).json()
+    assert [t["id"] for t in listed["tenants"]] == ["acme"]
+
+    run = await client.post(
+        "/v1/workflows/echo/runs", json={"input": {}, "tenant": "acme"}, headers=AUTH
+    )
+    assert run.status == 202 and bus.published[-1].metadata["tenant"] == "acme"
+    missing = await client.post("/v1/workflows/echo/runs", json={"tenant": "nope"}, headers=AUTH)
+    assert missing.status == 404
+
+    assert (await client.delete("/v1/tenants/acme", headers=AUTH)).status == 200
+    assert (await client.delete("/v1/tenants/acme", headers=AUTH)).status == 404

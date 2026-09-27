@@ -140,6 +140,7 @@ class RunIndex:
         trigger: str = "",
         reply_to: dict[str, str] | None = None,
         role: str = "",
+        tenant: str = "",
     ) -> dict[str, Any]:
         stamp = now_iso()
         record = {
@@ -152,6 +153,7 @@ class RunIndex:
             "trigger": trigger,
             "reply_to": reply_to or {},
             "role": role,
+            "tenant": tenant,
             "reviews": [],
             "started_at": stamp,
             "updated_at": stamp,

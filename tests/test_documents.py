@@ -256,7 +256,7 @@ async def test_intake_stores_files_and_starts_the_workflow(bucket: Bucket, monke
     config.documents.intake_workflow = "document_intake"
     store = FakeStore()
     services = DocumentServices(config.documents, bucket=bucket, store=store)
-    monkeypatch.setattr(doc_tools, "shared_services", lambda _cfg: services)
+    monkeypatch.setattr(doc_tools, "shared_services", lambda _cfg, **_kw: services)
 
     bus = _Bus()
     cp = MagicMock()
@@ -793,3 +793,113 @@ def test_intake_template_keeps_type_specific_details() -> None:
     assert details["type"] == "object"
     assert details.get("required") is False  # a model that finds no extras still files
     assert graph["nodes"]["save"]["args"]["fields"] == "{{classify.details}}"
+
+
+# -- tenants: one client's documents are invisible to another ----------------------------
+
+
+async def test_scoped_buckets_keep_clients_apart(bucket: Bucket, s3) -> None:
+    acme, beta = bucket.with_prefix("tenants/acme/"), bucket.with_prefix("tenants/beta/")
+    await acme.put("inbox/a.pdf", b"acme", content_type="application/pdf")
+
+    assert [o.key for o in await acme.list("inbox/")] == ["inbox/a.pdf"]  # relative keys
+    assert await beta.list("") == []
+    with pytest.raises(BucketError, match="no such object"):
+        await beta.get("inbox/a.pdf")
+    stored = [o["Key"] for o in s3.list_objects_v2(Bucket="docs")["Contents"]]
+    assert stored == ["tenants/acme/inbox/a.pdf"]
+    for crafted in ["../acme/inbox/a.pdf", "/tenants/acme/inbox/a.pdf", "inbox/../../acme/x", ""]:
+        with pytest.raises(BucketError, match="Invalid file key"):
+            await beta.get(crafted)
+    assert (await acme.link("inbox/a.pdf")).startswith("https://")
+
+
+@needs_pg
+async def test_scoped_stores_keep_clients_apart(store: DocumentStore) -> None:
+    acme, beta = store.for_schema("tenant_acme"), store.for_schema("tenant_beta")
+    try:
+        await acme.save("inbox/k.pdf", {"summary": "acme invoice", "sender": "Enel"})
+        await beta.save("inbox/k.pdf", {"summary": "beta contract"})  # same key, own row
+        assert (await acme.get("inbox/k.pdf"))["summary"] == "acme invoice"
+        assert (await beta.get("inbox/k.pdf"))["summary"] == "beta contract"
+        assert [d["summary"] for d in await beta.search(sender="Enel")] == []
+        assert await store.get("inbox/k.pdf") is None  # the unscoped table is separate too
+        assert acme.pool_key == beta.pool_key == store.pool_key  # one pool for all clients
+    finally:
+        pool = await store._db()
+        await pool.execute("DROP SCHEMA IF EXISTS tenant_acme CASCADE")
+        await pool.execute("DROP SCHEMA IF EXISTS tenant_beta CASCADE")
+
+
+async def test_document_tools_refuse_without_a_client(bucket: Bucket) -> None:
+    services = DocumentServices(
+        DocumentsConfig(), bucket=bucket, store=FakeStore(), require_tenant=True
+    )
+    tools = {t.name: t for t in build_document_tools(services)}
+    for name, args in [
+        ("bucket_list", {}),
+        ("bucket_read", {"key": "inbox/a.pdf"}),
+        ("documents_search", {}),
+        ("documents_save", {"bucket_key": "inbox/a.pdf"}),
+    ]:
+        out = await tools[name].ainvoke(args)
+        assert "isn't linked to a client" in out["error"], name
+
+
+async def test_document_tools_follow_the_current_client(bucket: Bucket) -> None:
+    from langclaw.tenants import Tenant, tenant_scope
+
+    stores: dict[str, FakeStore] = {}
+
+    class ScopedFakeStore(FakeStore):
+        def for_schema(self, schema: str) -> FakeStore:
+            return stores.setdefault(schema, ScopedFakeStore())
+
+    services = DocumentServices(
+        DocumentsConfig(), bucket=bucket, store=ScopedFakeStore(), require_tenant=True
+    )
+    tools = {t.name: t for t in build_document_tools(services)}
+    acme, beta = Tenant(id="acme", name="ACME"), Tenant(id="beta", name="Beta")
+
+    with tenant_scope(acme):
+        await bucket.with_prefix("tenants/acme/").put("inbox/a.txt", b"acme secret")
+        await tools["documents_save"].ainvoke({"bucket_key": "inbox/a.txt", "summary": "x"})
+        assert (await tools["bucket_read"].ainvoke({"key": "inbox/a.txt"}))["text"] == "acme secret"
+    with tenant_scope(beta):
+        assert (await tools["bucket_list"].ainvoke({}))["files"] == []
+        assert "error" in await tools["bucket_read"].ainvoke({"key": "inbox/a.txt"})
+        assert "error" in await tools["bucket_read"].ainvoke({"key": "../acme/inbox/a.txt"})
+    assert set(stores) == {"tenant_acme"} and "inbox/a.txt" in stores["tenant_acme"].rows
+
+
+async def test_a_scan_stays_inside_the_current_client(bucket: Bucket) -> None:
+    from langclaw.tenants import Tenant, tenant_scope
+
+    class ScopedFakeStore(FakeStore):
+        def for_schema(self, schema: str) -> FakeStore:
+            return self.__dict__.setdefault(schema, FakeStore())
+
+    await bucket.with_prefix("tenants/acme/").put("inbox/a.pdf", b"a")
+    await bucket.with_prefix("tenants/beta/").put("inbox/b.pdf", b"b")
+    services = DocumentServices(
+        DocumentsConfig(intake_workflow="document_intake"),
+        bucket=bucket,
+        store=ScopedFakeStore(),
+        require_tenant=True,
+    )
+    bus = _RecordingBus()
+    tools = {
+        t.name: t
+        for t in build_document_tools(
+            services, bus=bus, report_to={"channel": "telegram", "chat_id": "firm"}
+        )
+    }
+    acme = Tenant(id="acme", name="ACME", review_chat="telegram:-100acme")
+    with tenant_scope(acme):
+        out = await tools["documents_start_intake"].ainvoke({})
+    assert out["started"] == ["inbox/a.pdf"]  # never beta's file
+    (run,) = bus.published
+    assert run.metadata["tenant"] == "acme" and run.chat_id == "-100acme"
+    assert (
+        "isn't linked to a client" in (await tools["documents_start_intake"].ainvoke({}))["error"]
+    )

@@ -64,6 +64,32 @@ RESERVED_COMMAND_NAMES: frozenset[str] = frozenset(
 )
 
 
+#: Tenant (client) ids end up in bucket prefixes (``tenants/<id>/``) and database
+#: schema names (``tenant_<id>``), so they are short lowercase slugs — nothing a
+#: path or SQL identifier could be tricked with.
+TENANT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+
+
+def check_tenant_id(tenant_id: str) -> str:
+    """Return *tenant_id* if it is a valid client id, else raise ``ValueError``."""
+    if not TENANT_ID_RE.match(tenant_id or ""):
+        raise ValueError(
+            f"Invalid client id {tenant_id!r}: use 2-40 lowercase letters, digits or "
+            "underscores, starting with a letter (e.g. 'acme' or 'client_7')."
+        )
+    return tenant_id
+
+
+def tenant_bucket_prefix(tenant_id: str) -> str:
+    """Bucket key prefix holding one client's files."""
+    return f"tenants/{check_tenant_id(tenant_id)}/"
+
+
+def tenant_schema(tenant_id: str) -> str:
+    """Database schema holding one client's tables."""
+    return f"tenant_{check_tenant_id(tenant_id)}"
+
+
 def mcp_tool_name(server_name: str, tool_name: str) -> str:
     """Return the LangChain tool name an MCP server's tool is exposed under."""
     return f"{MCP_TOOL_PREFIX}{server_name}_{tool_name}"

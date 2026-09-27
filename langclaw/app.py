@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus, InboundMessage
     from langclaw.cron.scheduler import CronManager
     from langclaw.gateway.base import BaseChannel
+    from langclaw.tenants import TenantRegistry
     from langclaw.workflows.graph import RunIndex
 
 
@@ -128,6 +129,8 @@ class Langclaw:
         self._workflow_runtime: WorkflowRuntime | None = None
         # Durable run records (status, reviews); opened at startup.
         self._graph_run_index: RunIndex | None = None
+        #: Clients (tenants), when ``tenants.enabled``; opened with the stores.
+        self._tenants: TenantRegistry | None = None
         #: Validation errors of workflow files that failed to load, by name.
         self.graph_file_errors: dict[str, list[str]] = {}
         self._startup_hooks: list[Callable] = []
@@ -807,19 +810,19 @@ class Langclaw:
                 logger.warning(f"Skipping workflow file {name!r}: {exc}")
         return changed
 
-    async def _open_workflow_stores(self, stack: AsyncExitStack, cp_cfg: Any, wf_cfg: Any) -> None:
-        """Open the durable run index (status, reviews), bound to *stack*.
+    async def _open_workflow_stores(self, stack: AsyncExitStack, cp_cfg: Any, cfg: Any) -> None:
+        """Open langclaw's store — workflow run records and the client (tenant)
+        registry — bound to *stack*.
 
         Uses the checkpointer's backend: a sibling SQLite file (avoids write-lock
         contention with the checkpointer DB) or the same Postgres DSN. No-op when
-        workflows are off.
+        neither workflows nor tenants are on.
         """
-        if not wf_cfg.enabled:
+        if not (cfg.workflows.enabled or cfg.tenants.enabled):
             return
 
         from pathlib import Path
 
-        from langclaw.workflows.graph import RunIndex, StoreRunIndexBackend
         from langclaw.workflows.store import make_workflow_store_backend
 
         db_path = str(Path(cp_cfg.sqlite.db_path).expanduser().with_suffix(".workflows.db"))
@@ -827,7 +830,14 @@ class Langclaw:
             cp_cfg.backend, db_path=db_path, dsn=cp_cfg.postgres.dsn
         )
         await stack.enter_async_context(backend)
-        self._graph_run_index = RunIndex(StoreRunIndexBackend(backend.get_store()))
+        if cfg.workflows.enabled:
+            from langclaw.workflows.graph import RunIndex, StoreRunIndexBackend
+
+            self._graph_run_index = RunIndex(StoreRunIndexBackend(backend.get_store()))
+        if cfg.tenants.enabled:
+            from langclaw.tenants import TenantRegistry
+
+            self._tenants = TenantRegistry(backend.get_store())
 
     def _attach_graph_runner(self, cfg: LangclawConfig, checkpointer: Any) -> None:
         """Run workflows on the gateway checkpointer + durable run index."""
@@ -981,7 +991,7 @@ class Langclaw:
             async with AsyncExitStack() as stack:
                 await stack.enter_async_context(bus)
                 await stack.enter_async_context(checkpointer_backend)
-                await self._open_workflow_stores(stack, cp_cfg, cfg.workflows)
+                await self._open_workflow_stores(stack, cp_cfg, cfg)
 
                 # Load runtime-authored (file-written) workflows from disk so they
                 # boot as workflow_<name> tools alongside @app.workflow ones.
@@ -1045,6 +1055,7 @@ class Langclaw:
                         self._reload_workflow_files if cfg.workflows.enabled else None
                     ),
                     mcp_servers=self._mcp_servers,
+                    tenant_registry=self._tenants,
                     # The control plane saves/deletes workflow files here.
                     workflows_dir=cfg.agents.workflows_dir if cfg.workflows.enabled else None,
                     workflow_file_errors=lambda: self.graph_file_errors,

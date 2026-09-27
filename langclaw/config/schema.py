@@ -869,6 +869,22 @@ class DocumentsConfig(BaseModel):
         return self
 
 
+class TenantsConfig(BaseModel):
+    """Separate clients (tenants) whose data must never mix.
+
+    When enabled, every chat belongs to at most one client (managed on the
+    console's Clients page or ``/v1/tenants``); the gateway resolves the client
+    from the chat a message came from, and document tools only reach that
+    client's own bucket prefix and database schema. A chat linked to no client
+    gets no document access.
+
+    Env: ``LANGCLAW__TENANTS__ENABLED=true``
+    """
+
+    enabled: bool = False
+    """Turn client separation on."""
+
+
 class LangclawConfig(BaseSettings):
     """
     Root configuration object. Merges JSON file + env vars.
@@ -914,6 +930,7 @@ class LangclawConfig(BaseSettings):
     mcp: McpConfig = Field(default_factory=McpConfig)
     workflows: WorkflowsConfig = Field(default_factory=WorkflowsConfig)
     documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
+    tenants: TenantsConfig = Field(default_factory=TenantsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     checkpointer: CheckpointerConfig = Field(default_factory=CheckpointerConfig)
     bus: BusConfig = Field(default_factory=BusConfig)

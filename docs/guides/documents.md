@@ -42,6 +42,13 @@ Railway the bucket needs no extra settings.
 Failures come back as `{"error": "..."}` — a missing object, a bad date
 (`YYYY-MM-DD`), an unreachable database. The table is created on first use.
 
+## Several clients
+
+With [clients (tenants)](tenants.md) enabled, every tool works inside the current
+client's own folder (`tenants/<id>/…`) and table (`tenant_<id>.documents`);
+keys like `inbox/…` are relative to it. A chat linked to no client gets no
+document access, and chat intake tells the sender so.
+
 ## Scans and photos (OCR)
 
 Files with a text layer are read directly. When there's none — a scanned PDF, a

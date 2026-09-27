@@ -12,6 +12,8 @@ class LangclawContext:
     """
 
     user_role: str = field(default="viewer")
+    tenant: str = ""
+    """Client (tenant) id the turn runs for — resolved by the gateway from the chat."""
     channel: str = ""
     user_id: str = ""
     context_id: str = ""

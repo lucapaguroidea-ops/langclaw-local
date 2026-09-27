@@ -45,6 +45,8 @@ class WorkflowRuntime:
         self._config = config
         #: RBAC definitions handed to every runner (tool steps obey the run's role).
         self.permissions = permissions
+        #: Client registry handed to every runner (steps run as the run's client).
+        self.tenants: Any = None
         self._run_gate = asyncio.Semaphore(max(1, config.max_concurrent_runs))
         self._executor_factory: ExecutorFactory | None = None
         self._graph_runner: GraphWorkflowRunner | None = None
@@ -80,6 +82,7 @@ class WorkflowRuntime:
         """Use *runner* for workflow runs; its nodes use the live agent toolset."""
         runner.set_executor_provider(self._step_executor)
         runner.permissions = self.permissions
+        runner.tenants = self.tenants
         if self._review_hook is not None:
             runner.review_hook = self._review_hook
         self._graph_runner = runner
@@ -107,16 +110,24 @@ class WorkflowRuntime:
         trigger: str = "",
         reply_to: dict[str, str] | None = None,
         role: str = "",
+        tenant: str = "",
     ) -> GraphRunResult:
         """Start a run; returns when it finishes or pauses for review.
 
         *role* is the starting user's RBAC role: with permissions on, the run's
-        tool steps may only use tools that role is granted.
+        tool steps may only use tools that role is granted. *tenant* is the client
+        the run is for: its steps only reach that client's data.
         """
         validated = spec.validate_input(run_input)
         async with self._run_gate:
             return await self.graph_runner.start(
-                spec, validated, run_id=run_id, trigger=trigger, reply_to=reply_to, role=role
+                spec,
+                validated,
+                run_id=run_id,
+                trigger=trigger,
+                reply_to=reply_to,
+                role=role,
+                tenant=tenant,
             )
 
     #: Alias used by bus dispatch and cron.

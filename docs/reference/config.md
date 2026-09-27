@@ -43,6 +43,7 @@ API keys are the exception — they use the provider's own plain env var
 | `LANGCLAW__DOCUMENTS__EMBEDDING_MODEL` | `""` | embedding model for semantic search (e.g. `openai/text-embedding-3-small`); empty ⇒ off |
 | `LANGCLAW__DOCUMENTS__EMBEDDING_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible embeddings endpoint |
 | `LANGCLAW__DOCUMENTS__EMBEDDING_API_KEY` | `""` | key for that endpoint (falls back to `OPENROUTER_API_KEY`) |
+| `LANGCLAW__TENANTS__ENABLED` | `false` | separate clients: chats → client, per-client document storage ([guide](../guides/tenants.md)) |
 | `LANGCLAW__WORKFLOWS__REVIEW_CHANNEL` | `""` | also send every review request here (e.g. `telegram`) |
 | `LANGCLAW__WORKFLOWS__REVIEW_CHAT_ID` | `""` | chat on that channel (your Telegram chat id) |
 | `LANGCLAW__INTERPRETER__ENABLED` | `false` | sandboxed `eval` tool (needs `langclaw[interpreter]`) |
