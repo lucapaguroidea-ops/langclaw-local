@@ -110,3 +110,66 @@ def trend(months: list[tuple[str, Decimal]]) -> dict[str, Any]:
     change = ((last - avg) * 100 / avg).quantize(Decimal("0.1")) if avg else None
     return {"months": [{"period": p, "value": v} for p, v in months], "last": last,
             "average_before": avg, "change_pct": change}  # fmt: skip
+
+
+_BUCKETS = (("1-30", 30), ("31-60", 60), ("61-90", 90))
+
+
+def _aging(invoices: list[dict[str, Any]], on: date) -> dict[str, Any]:
+    buckets = {name: Decimal(0) for name in ("not_due", "1-30", "31-60", "61-90", "90+")}
+    overdue_by: dict[str, list] = {}
+    soon = Decimal(0)
+    for row in invoices:
+        f = row.get("fields") or {}
+        gross = abs(Decimal(str(row.get("amount") or 0)))
+        if row.get("doc_type") == "credit_note":
+            gross = -gross
+        due = str(f.get("due_date") or "")[:10]
+        late = (on - date.fromisoformat(due)).days if due else 0
+        if late <= 0:
+            buckets["not_due"] += gross
+            if due and -late <= 30:
+                soon += gross
+            continue
+        name = next((n for n, days in _BUCKETS if late <= days), "90+")
+        buckets[name] += gross
+        partner = row.get("receiver" if f.get("direction") == "out" else "sender") or "?"
+        entry = overdue_by.setdefault(partner, [Decimal(0), 0])
+        entry[0] += gross
+        entry[1] += 1
+    buckets = {k: v.quantize(_CENT) for k, v in buckets.items()}
+    total = sum(buckets.values(), Decimal(0))
+    top = sorted(overdue_by.items(), key=lambda kv: kv[1][0], reverse=True)[:5]
+    return {
+        "total": total,
+        "overdue": total - buckets["not_due"],
+        "buckets": buckets,
+        "top_overdue": [
+            {"partner": p, "amount": a.quantize(_CENT), "invoices": n} for p, (a, n) in top
+        ],  # fmt: skip
+        "_due_30": soon.quantize(_CENT),
+    }
+
+
+def cash_position(
+    invoices: list[dict[str, Any]], *, on: date, bank_balance: Decimal | None = None
+) -> dict[str, Any]:
+    """Receivables and payables aging as of *on* (unpaid invoices only — ``paid_on``
+    comes from bank matching), what falls due in the next 30 days, and the bank
+    balance projected over them. Overdue amounts aren't counted in the projection."""
+    unpaid = [r for r in invoices if not (r.get("fields") or {}).get("paid_on")]
+    rec = _aging([r for r in unpaid if (r.get("fields") or {}).get("direction") == "out"], on)
+    pay = _aging([r for r in unpaid if (r.get("fields") or {}).get("direction") == "in"], on)
+    incoming, outgoing = rec.pop("_due_30"), pay.pop("_due_30")
+    return {
+        "as_of": on.isoformat(),
+        "receivables": rec,
+        "payables": pay,
+        "next_30_days": {"in": incoming, "out": outgoing},
+        "bank_balance": bank_balance,
+        "projected_30_days": (
+            (bank_balance + incoming - outgoing).quantize(_CENT)
+            if bank_balance is not None
+            else None
+        ),
+    }

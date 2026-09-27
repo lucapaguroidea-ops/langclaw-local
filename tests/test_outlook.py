@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -55,3 +56,37 @@ def test_the_advice_template_is_valid_against_the_real_tools() -> None:
     names = {t.name for t in build_accounting_tools(DocumentServices(DocumentsConfig()))}
     assert "accounting_outlook" in names
     parse_graph_spec("monthly_advice", json.loads(path.read_text()), available_tools=names)
+
+
+def _inv(key, direction, gross, due, paid="", partner="P", doc_type="invoice"):
+    return {
+        "bucket_key": key,
+        "doc_type": doc_type,
+        "amount": gross,
+        "sender" if direction == "in" else "receiver": partner,
+        "fields": {"direction": direction, "due_date": due, "paid_on": paid},
+    }
+
+
+def test_cash_position_ages_unpaid_invoices() -> None:
+    from langclaw.accounting.outlook import cash_position
+
+    on = date(2026, 9, 30)
+    invoices = [
+        _inv("s1", "out", 1000, "2026-10-10", partner="Alfa"),  # not due, within 30 days
+        _inv("s2", "out", 500, "2026-09-20", partner="Alfa"),  # 10 days overdue
+        _inv("s3", "out", 200, "2026-06-01", partner="Beta"),  # 121 days overdue
+        _inv("s4", "out", 999, "2026-06-01", paid="2026-07-01"),  # paid: ignored
+        _inv("p1", "in", 300, "2026-10-05", partner="Furnizor"),
+        _inv("p2", "in", 50, "", partner="Fara scadenta"),  # no due date → not due
+    ]
+    cash = cash_position(invoices, on=on, bank_balance=D("2500.00"))
+    rec, pay = cash["receivables"], cash["payables"]
+    assert rec["total"] == D("1700.00") and rec["overdue"] == D("700.00")
+    assert rec["buckets"] == {"not_due": D("1000.00"), "1-30": D("500.00"), "31-60": D("0.00"),
+                              "61-90": D("0.00"), "90+": D("200.00")}  # fmt: skip
+    assert rec["top_overdue"][0] == {"partner": "Alfa", "amount": D("500.00"), "invoices": 1}
+    assert pay["total"] == D("350.00") and pay["overdue"] == D("0.00")
+    assert cash["next_30_days"] == {"in": D("1000.00"), "out": D("300.00")}
+    assert cash["bank_balance"] == D("2500.00")
+    assert cash["projected_30_days"] == D("3200.00")

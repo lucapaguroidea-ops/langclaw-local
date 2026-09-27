@@ -1,30 +1,57 @@
 {
-  "description": "Forward-looking advice for one client after a month: code gathers the facts (returns due, how close revenue is to regime limits, the VAT trend), the model writes the advice from them, and a person approves it before it's sent.",
+  "description": "Forward-looking advice for one client after a month: code gathers the facts (returns due, how close revenue is to regime limits, the VAT trend, receivables and payables aging, the bank balance and the next 30 days), the model writes the advice from them, and a person approves it before it's sent.",
   "input": {
-    "period": {"type": "string", "description": "The month just finished, as YYYY-MM."}
+    "period": {
+      "type": "string",
+      "description": "The month just finished, as YYYY-MM."
+    }
   },
   "nodes": {
-    "facts": {"type": "tool", "tool": "accounting_outlook", "args": {"period": "{{input.period}}"}},
+    "facts": {
+      "type": "tool",
+      "tool": "accounting_outlook",
+      "args": {
+        "period": "{{input.period}}"
+      }
+    },
     "advise": {
       "type": "llm",
-      "system": "You are a Romanian chartered accountant advising a small company. Use only the facts given: don't invent figures, rates, or deadlines. Flag thresholds marked warn, each return due with its date, and a VAT change over 30% against the months before. Be concrete and brief, in Romanian.",
+      "system": "You are a Romanian chartered accountant advising a small company. Use only the facts given: don't invent figures, rates, or deadlines. Flag thresholds marked warn, each return due with its date, a VAT change over 30% against the months before, overdue receivables (name the largest partners) and a projected bank balance below what falls due. Be concrete and brief, in Romanian.",
       "prompt": "Facts (don't change them):\n{{facts}}",
       "output": {
-        "summary": {"type": "string", "description": "Two or three sentences for the client."},
-        "items": {"type": "array", "description": "Advice items: objects {topic, recommendation, because (the fact it rests on), due (date or empty), urgency (high|medium|low)}."}
+        "summary": {
+          "type": "string",
+          "description": "Two or three sentences for the client."
+        },
+        "items": {
+          "type": "array",
+          "description": "Advice items: objects {topic, recommendation, because (the fact it rests on), due (date or empty), urgency (high|medium|low)}."
+        }
       }
     },
     "review": {
       "type": "human_review",
       "message": "Check this advice before it goes to the client.",
-      "show": ["facts", "advise"],
+      "show": [
+        "facts",
+        "advise"
+      ],
       "editable": "advise"
     }
   },
   "edges": [
-    {"from": "START", "to": "facts"},
-    {"from": "facts", "to": "advise"},
-    {"from": "advise", "to": "review"}
+    {
+      "from": "START",
+      "to": "facts"
+    },
+    {
+      "from": "facts",
+      "to": "advise"
+    },
+    {
+      "from": "advise",
+      "to": "review"
+    }
   ],
   "output": "advise"
 }

@@ -498,6 +498,10 @@ async def test_outlook_facts_come_from_the_books(acme) -> None:
     )
     assert round(float(facts["revenue_ytd"]), 2) == round(sales, 2)
     assert facts["unbooked_invoices"] == 0
+    cash = facts["cash"]
+    assert cash["bank_balance"] is None  # no statement imported
+    unpaid_sales = sum(float(r["amount"]) for r in rows if r["fields"]["direction"] == "out")
+    assert round(float(cash["receivables"]["total"]), 2) == round(unpaid_sales, 2)
 
 
 def _mt940_paying(sale: dict[str, Any], purchase: dict[str, Any]) -> bytes:
@@ -550,3 +554,12 @@ async def test_bank_import_marks_invoices_paid_once(acme) -> None:
         )
         assert ok == {"paid": target, "movement": open_[0]["key"]}
         assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
+        facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
+        closing = 1000 + float(sale["amount"]) - float(purchase["amount"])
+        assert round(float(facts["cash"]["bank_balance"]), 2) == round(closing, 2)
+        rec = facts["cash"]["receivables"]  # the paid sale drops out of the aging
+        unpaid_sales = [r for r in rows if r["fields"]["direction"] == "out"
+                        and r["bucket_key"] != sale["bucket_key"]]  # fmt: skip
+        assert round(float(rec["total"]), 2) == round(
+            sum(float(r["amount"]) for r in unpaid_sales), 2
+        )
