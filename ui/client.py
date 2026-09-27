@@ -73,9 +73,20 @@ class LangclawClient:
 
     # -- documents -------------------------------------------------------------
 
-    def documents(self, q: str = "", *, semantic: bool = False, **filters: Any) -> dict:
-        """``{"documents", "count", "mode", "semantic"}`` — see ``GET /v1/documents``."""
+    def documents(
+        self,
+        q: str = "",
+        *,
+        semantic: bool = False,
+        fields: dict[str, str] | None = None,
+        **filters: Any,
+    ) -> dict:
+        """``{"documents", "count", "mode", "semantic"}`` — see ``GET /v1/documents``.
+
+        *fields* filters on extracted extras (sent as ``field.<name>=<value>``).
+        """
         params = {k: v for k, v in filters.items() if v}
+        params.update({f"field.{k}": v for k, v in (fields or {}).items()})
         if q:
             params["q"] = q
         if semantic:

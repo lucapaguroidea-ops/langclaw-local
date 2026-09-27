@@ -187,6 +187,7 @@ class ControlPlane:
         date_from: str = "",
         date_to: str = "",
         status: str = "",
+        fields: dict[str, str] | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """Filtered documents; with *q*, a text match — or ranked by meaning when
@@ -206,6 +207,7 @@ class ControlPlane:
             "date_from": date_from,
             "date_to": date_to,
             "status": status,
+            "fields": fields,
         }
         can_rank = services.embeddings is not None
         try:

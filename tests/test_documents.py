@@ -425,6 +425,7 @@ async def test_document_intake_runs_on_the_real_tools(
                 currency="EUR",
                 summary="An invoice.",
                 confidence=confidence,
+                details={"iban": "IT60X0542811101000000123456", "due_date": "2026-10-01"},
             )
         return await real(request)
 
@@ -448,7 +449,10 @@ async def test_document_intake_runs_on_the_real_tools(
             "2026-09-01",
             120.5,
         )
-        assert row["fields"]["confidence"] == confidence
+        assert row["fields"] == {
+            "iban": "IT60X0542811101000000123456",
+            "due_date": "2026-10-01",
+        }
 
 
 # -- OCR (vision model) ------------------------------------------------------------------
@@ -734,3 +738,58 @@ async def test_documents_api_detail_has_a_download_link(
     assert doc["document"]["summary"] == "invoice" and doc["link"].startswith("https://")
     with pytest.raises(NotFoundError):
         await plane.get_document("nope")
+
+
+# -- type-specific fields -----------------------------------------------------------------
+
+
+@needs_pg
+async def test_search_filters_on_any_extracted_field(store: DocumentStore) -> None:
+    services = DocumentServices(DocumentsConfig(), store=store)
+    tools = {t.name: t for t in build_document_tools(services)}
+    await tools["documents_save"].ainvoke(
+        {
+            "bucket_key": "c1",
+            "doc_type": "contract",
+            "fields": {"jurisdiction": "State of Delaware", "notice": {"days": 90}},
+        }
+    )
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "c2", "doc_type": "contract", "fields": {"jurisdiction": "Italy"}}
+    )
+    await tools["documents_save"].ainvoke(
+        {"bucket_key": "i1", "doc_type": "invoice", "fields": {"tax_id": "IT0123"}}
+    )
+    search = tools["documents_search"]
+
+    found = await search.ainvoke({"fields": {"jurisdiction": "delaware"}})
+    assert [d["bucket_key"] for d in found["documents"]] == ["c1"]
+    nested = await search.ainvoke({"fields": {"notice.days": "90"}})
+    assert [d["bucket_key"] for d in nested["documents"]] == ["c1"]
+    both = await search.ainvoke({"doc_type": "invoice", "fields": {"tax_id": "IT0123"}})
+    assert [d["bucket_key"] for d in both["documents"]] == ["i1"]
+    none = await search.ainvoke({"fields": {"jurisdiction": "delaware", "tax_id": "IT0123"}})
+    assert none["documents"] == []
+
+
+@needs_pg
+async def test_field_filters_apply_to_semantic_search_and_the_api(store: DocumentStore) -> None:
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=FakeEmbeddings())
+    save = {t.name: t for t in build_document_tools(services)}["documents_save"]
+    await save.ainvoke({"bucket_key": "r1", "summary": "rent", "fields": {"city": "Milan"}})
+    await save.ainvoke({"bucket_key": "r2", "summary": "rent", "fields": {"city": "Rome"}})
+    tools = {t.name: t for t in build_document_tools(services)}
+    ranked = await tools["documents_semantic_search"].ainvoke(
+        {"query": "lease", "fields": {"city": "rome"}}
+    )
+    assert [d["bucket_key"] for d in ranked["documents"]] == ["r2"]
+    out = await _plane(services).list_documents(fields={"city": "milan"})
+    assert [d["bucket_key"] for d in out["documents"]] == ["r1"]
+
+
+def test_intake_template_keeps_type_specific_details() -> None:
+    graph = _template("document_intake")
+    details = graph["nodes"]["classify"]["output"]["details"]
+    assert details["type"] == "object"
+    assert details.get("required") is False  # a model that finds no extras still files
+    assert graph["nodes"]["save"]["args"]["fields"] == "{{classify.details}}"

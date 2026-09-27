@@ -233,7 +233,8 @@ def build_document_tools(
             summary: One or two sentences on what it is.
             filename: Original file name.
             status: e.g. filed, needs_review.
-            fields: Anything else extracted (merged into the record).
+            fields: Type-specific facts (tax_id, jurisdiction, due_date, ...);
+                merged into the record and searchable with documents_search(fields=...).
         """
         values = {
             "sender": sender,
@@ -266,6 +267,7 @@ def build_document_tools(
         date_from: str = "",
         date_to: str = "",
         status: str = "",
+        fields: dict[str, str] | None = None,
         limit: int = 20,
     ) -> dict:
         """Search filed documents. All filters are optional and combined.
@@ -278,6 +280,9 @@ def build_document_tools(
             date_from: Earliest document date, YYYY-MM-DD.
             date_to: Latest document date, YYYY-MM-DD.
             status: e.g. filed, needs_review.
+            fields: Filters on type-specific extracted fields, field name to text,
+                e.g. jurisdiction=Delaware or tax_id=IT0123 (substring match; a
+                dotted name like notice.days reaches nested values).
             limit: Maximum results (1-200).
         """
         try:
@@ -289,6 +294,7 @@ def build_document_tools(
                 date_from=date_from,
                 date_to=date_to,
                 status=status,
+                fields=fields,
                 limit=limit,
             )
         except _ERRORS as exc:
@@ -303,6 +309,7 @@ def build_document_tools(
         date_from: str = "",
         date_to: str = "",
         status: str = "",
+        fields: dict[str, str] | None = None,
         limit: int = 10,
     ) -> dict:
         """Find filed documents by meaning, e.g. "power bills" finds electricity invoices.
@@ -317,6 +324,7 @@ def build_document_tools(
             date_from: Earliest document date, YYYY-MM-DD.
             date_to: Latest document date, YYYY-MM-DD.
             status: e.g. filed, needs_review.
+            fields: Filters on type-specific extracted fields, field name to text.
             limit: Maximum results (1-200).
         """
         try:
@@ -330,6 +338,7 @@ def build_document_tools(
                 date_from=date_from,
                 date_to=date_to,
                 status=status,
+                fields=fields,
             )
         except Exception as exc:  # noqa: BLE001 — embeddings or database, as text
             return {"error": str(exc)}
