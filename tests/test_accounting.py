@@ -563,3 +563,21 @@ async def test_bank_import_marks_invoices_paid_once(acme) -> None:
         assert round(float(rec["total"]), 2) == round(
             sum(float(r["amount"]) for r in unpaid_sales), 2
         )
+
+
+@needs_pg
+async def test_the_overview_gathers_a_clients_month(acme) -> None:
+    from langclaw.accounting.overview import accounting_overview
+    from langclaw.tenants import Tenant
+
+    services, scoped = acme
+    profile = {"vat_payer": True, "expected_documents": ["bank_statement"]}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile=profile)
+    rows = await scoped.store.search(limit=20)
+    period = max(str(r["document_date"])[:7] for r in rows)
+    view = await accounting_overview(services, client, period)
+    assert view["period"] == view["report"]["period"] == view["outlook"]["period"] == period
+    assert view["report"]["blockers"] and view["report"]["documents"]["missing"]
+    assert "cash" in view["outlook"] and view["bank"]["movements"] == []
+    bad = await accounting_overview(services, client, "sept")
+    assert "YYYY-MM" in bad["report"]["error"]

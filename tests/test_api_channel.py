@@ -302,6 +302,21 @@ async def test_documents_routes(setup) -> None:
     assert (await detail.json())["document"]["bucket_key"] == "inbox/2026-09-27/a-b.pdf"
 
 
+async def test_accounting_overview_route(setup) -> None:
+    channel, _bus, client, _cron, _router = setup
+    off = await client.get("/v1/accounting/overview?period=2026-09", headers=AUTH)
+    assert off.status == 409 and "ACCOUNTING__ENABLED" in (await off.json())["error"]
+
+    async def overview(*, period, tenant=""):
+        return {"period": period, "tenant": tenant}
+
+    channel._plane.accounting_overview = overview
+    resp = await client.get(
+        "/v1/accounting/overview", params={"period": "2026-09", "tenant": "acme"}, headers=AUTH
+    )
+    assert (await resp.json()) == {"period": "2026-09", "tenant": "acme"}
+
+
 async def test_tenant_routes(setup) -> None:
     from langgraph.store.memory import InMemoryStore
 

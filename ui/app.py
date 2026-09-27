@@ -878,6 +878,78 @@ def _document_detail(lc: LangclawClient, key: str) -> None:
 TAX_REGIMES = ["", "micro", "profit", "other"]
 
 
+def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
+    import datetime as dt
+
+    st.header("📊 Client overview" + (f" · {_tenant()}" if _tenant() else ""))
+    st.caption(
+        "The month as the accounting tools see it: close report, outlook, open bank movements."
+    )
+    if tenants_on and not _tenant():
+        st.info("Pick a client in the sidebar.")
+        return
+    period = st.selectbox(
+        "Month", editor.recent_months(dt.date.today(), 13), index=1, help="Default: last month"
+    )
+    view = _call(lc.accounting_overview, period, tenant=_tenant())
+    if not view:
+        return
+    alerts = editor.overview_alerts(view)
+    for alert in alerts:
+        st.warning(alert)
+    if not alerts:
+        st.success("Nothing needs attention for this month.")
+    report, outlook, bank = view["report"], view["outlook"], view["bank"]
+    close_tab, outlook_tab, bank_tab = st.tabs(["Close", "Outlook", "Bank"])
+    with close_tab:
+        if "error" not in report:
+            if report.get("closed"):
+                st.info(f"Closed by {report['closed'].get('closed_by') or '—'}.")
+            vat = report["vat"]
+            cols = st.columns(3)
+            cols[0].metric("VAT collected", vat["collected"])
+            cols[1].metric("VAT deductible", vat["deductible"])
+            owed = vat["payable"] != "0.00"
+            cols[2].metric(
+                "Payable" if owed else "Refundable", vat["payable"] if owed else vat["refundable"]
+            )
+            st.subheader("Expected documents")
+            st.dataframe(report["documents"]["expected"], hide_index=True)
+            st.subheader("Trial balance")
+            st.dataframe(report["trial_balance"]["accounts"], hide_index=True)
+    with outlook_tab:
+        if "error" not in outlook:
+            st.subheader("Deadlines")
+            if outlook["deadlines"]:
+                st.dataframe(outlook["deadlines"], hide_index=True)
+            else:
+                st.caption("No returns due for this month (see the client's profile).")
+            st.subheader("Thresholds")
+            if outlook["thresholds"]:
+                st.dataframe(outlook["thresholds"], hide_index=True)
+            else:
+                st.caption("No regime limit applies to this client.")
+            cash = outlook["cash"]
+            cols = st.columns(3)
+            cols[0].metric("Bank balance", cash["bank_balance"] or "—")
+            due = cash["next_30_days"]
+            cols[1].metric("Due in / out (30 days)", f"{due['in']} / {due['out']}")
+            cols[2].metric("Projected (30 days)", cash["projected_30_days"] or "—")
+            for side in ("receivables", "payables"):
+                st.subheader(side.capitalize())
+                st.dataframe([cash[side]["buckets"]], hide_index=True)
+                if cash[side]["top_overdue"]:
+                    st.dataframe(cash[side]["top_overdue"], hide_index=True)
+    with bank_tab:
+        if "error" not in bank:
+            st.caption(
+                "Movements without a certain match. Confirm them in chat with bank_confirm_match."
+            )
+            st.dataframe(bank["movements"], hide_index=True,
+                         column_order=["booked", "amount", "counterparty", "description",
+                                       "matched_key", "match_kind", "key"])  # fmt: skip
+
+
 def page_clients(lc: LangclawClient) -> None:
     st.header("🏢 Clients")
     st.caption(
@@ -1062,6 +1134,7 @@ def main(lc: LangclawClient) -> None:
             "Workflow",
             f"Review queue ({len(reviews)})",
             "Documents",
+            "Client overview",
             *(["Clients"] if tenants_on else []),
             "Status",
         ],
@@ -1073,6 +1146,8 @@ def main(lc: LangclawClient) -> None:
         page_reviews(lc)
     elif page == "Documents":
         page_documents(lc, tenants_on)
+    elif page == "Client overview":
+        page_overview(lc, tenants_on)
     elif page == "Clients":
         page_clients(lc)
     elif page == "Status":

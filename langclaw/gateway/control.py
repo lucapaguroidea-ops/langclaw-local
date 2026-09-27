@@ -308,6 +308,23 @@ class ControlPlane:
             link = ""
         return {"document": row, "link": link}
 
+    async def accounting_overview(self, *, period: str, tenant: str = "") -> dict[str, Any]:
+        """A client's month: close report, outlook (deadlines, thresholds, cash) and
+        unmatched bank movements — the accounting tools' own results.
+
+        Raises:
+            FeatureDisabledError: accounting is off.
+        """
+        if not self._config.documents.accounting.enabled:
+            raise FeatureDisabledError(
+                "Accounting is off: set LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true."
+            )
+        from langclaw.accounting.overview import accounting_overview
+
+        await self._documents(tenant)  # checks documents are on and the client exists
+        client = await self._tenant_or_404(tenant) if self._tenants is not None else None
+        return await accounting_overview(self.documents, client, period)
+
     # ------------------------------------------------------------------
     # Conversation history
     # ------------------------------------------------------------------

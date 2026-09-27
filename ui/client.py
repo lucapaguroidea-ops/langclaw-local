@@ -102,6 +102,11 @@ class LangclawClient:
             "GET", f"/v1/documents/{key}", params={"tenant": tenant} if tenant else None
         )
 
+    def accounting_overview(self, period: str, *, tenant: str = "") -> dict[str, Any]:
+        """``{"period", "report", "outlook", "bank"}`` — see ``GET /v1/accounting/overview``."""
+        params = {"period": period, **({"tenant": tenant} if tenant else {})}
+        return self._request("GET", "/v1/accounting/overview", params=params)
+
     # -- clients (tenants) -------------------------------------------------------
 
     def tenants(self) -> list[dict[str, Any]]:

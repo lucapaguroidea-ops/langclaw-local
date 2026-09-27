@@ -239,6 +239,7 @@ class ApiChannel(BaseChannel):
                 web.put("/v1/tenants/{tenant_id}", self._save_tenant),
                 web.delete("/v1/tenants/{tenant_id}", self._delete_tenant),
                 web.get("/v1/documents", self._list_documents),
+                web.get("/v1/accounting/overview", self._accounting_overview),
                 web.get("/v1/documents/{key:.+}", self._get_document),
                 web.get("/v1/schedules", self._list_schedules),
                 web.post("/v1/schedules", self._add_schedule),
@@ -522,6 +523,13 @@ class ApiChannel(BaseChannel):
                 },
                 limit=_parse_int(query.get("limit"), default=50, name="limit"),
                 tenant=query.get("tenant", ""),
+            )
+        )
+
+    async def _accounting_overview(self, request: web.Request) -> web.Response:
+        return self._json(
+            await self._require_plane().accounting_overview(
+                period=request.query.get("period", ""), tenant=request.query.get("tenant", "")
             )
         )
 

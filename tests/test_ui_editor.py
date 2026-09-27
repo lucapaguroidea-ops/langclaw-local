@@ -159,3 +159,26 @@ def test_tenant_payload_from_the_clients_form() -> None:
         editor.tenant_payload(name="x", extra_json="[1, 2")
     with pytest.raises(ValueError, match="name"):
         editor.tenant_payload(name="  ")
+
+
+def test_recent_months_and_overview_alerts() -> None:
+    from datetime import date
+
+    assert editor.recent_months(date(2026, 2, 10), 3) == ["2026-02", "2026-01", "2025-12"]
+    view = {
+        "report": {"blockers": [{"bucket_key": "a"}], "closed": None,
+                   "documents": {"missing": [{"label": "Extras BT"}], "needs_review": []},
+                   "trial_balance": {"balanced": True}},
+        "outlook": {"deadlines": [{"form": "D300", "due": "2026-10-25"}],
+                    "thresholds": [{"name": "vat_registration", "used_pct": "85.0", "warn": True}],
+                    "cash": {"receivables": {"overdue": "700.00"}}},
+        "bank": {"movements": [{"key": "k"}]},
+    }  # fmt: skip
+    alerts = editor.overview_alerts(view)
+    assert "1 invoice(s) without an entry" in alerts
+    assert "Missing documents: Extras BT" in alerts
+    assert "vat_registration at 85.0% of the limit" in alerts
+    assert "Overdue receivables: 700.00" in alerts
+    assert "1 bank movement(s) not matched" in alerts
+    errored = editor.overview_alerts({"report": {"error": "boom"}, "outlook": {}, "bank": {}})
+    assert errored == ["Close report: boom"]
