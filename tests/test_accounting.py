@@ -296,12 +296,13 @@ def test_the_template_is_valid_against_the_real_tools() -> None:
     [(0.95, None, True), (0.6, None, False), (0.95, "unbalanced", False)],
 )
 async def test_the_workflow_end_to_end(acme, confidence, fix, posts_without_review) -> None:
+    from langgraph.store.memory import InMemoryStore
+
     from langclaw.accounting.tools import build_accounting_tools
     from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
     from langclaw.workflows.executor import build_toolset_executor
     from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
     from langclaw.workflows.registry import WorkflowSpec
-    from langgraph.store.memory import InMemoryStore
 
     services, scoped = acme
     registry = TenantRegistry(InMemoryStore())

@@ -148,6 +148,7 @@ def check_proposal(
             if valid and rate not in {r.normalize() for r in valid}:
                 shown = ", ".join(f"{r.normalize()}%" for r in sorted(valid, reverse=True))
                 problems.append(
-                    f"VAT rate {rate}% wasn't valid on {issued} (valid: {shown}) — check the invoice."
+                    f"VAT rate {rate}% wasn't valid on {issued} (valid: {shown}) — "
+                    "check the invoice."
                 )
     return problems
