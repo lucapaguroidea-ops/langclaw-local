@@ -48,11 +48,15 @@ def review_request_text(request: dict[str, Any], *, commands: bool = True) -> st
     """Plain-text body of a review request.
 
     Args:
-        request: ``{"run_id", "workflow", "message", "data", "editable", ...}``.
+        request: ``{"run_id", "workflow", "client", "message", "data", "editable", ...}``
+            (``client``: the run's client name, when clients are enabled).
         commands: Append the ``/workflows`` commands to answer (for channels
             without buttons).
     """
-    lines = [f"⏸ Review needed — {request.get('workflow', 'workflow')}", "", request["message"]]
+    title = f"⏸ Review needed — {request.get('workflow', 'workflow')}"
+    if request.get("client"):
+        title += f" · {request['client']}"
+    lines = [title, "", request["message"]]
     data = request.get("data") or {}
     for key, value in data.items():
         text = _fmt(value)

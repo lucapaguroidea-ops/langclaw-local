@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from langclaw.tenants import tenant_scope
 from langclaw.workflows.graph.compile import namespace_of, resolve_path, to_jsonable
 from langclaw.workflows.graph.runs import RunIndex
 from langclaw.workflows.graph.steps import (
@@ -34,6 +35,7 @@ from langclaw.workflows.progress import emit_progress
 
 if TYPE_CHECKING:
     from langclaw.config.schema import PermissionsConfig
+    from langclaw.tenants import Tenant, TenantRegistry
     from langclaw.workflows.executor import StepExecutor
     from langclaw.workflows.registry import WorkflowSpec
 
@@ -116,6 +118,8 @@ class GraphWorkflowRunner:
         self._compiled: dict[str, tuple[int, Any]] = {}
         #: RBAC definitions; when enabled, tool steps obey the run's role.
         self.permissions: PermissionsConfig | None = None
+        #: Clients; a run's steps execute as the client it was started for.
+        self.tenants: TenantRegistry | None = None
         #: Called with ``(run_record, new_reviews)`` when a run pauses for review —
         #: the gateway sends the review requests (e.g. Telegram buttons).
         self.review_hook: ReviewHook | None = None
@@ -152,11 +156,14 @@ class GraphWorkflowRunner:
         trigger: str = "",
         reply_to: dict[str, str] | None = None,
         role: str = "",
+        tenant: str = "",
     ) -> GraphRunResult:
         """Start a run and drive it until it finishes or pauses for review.
 
-        *role* is the RBAC role of whoever started it; it's stored with the run
-        so every later step (after a review, after a crash) is checked against it.
+        *role* is the RBAC role of whoever started it and *tenant* the client it
+        runs for; both are stored with the run, so every later step (after a
+        review, after a crash) is checked against the same role and reaches only
+        that client's data.
         """
         existing = await self.index.get(run_id)
         if existing is not None:
@@ -168,6 +175,7 @@ class GraphWorkflowRunner:
             trigger=trigger,
             reply_to=reply_to,
             role=role,
+            tenant=tenant,
         )
         if spec.graph_spec is not None:
             first: Any = {"input": to_jsonable(run_input), "data": {}}
@@ -331,16 +339,42 @@ class GraphWorkflowRunner:
 
         return WorkflowSteps(executor, run_id=run_id, role=role, allowed_tool=allowed)
 
+    async def _run_tenant(self, run_id: str) -> Tenant | None:
+        """The client a run belongs to (``None`` for a run without one).
+
+        Raises:
+            WorkflowStepError: the run has a client that no longer exists (or
+                clients are off) — failing beats running against the wrong data.
+        """
+        from langclaw.workflows.executor import WorkflowStepError
+
+        tenant_id = ((await self.index.get(run_id)) or {}).get("tenant") or ""
+        if not tenant_id:
+            return None
+        tenant = await self.tenants.get(tenant_id) if self.tenants is not None else None
+        if tenant is None:
+            raise WorkflowStepError(f"The run's client {tenant_id!r} no longer exists.")
+        return tenant
+
     async def _drive(self, spec: WorkflowSpec, run_id: str, graph_input: Any) -> GraphRunResult:
         graph = self.compiled(spec)
         config = self._config(spec, run_id)
-        token = set_steps(await self._steps(run_id))
         try:
-            coro = self._stream(spec, run_id, graph, graph_input, config)
-            if spec.timeout_s is not None:
-                await asyncio.wait_for(coro, timeout=spec.timeout_s)
-            else:
-                await coro
+            tenant = await self._run_tenant(run_id)
+            steps_for_run = await self._steps(run_id)
+        except Exception as exc:
+            await self.index.update(run_id, status="failed", error=str(exc))
+            logger.warning(f"Workflow {spec.name!r} run {run_id} failed: {exc}")
+            raise
+        token = set_steps(steps_for_run)
+        try:
+            # Every step runs as the run's client — also after a review or a crash.
+            with tenant_scope(tenant):
+                coro = self._stream(spec, run_id, graph, graph_input, config)
+                if spec.timeout_s is not None:
+                    await asyncio.wait_for(coro, timeout=spec.timeout_s)
+                else:
+                    await coro
         except Exception as exc:
             await self.index.update(run_id, status="failed", error=str(exc) or type(exc).__name__)
             logger.warning(f"Workflow {spec.name!r} run {run_id} failed: {exc}")

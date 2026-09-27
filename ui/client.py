@@ -79,6 +79,7 @@ class LangclawClient:
         *,
         semantic: bool = False,
         fields: dict[str, str] | None = None,
+        tenant: str = "",
         **filters: Any,
     ) -> dict:
         """``{"documents", "count", "mode", "semantic"}`` — see ``GET /v1/documents``.
@@ -87,15 +88,31 @@ class LangclawClient:
         """
         params = {k: v for k, v in filters.items() if v}
         params.update({f"field.{k}": v for k, v in (fields or {}).items()})
+        if tenant:
+            params["tenant"] = tenant
         if q:
             params["q"] = q
         if semantic:
             params["semantic"] = "true"
         return self._request("GET", "/v1/documents", params=params)
 
-    def document(self, key: str) -> dict[str, Any]:
+    def document(self, key: str, *, tenant: str = "") -> dict[str, Any]:
         """``{"document": {...}, "link": "https://..."}``."""
-        return self._request("GET", f"/v1/documents/{key}")
+        return self._request(
+            "GET", f"/v1/documents/{key}", params={"tenant": tenant} if tenant else None
+        )
+
+    # -- clients (tenants) -------------------------------------------------------
+
+    def tenants(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/v1/tenants")["tenants"]
+
+    def save_tenant(self, tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PUT", f"/v1/tenants/{tenant_id}", json=payload)
+
+    def delete_tenant(self, tenant_id: str) -> bool:
+        self._request("DELETE", f"/v1/tenants/{tenant_id}")
+        return True
 
     # -- workflows -------------------------------------------------------------
 
@@ -156,9 +173,12 @@ class LangclawClient:
             body["data"] = data
         return self._request("POST", f"/v1/runs/{run_id}/review", json=body)
 
-    def start_run(self, name: str, workflow_input: Any) -> dict[str, Any]:
-        """Start a run; returns ``{"run_id", "turn_id"}`` immediately."""
-        return self._request("POST", f"/v1/workflows/{name}/runs", json={"input": workflow_input})
+    def start_run(self, name: str, workflow_input: Any, *, tenant: str = "") -> dict[str, Any]:
+        """Start a run (for client *tenant*, if given); returns ``{"run_id", "turn_id"}``."""
+        body: dict[str, Any] = {"input": workflow_input}
+        if tenant:
+            body["tenant"] = tenant
+        return self._request("POST", f"/v1/workflows/{name}/runs", json=body)
 
     def follow_turn(self, turn_id: str) -> dict[str, Any]:
         """Long-poll a turn (a run's progress lines and output) until it finishes."""

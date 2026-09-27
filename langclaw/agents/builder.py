@@ -299,7 +299,7 @@ def create_claw_agent(
 
         wf = config.workflows
         builtin_tools += build_document_tools(
-            shared_services(config.documents),
+            shared_services(config.documents, require_tenant=config.tenants.enabled),
             bus=bus,
             report_to={"channel": wf.review_channel, "chat_id": wf.review_chat_id},
         )

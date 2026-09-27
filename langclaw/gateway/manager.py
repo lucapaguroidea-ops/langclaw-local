@@ -33,6 +33,7 @@ from langclaw.gateway.commands import CommandContext, CommandRouter
 from langclaw.gateway.control import ConflictError, ControlPlane, NotFoundError
 from langclaw.gateway.utils import attachments_to_content_blocks, lookup_by_user
 from langclaw.session.manager import SessionManager
+from langclaw.tenants import Tenant, TenantRegistry, current_tenant, tenant_scope
 from langclaw.utils import preview_message
 from langclaw.workflows.progress import (
     render_workflow_progress,
@@ -90,9 +91,18 @@ class GatewayManager:
         workflows_dir: Any | None = None,
         workflow_file_errors: Callable[[], Any] | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
+        tenant_registry: TenantRegistry | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
+        #: Clients (tenants) — each chat belongs to at most one; ``None`` = off.
+        tenants_on = getattr(getattr(config, "tenants", None), "enabled", False) is True
+        if tenants_on and tenant_registry is None:
+            raise ValueError(
+                "tenants.enabled needs a TenantRegistry: Langclaw opens one for you; "
+                "pass tenant_registry= when constructing GatewayManager yourself."
+            )
+        self._tenants = tenant_registry if tenants_on else None
         self._checkpointer_backend = checkpointer_backend
         self._agent = agent
         # Optional explicit deepagents backend applied to lazily-built named
@@ -189,7 +199,13 @@ class GatewayManager:
             mcp_servers=mcp_servers,
             sessions=self._sessions,
             checkpointer=checkpointer_backend.get(),
+            tenants=self._tenants,
         )
+        if workflow_runtime is not None and self._tenants is not None:
+            workflow_runtime.tenants = self._tenants
+            runner = getattr(workflow_runtime, "_graph_runner", None)
+            if runner is not None:
+                runner.tenants = self._tenants
 
         # Review requests (Telegram buttons, text elsewhere) go out whenever a run
         # pauses, however it was started.
@@ -1039,7 +1055,7 @@ class GatewayManager:
         from langclaw.documents.bucket import BucketError
         from langclaw.documents.intake import intake_files, store_attachments
         from langclaw.documents.store import DocumentStoreError
-        from langclaw.documents.tools import shared_services
+        from langclaw.documents.tools import NO_TENANT, shared_services
 
         if not intake_files(msg.attachments, images=bool(docs.ocr_model)):
             return False
@@ -1056,10 +1072,13 @@ class GatewayManager:
                 )
             )
 
+        tenant = current_tenant()
+        if self._tenants is not None and tenant is None:
+            await say(NO_TENANT)
+            return True
+        services = shared_services(docs, require_tenant=self._tenants is not None).current()
         try:
-            inputs = await store_attachments(
-                shared_services(docs), msg.attachments, caption=msg.content or ""
-            )
+            inputs = await store_attachments(services, msg.attachments, caption=msg.content or "")
         except (BucketError, DocumentStoreError) as exc:
             logger.error(f"Document intake failed: {exc}")
             await say(f"Couldn't save the document: {exc}")
@@ -1079,6 +1098,7 @@ class GatewayManager:
                         "workflow_name": docs.intake_workflow,
                         "workflow_input": json.dumps(wf_input),
                         "trigger": "intake",
+                        **({"tenant": tenant.id} if tenant else {}),
                     },
                 )
             )
@@ -1203,6 +1223,7 @@ class GatewayManager:
                         "chat_id": msg.chat_id,
                     },
                     role=role,
+                    tenant=tenant.id if (tenant := current_tenant()) else "",
                 )
             # A run paused for review already sent its review request (via the
             # runtime's review hook) — don't repeat it as plain text.
@@ -1237,7 +1258,27 @@ class GatewayManager:
             reset_progress_sink(progress_token)
             self._workflow_runs.pop(run_id, None)
 
+    async def _resolve_tenant(self, msg: InboundMessage) -> Tenant | None:
+        """The client a message belongs to, or ``None``.
+
+        From the chat it came from — never from anything a user can put in a
+        message. langclaw's own workflow messages (chat intake, bucket scans, runs
+        started from the console) name their client in ``metadata["tenant"]``;
+        only those are trusted, and only for a client that exists.
+        """
+        tenants = getattr(self, "_tenants", None)
+        if tenants is None:
+            return None
+        if msg.origin == "workflow" and (msg.metadata or {}).get("tenant"):
+            return await tenants.get(str(msg.metadata["tenant"]))
+        return await tenants.for_chat(msg.channel, msg.chat_id or msg.user_id)
+
     async def _handle(self, msg: InboundMessage) -> None:
+        """Handle *msg* as its client (tenant), when clients are enabled."""
+        with tenant_scope(await self._resolve_tenant(msg)):
+            await self._handle_message(msg)
+
+    async def _handle_message(self, msg: InboundMessage) -> None:
         """
         Full message handling pipeline:
           1. Resolve / create LangGraph thread
@@ -1325,8 +1366,10 @@ class GatewayManager:
         )
 
         user_role = self._resolve_user_role(msg) or "viewer"
+        tenant = current_tenant()
         base_kwargs = {
             "user_role": user_role,
+            "tenant": tenant.id if tenant else "",
             "channel": msg.channel,
             "user_id": msg.user_id,
             "context_id": effective_context_id,

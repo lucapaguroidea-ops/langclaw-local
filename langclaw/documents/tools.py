@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from langclaw.documents.bucket import Bucket, BucketError
 from langclaw.documents.store import DocumentStore, DocumentStoreError
 from langclaw.documents.text import extract_text
+from langclaw.naming import check_tenant_id, tenant_bucket_prefix, tenant_schema
+from langclaw.tenants import current_tenant
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -28,11 +30,27 @@ if TYPE_CHECKING:
     from langclaw.config.schema import DocumentsConfig
     from langclaw.documents.ocr import VisionOcr
 
+
+class NoTenantError(ValueError):
+    """Tenancy is on and this chat / run belongs to no client."""
+
+
 _ERRORS = (BucketError, DocumentStoreError, ValueError)
+
+NO_TENANT = (
+    "This chat isn't linked to a client, so documents are unavailable here. "
+    "Link it to a client on the console's Clients page."
+)
 
 
 class DocumentServices:
-    """Lazily-created bucket client and documents store, shared by the tools."""
+    """Lazily-created bucket client and documents store, shared by the tools.
+
+    With ``require_tenant`` (tenancy on), tools go through :meth:`current`: the
+    view of the current client's own bucket prefix and database schema, or a
+    :class:`NoTenantError` when there is no client — they never see the whole
+    bucket or another client's table.
+    """
 
     def __init__(
         self,
@@ -42,22 +60,55 @@ class DocumentServices:
         store: DocumentStore | None = None,
         ocr: VisionOcr | None = None,
         embeddings: Any | None = None,
+        require_tenant: bool = False,
     ) -> None:
         self.config = config
         self._bucket = bucket
         self._store = store
         self._ocr = ocr
         self._embeddings = embeddings
+        self.require_tenant = require_tenant
+        self.tenant_id: str | None = None
+        self._parent: DocumentServices | None = None
+        self._scoped: dict[str, DocumentServices] = {}
+
+    def scoped(self, tenant_id: str) -> DocumentServices:
+        """This client's view: its bucket prefix and database schema (cached)."""
+        child = self._scoped.get(tenant_id)
+        if child is None:
+            child = DocumentServices(self.config)
+            child.tenant_id, child._parent = check_tenant_id(tenant_id), self
+            self._scoped[tenant_id] = child
+        return child
+
+    def current(self) -> DocumentServices:
+        """The services the current call may use.
+
+        Raises:
+            NoTenantError: tenancy is on and there is no current client.
+        """
+        if not self.require_tenant or self._parent is not None:
+            return self
+        tenant = current_tenant()
+        if tenant is None:
+            raise NoTenantError(NO_TENANT)
+        return self.scoped(tenant.id)
 
     @property
     def bucket(self) -> Bucket:
         if self._bucket is None:
-            self._bucket = Bucket(self.config.bucket)
+            if self._parent is not None:
+                prefix = tenant_bucket_prefix(self.tenant_id)
+                self._bucket = self._parent.bucket.with_prefix(prefix)
+            else:
+                self._bucket = Bucket(self.config.bucket)
         return self._bucket
 
     @property
     def ocr(self) -> VisionOcr | None:
         """The OCR reader, or ``None`` when no ``ocr_model`` is configured."""
+        if self._parent is not None:
+            return self._parent.ocr
         if self._ocr is None and self.config.ocr_model:
             from langclaw.documents.ocr import VisionOcr
 
@@ -69,6 +120,8 @@ class DocumentServices:
     @property
     def embeddings(self) -> Any | None:
         """The embeddings client, or ``None`` when no ``embedding_model`` is set."""
+        if self._parent is not None:
+            return self._parent.embeddings
         if self._embeddings is None and self.config.embedding_model:
             from langclaw.documents.embeddings import build_embeddings
 
@@ -89,21 +142,24 @@ class DocumentServices:
     @property
     def store(self) -> DocumentStore:
         if self._store is None:
-            self._store = DocumentStore(self.config.database_url)
+            if self._parent is not None:
+                self._store = self._parent.store.for_schema(tenant_schema(self.tenant_id))
+            else:
+                self._store = DocumentStore(self.config.database_url)
         return self._store
 
 
-_SHARED: dict[tuple[str, ...], DocumentServices] = {}
+_SHARED: dict[tuple[Any, ...], DocumentServices] = {}
 
 
-def shared_services(config: DocumentsConfig) -> DocumentServices:
+def shared_services(config: DocumentsConfig, *, require_tenant: bool = False) -> DocumentServices:
     """One :class:`DocumentServices` per bucket + database, reused across agent
     rebuilds (so the database pool isn't re-opened every rebuild)."""
     b = config.bucket
-    key = (b.endpoint, b.name, b.access_key, config.database_url)
+    key = (b.endpoint, b.name, b.access_key, config.database_url, require_tenant)
     services = _SHARED.get(key)
     if services is None:
-        services = _SHARED[key] = DocumentServices(config)
+        services = _SHARED[key] = DocumentServices(config, require_tenant=require_tenant)
     return services
 
 
@@ -137,7 +193,7 @@ def build_document_tools(
             limit: Maximum number of files (1-500).
         """
         try:
-            objects = await services.bucket.list(prefix, limit=max(1, min(limit, 500)))
+            objects = await services.current().bucket.list(prefix, limit=max(1, min(limit, 500)))
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"files": [{"key": o.key, "size": o.size, "modified": o.modified} for o in objects]}
@@ -152,7 +208,7 @@ def build_document_tools(
             key: The file's key in the bucket, e.g. "inbox/invoice-001.pdf".
         """
         try:
-            data, content_type = await services.bucket.get(key)
+            data, content_type = await services.current().bucket.get(key)
         except _ERRORS as exc:
             return {"error": str(exc)}
         text, note = extract_text(data, content_type=content_type, filename=key)
@@ -182,7 +238,7 @@ def build_document_tools(
             expires_minutes: How long the link works (1-10080).
         """
         try:
-            url = await services.bucket.link(
+            url = await services.current().bucket.link(
                 key, expires_s=60 * max(1, min(expires_minutes, 10080))
             )
         except _ERRORS as exc:
@@ -197,9 +253,9 @@ def build_document_tools(
             limit: Maximum number of new files to return.
         """
         try:
-            objects = await services.bucket.list(prefix or cfg.intake_prefix, limit=1000)
+            objects = await services.current().bucket.list(prefix or cfg.intake_prefix, limit=1000)
             files = [o for o in objects if not o.key.endswith("/")]
-            known = await services.store.known_keys([o.key for o in files])
+            known = await services.current().store.known_keys([o.key for o in files])
         except _ERRORS as exc:
             return {"error": str(exc)}
         new = [o.key for o in files if o.key not in known][: max(1, min(limit, 500))]
@@ -249,12 +305,12 @@ def build_document_tools(
             "fields": fields or {},
         }
         try:
-            saved = await services.store.save(bucket_key, values)
+            saved = await services.current().store.save(bucket_key, values)
         except _ERRORS as exc:
             return {"error": str(exc)}
         out: dict[str, Any] = {"saved": saved}
         if semantic:
-            note = await services.embed_record(saved)
+            note = await services.current().embed_record(saved)
             if note:
                 out["note"] = note
         return out
@@ -286,7 +342,7 @@ def build_document_tools(
             limit: Maximum results (1-200).
         """
         try:
-            rows = await services.store.search(
+            rows = await services.current().store.search(
                 text=text,
                 sender=sender,
                 receiver=receiver,
@@ -329,7 +385,7 @@ def build_document_tools(
         """
         try:
             vector = await services.embeddings.aembed_query(query)
-            rows = await services.store.similar(
+            rows = await services.current().store.similar(
                 vector,
                 limit=limit,
                 sender=sender,
@@ -351,12 +407,12 @@ def build_document_tools(
             limit: Records to index in this call (1-1000); repeat while "remaining" > 0.
         """
         try:
-            rows = await services.store.without_embedding(max(1, min(limit, 1000)))
+            rows = await services.current().store.without_embedding(max(1, min(limit, 1000)))
             done = 0
             for row in rows:
-                if not await services.embed_record(row):
+                if not await services.current().embed_record(row):
                     done += 1
-            remaining = await services.store.count_without_embedding()
+            remaining = await services.current().store.count_without_embedding()
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"embedded": done, "remaining": remaining}
@@ -368,7 +424,7 @@ def build_document_tools(
             bucket_key: The document's key in the bucket.
         """
         try:
-            row = await services.store.get(bucket_key)
+            row = await services.current().store.get(bucket_key)
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"document": row} if row else {"error": f"No record for {bucket_key!r}."}
@@ -380,7 +436,7 @@ def build_document_tools(
 
         Each new file gets a 'processing' record first, so a second scan never
         queues it twice. Results and review requests go to the given chat, else
-        to the configured review chat.
+        the client's review chat, else the configured review chat.
 
         Args:
             prefix: Only keys starting with this (default: the intake prefix).
@@ -390,20 +446,25 @@ def build_document_tools(
         """
         if not cfg.intake_workflow:
             return {"error": "No intake workflow: set documents.intake_workflow."}
-        target_channel = channel or (report_to or {}).get("channel", "")
-        target_chat = chat_id or (report_to or {}).get("chat_id", "")
+        tenant = current_tenant() if services.require_tenant else None
+        default = (tenant.review_target() if tenant else None) or {
+            "channel": (report_to or {}).get("channel", ""),
+            "chat_id": (report_to or {}).get("chat_id", ""),
+        }
+        target_channel = channel or default["channel"]
+        target_chat = chat_id or default["chat_id"]
         if not (target_channel and target_chat):
             return {
                 "error": "No chat to report to: pass channel and chat_id, or set "
                 "workflows.review_channel and workflows.review_chat_id."
             }
         try:
-            objects = await services.bucket.list(prefix or cfg.intake_prefix, limit=1000)
+            objects = await services.current().bucket.list(prefix or cfg.intake_prefix, limit=1000)
             files = [o for o in objects if not o.key.endswith("/")]
-            known = await services.store.known_keys([o.key for o in files])
+            known = await services.current().store.known_keys([o.key for o in files])
             new = [o.key for o in files if o.key not in known][: max(1, min(limit, 200))]
             for key in new:
-                await services.store.save(key, {"status": "processing"})
+                await services.current().store.save(key, {"status": "processing"})
         except _ERRORS as exc:
             return {"error": str(exc)}
         for key in new:
@@ -422,6 +483,7 @@ def build_document_tools(
                             {"key": key, "filename": filename, "mime_type": "", "caption": ""}
                         ),
                         "trigger": "scan",
+                        **({"tenant": tenant.id} if tenant else {}),
                     },
                 )
             )

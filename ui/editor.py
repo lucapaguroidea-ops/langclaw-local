@@ -272,3 +272,40 @@ def parse_field_filters(text: str) -> tuple[dict[str, str], list[str]]:
             continue
         filters[name.strip()] = value.strip()
     return filters, problems
+
+
+#: Company-profile fields the Clients form edits directly (the rest go in JSON).
+PROFILE_FIELDS = ("vat_payer", "vat_on_collection", "tax_regime", "caen")
+
+
+def tenant_payload(
+    *,
+    name: str,
+    tax_id: str = "",
+    chats_text: str = "",
+    review_chat: str = "",
+    profile: dict[str, Any] | None = None,
+    extra_json: str = "",
+) -> dict[str, Any]:
+    """The ``PUT /v1/tenants/{id}`` body from the Clients form.
+
+    Raises:
+        ValueError: no name, or the extra profile JSON isn't an object.
+    """
+    if not name.strip():
+        raise ValueError("A client needs a name.")
+    extra: dict[str, Any] = {}
+    if extra_json.strip():
+        try:
+            extra = json.loads(extra_json)
+        except ValueError as exc:
+            raise ValueError(f"Other profile fields must be JSON: {exc}") from None
+        if not isinstance(extra, dict):
+            raise ValueError("Other profile fields must be a JSON object ({...}).")
+    return {
+        "name": name.strip(),
+        "tax_id": tax_id.strip(),
+        "chats": [line.strip() for line in chats_text.splitlines() if line.strip()],
+        "review_chat": review_chat.strip(),
+        "profile": {**(profile or {}), **extra},
+    }

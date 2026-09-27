@@ -234,6 +234,10 @@ class ApiChannel(BaseChannel):
                 web.post("/v1/runs/{run_id}/cancel", self._cancel_run),
                 web.post("/v1/runs/{run_id}/review", self._answer_review),
                 web.get("/v1/reviews", self._list_reviews),
+                web.get("/v1/tenants", self._list_tenants),
+                web.get("/v1/tenants/{tenant_id}", self._get_tenant),
+                web.put("/v1/tenants/{tenant_id}", self._save_tenant),
+                web.delete("/v1/tenants/{tenant_id}", self._delete_tenant),
                 web.get("/v1/documents", self._list_documents),
                 web.get("/v1/documents/{key:.+}", self._get_document),
                 web.get("/v1/schedules", self._list_schedules),
@@ -416,6 +420,7 @@ class ApiChannel(BaseChannel):
                 user_id=self._config.user_id,
                 context_id=context_id,
                 chat_id=turn.turn_id,
+                tenant=str(body.get("tenant") or ""),
             )
         except Exception:
             self._turns.pop(turn.turn_id, None)
@@ -516,11 +521,32 @@ class ApiChannel(BaseChannel):
                     k.removeprefix("field."): v for k, v in query.items() if k.startswith("field.")
                 },
                 limit=_parse_int(query.get("limit"), default=50, name="limit"),
+                tenant=query.get("tenant", ""),
             )
         )
 
     async def _get_document(self, request: web.Request) -> web.Response:
-        return self._json(await self._require_plane().get_document(request.match_info["key"]))
+        return self._json(
+            await self._require_plane().get_document(
+                request.match_info["key"], tenant=request.query.get("tenant", "")
+            )
+        )
+
+    async def _list_tenants(self, request: web.Request) -> web.Response:
+        return self._json(await self._require_plane().list_tenants())
+
+    async def _get_tenant(self, request: web.Request) -> web.Response:
+        return self._json(await self._require_plane().get_tenant(request.match_info["tenant_id"]))
+
+    async def _save_tenant(self, request: web.Request) -> web.Response:
+        body = await self._body(request)
+        tenant_id = request.match_info["tenant_id"]
+        return self._json(await self._require_plane().save_tenant(tenant_id, body))
+
+    async def _delete_tenant(self, request: web.Request) -> web.Response:
+        if not await self._require_plane().delete_tenant(request.match_info["tenant_id"]):
+            return self._json({"error": "no such client"}, 404)
+        return self._json({"deleted": request.match_info["tenant_id"]})
 
     async def _list_schedules(self, request: web.Request) -> web.Response:
         return self._json({"schedules": await self._require_plane().list_schedules()})

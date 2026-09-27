@@ -21,6 +21,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from langclaw.naming import WORKFLOW_TOOL_PREFIX, workflow_tool_name
+from langclaw.tenants import current_tenant
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -132,6 +133,7 @@ def _make_one_workflow_tool(
                 trigger="agent",
                 reply_to=_origin(runtime),
                 role=getattr(getattr(runtime, "context", None), "user_role", "") or "",
+                tenant=tenant.id if (tenant := current_tenant()) else "",
             )
             return result.to_text()
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as text

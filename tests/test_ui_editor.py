@@ -132,3 +132,30 @@ def test_parse_field_filters() -> None:
         {"notice.days": "90"},
         ["'oops' — write name=value"],
     )
+
+
+def test_tenant_payload_from_the_clients_form() -> None:
+    payload = editor.tenant_payload(
+        name=" ACME SRL ",
+        tax_id="RO12345678",
+        chats_text="telegram:-100acme\n\n  telegram:42 \n",
+        review_chat="telegram:-100acme-review",
+        profile={"vat_payer": True, "tax_regime": "micro", "caen": "6201"},
+        extra_json='{"fiscal_year_start": "01-01"}',
+    )
+    assert payload == {
+        "name": "ACME SRL",
+        "tax_id": "RO12345678",
+        "chats": ["telegram:-100acme", "telegram:42"],
+        "review_chat": "telegram:-100acme-review",
+        "profile": {
+            "vat_payer": True,
+            "tax_regime": "micro",
+            "caen": "6201",
+            "fiscal_year_start": "01-01",
+        },
+    }
+    with pytest.raises(ValueError, match="Other profile fields"):
+        editor.tenant_payload(name="x", extra_json="[1, 2")
+    with pytest.raises(ValueError, match="name"):
+        editor.tenant_payload(name="  ")

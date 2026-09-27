@@ -4,17 +4,23 @@
 One row per file in the bucket, keyed by ``bucket_key``: saving the same key
 again updates the row, so a workflow step that re-runs after a crash never
 creates a duplicate. The table is created on first use.
+
+With tenants, each client gets its own schema (``tenant_<id>.documents``) via
+:meth:`DocumentStore.for_schema`; every schema shares one connection pool per
+database, so 50 clients don't mean 50 pools.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import date
 from typing import Any
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS documents (
+CREATE SCHEMA IF NOT EXISTS {schema};
+CREATE TABLE IF NOT EXISTS {table} (
     id            BIGSERIAL PRIMARY KEY,
     bucket_key    TEXT NOT NULL UNIQUE,
     filename      TEXT NOT NULL DEFAULT '',
@@ -31,11 +37,17 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS documents_sender_idx ON documents (lower(sender));
-CREATE INDEX IF NOT EXISTS documents_receiver_idx ON documents (lower(receiver));
-CREATE INDEX IF NOT EXISTS documents_date_idx ON documents (document_date);
-ALTER TABLE documents ADD COLUMN IF NOT EXISTS embedding REAL[];
+CREATE INDEX IF NOT EXISTS documents_sender_idx ON {table} (lower(sender));
+CREATE INDEX IF NOT EXISTS documents_receiver_idx ON {table} (lower(receiver));
+CREATE INDEX IF NOT EXISTS documents_date_idx ON {table} (document_date);
+ALTER TABLE {table} ADD COLUMN IF NOT EXISTS embedding REAL[];
 """
+
+#: One asyncpg pool per (database, event loop), shared by every schema.
+_POOLS: dict[tuple[str, int], Any] = {}
+_LOCKS: dict[int, asyncio.Lock] = {}
+_READY: set[tuple[str, int, str]] = set()
+_SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 #: Cosine similarity between the ``embedding`` column and ``$1`` in plain SQL
 #: (no pgvector needed — a linear scan, fine up to tens of thousands of rows).
@@ -71,19 +83,32 @@ class DocumentStore:
         dsn: Postgres connection string (``postgresql://...``).
     """
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, schema: str = "public") -> None:
         if not dsn:
             raise DocumentStoreError(
                 "No documents database configured: set LANGCLAW__DOCUMENTS__DATABASE_URL "
                 "(or DOCUMENTS_DATABASE_URL)."
             )
+        if not _SCHEMA_NAME.match(schema):
+            raise DocumentStoreError(f"Invalid schema name {schema!r}.")
         self._dsn = dsn
-        self._pool: Any = None
-        self._lock = asyncio.Lock()
+        self.schema = schema
+        self._table = f'"{schema}".documents'
+
+    def for_schema(self, schema: str) -> DocumentStore:
+        """The same database, another schema (one client's own table)."""
+        return DocumentStore(self._dsn, schema=schema)
+
+    @property
+    def pool_key(self) -> str:
+        """Which connection pool this store uses (shared across schemas)."""
+        return self._dsn
 
     async def _db(self) -> Any:
-        async with self._lock:
-            if self._pool is None:
+        loop_key = (self._dsn, id(asyncio.get_running_loop()))
+        async with _lock():
+            pool = _POOLS.get(loop_key)
+            if pool is None:
                 try:
                     import asyncpg
                 except ImportError as exc:
@@ -92,18 +117,32 @@ class DocumentStore:
                         "uv add 'langclaw[documents]'"
                     ) from exc
                 try:
-                    self._pool = await asyncpg.create_pool(self._dsn, min_size=0, max_size=4)
-                    async with self._pool.acquire() as conn:
-                        await conn.execute(_SCHEMA)
+                    pool = await asyncpg.create_pool(self._dsn, min_size=0, max_size=8)
                 except Exception as exc:  # noqa: BLE001 — surfaced to tools as text
-                    self._pool = None
                     raise DocumentStoreError(f"Cannot open the documents database: {exc}") from exc
-            return self._pool
+                _POOLS[loop_key] = pool
+            ready_key = (*loop_key, self.schema)
+            if ready_key not in _READY:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            _SCHEMA.replace("{schema}", f'"{self.schema}"').replace(
+                                "{table}", self._table
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    raise DocumentStoreError(f"Cannot open the documents database: {exc}") from exc
+                _READY.add(ready_key)
+            return pool
 
     async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        """Close this database's pool (shared by every schema of it)."""
+        loop_key = (self._dsn, id(asyncio.get_running_loop()))
+        async with _lock():
+            pool = _POOLS.pop(loop_key, None)
+            _READY.difference_update({k for k in _READY if k[:2] == loop_key})
+        if pool is not None:
+            await pool.close()
 
     async def save(self, bucket_key: str, values: dict[str, Any]) -> dict[str, Any]:
         """Insert or update the row for *bucket_key*; returns the stored row.
@@ -125,10 +164,10 @@ class DocumentStore:
         params = ", ".join(f"${i}" for i in range(1, len(names) + 3))
         updates = ", ".join(
             [f"{n} = EXCLUDED.{n}" for n in names]
-            + ["fields = documents.fields || EXCLUDED.fields", "updated_at = now()"]
+            + ["fields = d.fields || EXCLUDED.fields", "updated_at = now()"]
         )
         sql = (
-            f"INSERT INTO documents ({cols}) VALUES ({params}) "
+            f"INSERT INTO {self._table} AS d ({cols}) VALUES ({params}) "
             f"ON CONFLICT (bucket_key) DO UPDATE SET {updates} RETURNING *"
         )
         pool = await self._db()
@@ -142,7 +181,9 @@ class DocumentStore:
 
     async def get(self, bucket_key: str) -> dict[str, Any] | None:
         pool = await self._db()
-        record = await pool.fetchrow("SELECT * FROM documents WHERE bucket_key = $1", bucket_key)
+        record = await pool.fetchrow(
+            f"SELECT * FROM {self._table} WHERE bucket_key = $1", bucket_key
+        )
         return _row(record) if record else None
 
     async def search(
@@ -174,7 +215,7 @@ class DocumentStore:
             fields=fields,
         )
         args.append(max(1, min(int(limit), 200)))
-        sql = "SELECT * FROM documents"
+        sql = f"SELECT * FROM {self._table}"
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += f" ORDER BY document_date DESC NULLS LAST, id DESC LIMIT ${len(args)}"
@@ -184,7 +225,7 @@ class DocumentStore:
     async def set_embedding(self, bucket_key: str, vector: list[float]) -> None:
         pool = await self._db()
         await pool.execute(
-            "UPDATE documents SET embedding = $2::real[] WHERE bucket_key = $1",
+            f"UPDATE {self._table} SET embedding = $2::real[] WHERE bucket_key = $1",
             bucket_key,
             list(vector),
         )
@@ -200,7 +241,8 @@ class DocumentStore:
         where.append("embedding IS NOT NULL")
         args = [list(vector), *args, max(1, min(int(limit), 200))]
         sql = (
-            f"SELECT *, {_COSINE} AS similarity FROM documents WHERE {' AND '.join(where)} "
+            f"SELECT *, {_COSINE} AS similarity FROM {self._table} "
+            f"WHERE {' AND '.join(where)} "
             f"ORDER BY similarity DESC NULLS LAST, id DESC LIMIT ${len(args)}"
         )
         pool = await self._db()
@@ -215,13 +257,15 @@ class DocumentStore:
         """Rows not embedded yet (saved before semantic search was on)."""
         pool = await self._db()
         rows = await pool.fetch(
-            "SELECT * FROM documents WHERE embedding IS NULL ORDER BY id LIMIT $1", limit
+            f"SELECT * FROM {self._table} WHERE embedding IS NULL ORDER BY id LIMIT $1", limit
         )
         return [_row(r) for r in rows]
 
     async def count_without_embedding(self) -> int:
         pool = await self._db()
-        return int(await pool.fetchval("SELECT count(*) FROM documents WHERE embedding IS NULL"))
+        return int(
+            await pool.fetchval(f"SELECT count(*) FROM {self._table} WHERE embedding IS NULL")
+        )
 
     async def known_keys(self, keys: list[str]) -> set[str]:
         """Which of *keys* already have a row (for scanning the bucket for new files)."""
@@ -229,9 +273,14 @@ class DocumentStore:
             return set()
         pool = await self._db()
         rows = await pool.fetch(
-            "SELECT bucket_key FROM documents WHERE bucket_key = ANY($1::text[])", keys
+            f"SELECT bucket_key FROM {self._table} WHERE bucket_key = ANY($1::text[])", keys
         )
         return {r["bucket_key"] for r in rows}
+
+
+def _lock() -> asyncio.Lock:
+    """The pool-registry lock for the running event loop."""
+    return _LOCKS.setdefault(id(asyncio.get_running_loop()), asyncio.Lock())
 
 
 def _filters(

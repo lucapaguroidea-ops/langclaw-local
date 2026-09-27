@@ -67,6 +67,34 @@ def _client() -> LangclawClient | None:
     return st.session_state.client
 
 
+def _tenant() -> str:
+    """The client picked in the sidebar ("" when clients are off / none picked)."""
+    return st.session_state.get("tenant", "")
+
+
+def _client_picker(lc: LangclawClient, tenants_on: bool) -> None:
+    """Sidebar client selector (only when the gateway separates clients)."""
+    st.session_state["tenant"] = ""
+    if not tenants_on:
+        return
+    tenants = _call(lc.tenants) or []
+    if not tenants:
+        st.sidebar.warning("No clients yet — add one on the Clients page.")
+        return
+    ids = [t["id"] for t in tenants]
+    names = {t["id"]: t["name"] for t in tenants}
+    wanted = st.query_params.get("client")
+    choice = st.sidebar.selectbox(
+        "Client",
+        ids,
+        index=ids.index(wanted) if wanted in ids else 0,
+        format_func=lambda i: f"{names[i]} ({i})",
+        help="Documents and test runs are for this client.",
+    )
+    st.query_params["client"] = choice
+    st.session_state["tenant"] = choice
+
+
 def _reviewer() -> str:
     return os.environ.get("UI_REVIEWER", "web")
 
@@ -466,7 +494,7 @@ def tab_test_run(lc: LangclawClient, name: str, workflow: dict) -> None:
     st.caption(
         "Runs started here report to this console (Runs tab). If a step pauses for "
         "review, answer it in the Reviews tab — or from Telegram when a review chat "
-        "is configured."
+        "is configured." + (f" This run is for client **{_tenant()}**." if _tenant() else "")
     )
     with st.form(f"{name}:run"):
         if fields:
@@ -489,7 +517,7 @@ def tab_test_run(lc: LangclawClient, name: str, workflow: dict) -> None:
     except ValueError as exc:
         st.error(str(exc))
         return
-    started = _call(lc.start_run, name, run_input)
+    started = _call(lc.start_run, name, run_input, tenant=_tenant())
     if started is None:
         return
     st.caption(f"Run `{started['run_id']}`")
@@ -514,6 +542,7 @@ def tab_runs(lc: LangclawClient, name: str) -> None:
                 "run": r["run_id"],
                 "status": r["status"],
                 "started by": r.get("trigger", ""),
+                "client": r.get("tenant", ""),
                 "started": r.get("started_at", ""),
                 "updated": r.get("updated_at", ""),
                 "reviews waiting": r.get("pending_reviews", 0),
@@ -728,9 +757,12 @@ def page_reviews(lc: LangclawClient) -> None:
 STATUSES = ["", "filed", "processing", "needs_review", "rejected"]
 
 
-def page_documents(lc: LangclawClient) -> None:
-    st.header("📄 Documents")
+def page_documents(lc: LangclawClient, tenants_on: bool = False) -> None:
+    st.header("📄 Documents" + (f" · {_tenant()}" if _tenant() else ""))
     st.caption("What the intake workflow filed. Read-only — edits happen through workflows.")
+    if tenants_on and not _tenant():
+        st.info("Pick a client in the sidebar — each client's documents are kept apart.")
+        return
     with st.form("doc_search"):
         q = st.text_input("Search", placeholder="e.g. electricity bills from last spring")
         cols = st.columns(4)
@@ -753,6 +785,7 @@ def page_documents(lc: LangclawClient) -> None:
     result = _call(
         lc.documents,
         q,
+        tenant=_tenant(),
         semantic=by_meaning,
         sender=sender,
         doc_type=doc_type,
@@ -807,7 +840,7 @@ def page_documents(lc: LangclawClient) -> None:
 
 
 def _document_detail(lc: LangclawClient, key: str) -> None:
-    detail = _call(lc.document, key)
+    detail = _call(lc.document, key, tenant=_tenant())
     if not detail:
         return
     doc = detail["document"]
@@ -840,6 +873,127 @@ def _document_detail(lc: LangclawClient, key: str) -> None:
             hide_index=True,
             width="stretch",
         )
+
+
+TAX_REGIMES = ["", "micro", "profit", "other"]
+
+
+def page_clients(lc: LangclawClient) -> None:
+    st.header("🏢 Clients")
+    st.caption(
+        "Each client's documents live apart — their own storage folder and database "
+        "table. A chat belongs to one client: messages and files from it are that "
+        "client's. Write chats as `telegram:<chat id>` (a Telegram group's id starts "
+        "with -100)."
+    )
+    tenants = _call(lc.tenants)
+    if tenants is None:
+        return
+    if tenants:
+        st.dataframe(
+            [
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "tax id": t.get("tax_id", ""),
+                    "chats": len(t.get("chats", [])),
+                    "review chat": t.get("review_chat", ""),
+                    "updated": t.get("updated_at", ""),
+                }
+                for t in tenants
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+    by_id = {t["id"]: t for t in tenants}
+    pick = st.selectbox(
+        "Edit",
+        ["➕ New client", *by_id],
+        format_func=lambda i: by_id[i]["name"] if i in by_id else i,
+    )
+    new = pick not in by_id
+    current = {} if new else by_id[pick]
+    profile = current.get("profile") or {}
+    extras = {k: v for k, v in profile.items() if k not in editor.PROFILE_FIELDS}
+    with st.form(f"client:{pick}:{st.session_state.get('client_form_rev', 0)}"):
+        top = st.columns(3)
+        tenant_id = top[0].text_input(
+            "Client id",
+            value=current.get("id", ""),
+            disabled=not new,
+            placeholder="acme",
+            help="Short lowercase id — names the client's storage folder and database "
+            "schema, so it can't be changed later.",
+        )
+        name = top[1].text_input("Name", value=current.get("name", ""), placeholder="ACME SRL")
+        tax_id = top[2].text_input(
+            "Tax id (CUI)", value=current.get("tax_id", ""), placeholder="RO12345678"
+        )
+        chats = st.text_area(
+            "Chats (one per line)",
+            value="\n".join(current.get("chats", [])),
+            placeholder="telegram:-1001234567890",
+        )
+        review_chat = st.text_input(
+            "Review chat",
+            value=current.get("review_chat", ""),
+            placeholder="telegram:-1001234567890",
+            help="Where this client's review requests also go.",
+        )
+        st.markdown("**Company profile**")
+        cols = st.columns(4)
+        vat_payer = cols[0].checkbox("VAT payer", value=bool(profile.get("vat_payer")))
+        vat_on_collection = cols[1].checkbox(
+            "VAT on collection", value=bool(profile.get("vat_on_collection"))
+        )
+        regime = profile.get("tax_regime", "")
+        tax_regime = cols[2].selectbox(
+            "Tax regime",
+            TAX_REGIMES,
+            index=TAX_REGIMES.index(regime) if regime in TAX_REGIMES else 0,
+            format_func=lambda r: r or "—",
+        )
+        caen = cols[3].text_input("CAEN", value=profile.get("caen", ""))
+        extra_json = st.text_area(
+            "Other profile fields (JSON)",
+            value=json.dumps(extras, indent=2, ensure_ascii=False) if extras else "",
+            placeholder='{"fiscal_year_start": "01-01"}',
+        )
+        save = st.form_submit_button("Save client", type="primary")
+    if save:
+        try:
+            payload = editor.tenant_payload(
+                name=name,
+                tax_id=tax_id,
+                chats_text=chats,
+                review_chat=review_chat,
+                profile={
+                    "vat_payer": vat_payer,
+                    "vat_on_collection": vat_on_collection,
+                    "tax_regime": tax_regime,
+                    "caen": caen.strip(),
+                },
+                extra_json=extra_json,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        saved = _call(lc.save_tenant, tenant_id.strip(), payload)
+        if saved:
+            st.session_state.flash = ("success", f"Saved client {saved['name']} ({saved['id']}).")
+            st.session_state.client_form_rev = st.session_state.get("client_form_rev", 0) + 1
+            st.rerun()
+    if not new:
+        with st.expander("Delete this client"):
+            st.caption(
+                "Removes the client and unlinks its chats. Its files and document "
+                "records are kept (not deleted) — re-adding the same id finds them again."
+            )
+            if st.button(f"Delete {current['name']}", key=f"del:{pick}") and _call(
+                lc.delete_tenant, pick
+            ):
+                st.session_state.flash = ("success", f"Deleted client {pick}.")
+                st.rerun()
 
 
 def page_status(lc: LangclawClient) -> None:
@@ -884,7 +1038,10 @@ def main(lc: LangclawClient) -> None:
     if workflows is None:
         return
     reviews = _call(lc.reviews) or []
+    status = _call(lc.status) or {}
+    tenants_on = bool(status.get("features", {}).get("tenants"))
     st.sidebar.title("🦀 Langclaw")
+    _client_picker(lc, tenants_on)
     names = [w["name"] for w in workflows]
     marks = {
         w["name"]: ("⚠️ " if not w.get("valid", True) else "")
@@ -901,7 +1058,13 @@ def main(lc: LangclawClient) -> None:
         st.query_params["wf"] = choice
     page = st.sidebar.radio(
         "View",
-        ["Workflow", f"Review queue ({len(reviews)})", "Documents", "Status"],
+        [
+            "Workflow",
+            f"Review queue ({len(reviews)})",
+            "Documents",
+            *(["Clients"] if tenants_on else []),
+            "Status",
+        ],
         label_visibility="collapsed",
     )
     st.sidebar.caption("Chat with langclaw in Telegram.")
@@ -909,7 +1072,9 @@ def main(lc: LangclawClient) -> None:
     if page.startswith("Review queue"):
         page_reviews(lc)
     elif page == "Documents":
-        page_documents(lc)
+        page_documents(lc, tenants_on)
+    elif page == "Clients":
+        page_clients(lc)
     elif page == "Status":
         page_status(lc)
     elif choice == NEW:
