@@ -294,6 +294,10 @@ def create_claw_agent(
     builtin_tools: list[Any] = []
     builtin_tools += build_web_tools(config)
     builtin_tools += build_gmail_tools(config)
+    if config.documents.enabled:
+        from langclaw.documents.tools import build_document_tools, shared_services
+
+        builtin_tools += build_document_tools(shared_services(config.documents))
     # ``move_file`` / ``delete_file`` manipulate a real directory directly, so
     # they only make sense for filesystem-rooted backends. Non-filesystem
     # backends (state / store) rely on deepagents' own backend-delegated file

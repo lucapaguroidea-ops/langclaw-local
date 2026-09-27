@@ -233,7 +233,9 @@ def mermaid_html(code: str, *, height: int = 480) -> str:
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
   const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  mermaid.initialize({{ startOnLoad: true, theme: dark ? "dark" : "default" }});
+  mermaid.initialize({{
+    startOnLoad: true, securityLevel: "strict", theme: dark ? "dark" : "default"
+  }});
 </script>
 <style>body{{margin:0;font-family:sans-serif}} .mermaid svg{{max-height:{height - 20}px}}</style>
 """

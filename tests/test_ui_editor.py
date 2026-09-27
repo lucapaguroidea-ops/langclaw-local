@@ -112,6 +112,7 @@ def test_mermaid_html_escapes_the_diagram() -> None:
     html = editor.mermaid_html("graph TD; a-->b<script>")
     assert "a--&gt;b&lt;script&gt;" in html
     assert "mermaid" in html
+    assert 'securityLevel: "strict"' in html
 
 
 def test_graph_diff_shows_changes_only() -> None:
