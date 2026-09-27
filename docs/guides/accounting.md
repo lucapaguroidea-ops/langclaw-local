@@ -187,6 +187,25 @@ Invoices and payments both carry the partner's tax ID into the journal, so:
 
 Entries booked by hand without a partner tax ID don't appear here.
 
+## Payment reminders
+
+`receivables_overdue(day, min_days=7)` lists the client's customers with unpaid
+sales invoices past due by at least `min_days`, largest first. Each customer
+comes with its invoices, their due dates, days overdue, and what's left to pay
+after partial payments.
+
+The **payment_reminders** template (`ui/templates/payment_reminders.graph.json`)
+works like this:
+
+1. It runs `receivables_overdue`.
+2. The model drafts one reminder per customer, in Romanian. Each reminder cites
+   exactly those invoices, and the tone gets firmer with the delay.
+3. The run pauses for a person to approve or edit the drafts.
+
+The approved drafts are the output. Nothing is sent automatically, because
+there's no email channel yet. Send them from the chat, or copy them into your
+mail client.
+
 ## Results and income tax
 
 `accounting_results(period)` computes the profit and loss for the month and the

@@ -1,0 +1,29 @@
+{
+  "description": "Draft payment reminders for a client's overdue customers: code lists the unpaid sales invoices past due (with partial payments deducted), the model writes one polite reminder per customer citing those invoices, and a person approves or edits them before they're sent.",
+  "input": {
+    "min_days": {"type": "integer", "description": "Only invoices at least this many days past due (e.g. 7)."}
+  },
+  "nodes": {
+    "overdue": {"type": "tool", "tool": "receivables_overdue", "args": {"min_days": "{{input.min_days}}"}},
+    "draft": {
+      "type": "llm",
+      "system": "You write payment reminders in Romanian on behalf of the client company, to its customers. Use only the facts given: invoice numbers, due dates, days overdue and amounts exactly as listed. One reminder per customer; courteous and short; the tone firmer the longer the delay (over 60 days: mention next steps without threats). No reminder for a customer that isn't listed.",
+      "prompt": "Overdue receivables (facts, don't change them):\n{{overdue}}",
+      "output": {
+        "reminders": {"type": "array", "description": "One per customer: objects {partner, cui, subject, body, total}."}
+      }
+    },
+    "review": {
+      "type": "human_review",
+      "message": "Check the payment reminders before they're sent.",
+      "show": ["overdue", "draft"],
+      "editable": "draft"
+    }
+  },
+  "edges": [
+    {"from": "START", "to": "overdue"},
+    {"from": "overdue", "to": "draft"},
+    {"from": "draft", "to": "review"}
+  ],
+  "output": "draft"
+}

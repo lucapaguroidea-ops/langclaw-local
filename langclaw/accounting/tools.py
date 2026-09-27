@@ -35,7 +35,13 @@ from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
-from langclaw.accounting.outlook import cash_position, deadlines, thresholds, trend
+from langclaw.accounting.outlook import (
+    cash_position,
+    deadlines,
+    overdue_receivables,
+    thresholds,
+    trend,
+)
 from langclaw.accounting.period import (
     blockers,
     document_state,
@@ -814,6 +820,25 @@ def build_accounting_tools(
         ]  # fmt: skip
         return {"day": on.isoformat(), "partners": partners}
 
+    async def receivables_overdue(day: str = "", min_days: int = 7) -> dict:
+        """Customers with unpaid sales invoices past due, with the invoices, days
+        overdue and what's left to pay — what payment reminders are drafted from.
+
+        Args:
+            day: The date to measure against (YYYY-MM-DD); empty: today.
+            min_days: Only invoices at least this many days past due.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            rows = await _invoices(services.current(), date(1900, 1, 1), on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        tenant = current_tenant()
+        customers = overdue_receivables(rows, on=on, min_days=max(0, int(min_days)))
+        return json.loads(json.dumps(
+            {"day": on.isoformat(), "client": tenant.name if tenant else "",
+             "customers": customers}, default=str))  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -831,6 +856,7 @@ def build_accounting_tools(
         accounting_results,
         partner_statement,
         partner_balances,
+        receivables_overdue,
     ]
     if bus is not None:
         fns.append(accounting_queue)

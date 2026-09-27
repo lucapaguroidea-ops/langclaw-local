@@ -868,3 +868,18 @@ async def test_partner_statement_and_balances(acme) -> None:
     row = next(b for b in balances["partners"] if b["cui"] == cui)
     assert row["receivable"] == f"{gross - first:.2f}" and row["payable"] == "0.00"
     assert "partner_cui" in missing["error"]
+
+
+@needs_pg
+async def test_receivables_overdue_lists_unpaid_sales(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sales = [r for r in await scoped.store.search(doc_type="invoice", limit=20)
+             if r["fields"]["direction"] == "out" and r["fields"].get("due_date")]  # fmt: skip
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31", "min_days": 1})
+    listed = {i["bucket_key"] for c in out["customers"] for i in c["invoices"]}
+    assert listed == {r["bucket_key"] for r in sales} and out["client"] == "ACME"

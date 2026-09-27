@@ -120,3 +120,32 @@ def test_aging_counts_what_is_left_after_partial_payments() -> None:
     inv["fields"]["paid_amount"] = "400.00"
     cash = cash_position([inv], on=date(2026, 9, 30))
     assert cash["receivables"]["total"] == D("600.00")
+
+
+def test_overdue_receivables_grouped_by_customer() -> None:
+    from langclaw.accounting.outlook import overdue_receivables
+
+    a = _inv("s1", "out", 1000, "2026-09-01", partner="Alfa")
+    a["fields"].update(invoice_number="FC-1", customer_cui="RO1", paid_amount="400.00")
+    b = _inv("s2", "out", 200, "2026-08-01", partner="Alfa")
+    b["fields"].update(invoice_number="FC-2", customer_cui="RO1")
+    c = _inv("s3", "out", 50, "2026-09-25", partner="Beta")  # 5 days: under min_days
+    paid = _inv("s4", "out", 70, "2026-08-01", paid="2026-08-05", partner="Gama")
+    buy = _inv("p1", "in", 999, "2026-08-01", partner="Furnizor")
+    out = overdue_receivables([a, b, c, paid, buy], on=date(2026, 9, 30), min_days=7)
+    assert [x["partner"] for x in out] == ["Alfa"]
+    alfa = out[0]
+    assert alfa["cui"] == "RO1" and alfa["outstanding"] == D("800.00")
+    assert [(i["number"], i["days_overdue"], i["outstanding"]) for i in alfa["invoices"]] == [
+        ("FC-2", 60, D("200.00")), ("FC-1", 29, D("600.00"))]  # fmt: skip
+
+
+def test_the_reminders_template_is_valid_against_the_real_tools() -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.config.schema import DocumentsConfig
+    from langclaw.documents import DocumentServices
+    from langclaw.workflows.graph import parse_graph_spec
+
+    names = {t.name for t in build_accounting_tools(DocumentServices(DocumentsConfig()))}
+    path = Path(__file__).resolve().parent.parent / "ui/templates/payment_reminders.graph.json"
+    parse_graph_spec("payment_reminders", json.loads(path.read_text()), available_tools=names)
