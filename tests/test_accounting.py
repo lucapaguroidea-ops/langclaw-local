@@ -581,3 +581,59 @@ async def test_the_overview_gathers_a_clients_month(acme) -> None:
     assert "cash" in view["outlook"] and view["bank"]["movements"] == []
     bad = await accounting_overview(services, client, "sept")
     assert "YYYY-MM" in bad["report"]["error"]
+
+
+@needs_pg
+async def test_the_monthly_loop_runs_end_to_end(acme) -> None:
+    from datetime import date
+
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.period import resolve_period
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import build_document_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    class Bus:
+        def __init__(self) -> None:
+            self.published: list[Any] = []
+
+        async def publish(self, msg: Any) -> None:
+            self.published.append(msg)
+
+    services, scoped = acme
+    bus = Bus()
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(
+        Tenant(id="acme", name="ACME", tax_id="RO12345678", review_chat="telegram:-100111",
+               profile={"vat_payer": True, "expected_documents": ["bank_statement"]})
+    )  # fmt: skip
+    tools = build_accounting_tools(services, bus=bus) + build_document_tools(services, bus=bus)
+    real = build_toolset_executor(tools)
+    prompts: list[str] = []
+
+    async def executor(request):
+        if request.kind == "llm":  # the only fake: the model
+            prompts.append(request.payload["prompt"])
+            return request.schema(status="2 invoices queued", summary="ok", items=[])
+        return await real(request)
+
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    parsed = parse_graph_spec("accounting_month", json.loads(path.read_text()))
+    spec = WorkflowSpec(name="accounting_month", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    with tenant_scope(await registry.get("acme")):
+        result = await runner.start(spec, {"period": ""}, run_id="month:1", tenant="acme")
+    assert result.status == "waiting"  # a person approves the advice
+    last_month = resolve_period("", today=date.today())
+    assert f'"period": "{last_month}"' in prompts[0]  # empty period → last month
+    queued = [m.metadata["workflow_input"] for m in bus.published]
+    assert queued and all(m.metadata["tenant"] == "acme" for m in bus.published)
+    done = await runner.resume(spec, "month:1", {"action": "approve", "by": "luca"})
+    assert done.status == "completed"

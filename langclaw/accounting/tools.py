@@ -38,6 +38,7 @@ from langclaw.accounting.period import (
     blockers,
     document_state,
     parse_period,
+    resolve_period,
     trial_balance,
     vat_summary,
 )
@@ -306,6 +307,7 @@ def build_accounting_tools(
         return {"key": key, "url": url, "exported": batch.exported, "skipped": batch.skipped}
 
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
+        period = resolve_period(period)
         start, end = parse_period(period)
         svc = services.current()
         journal = Journal(svc.store)
@@ -334,12 +336,12 @@ def build_accounting_tools(
             report["note"] = "Over 200 invoices in the month: the report covers the first 200."
         return svc, json.loads(json.dumps(report, default=str))
 
-    async def accounting_period_report(period: str) -> dict:
+    async def accounting_period_report(period: str = "") -> dict:
         """A month's close report: trial balance, VAT summary (D300 draft), blockers,
         and which expected documents (client profile ``expected_documents``) are in.
 
         Args:
-            period: The month, as YYYY-MM.
+            period: The month, as YYYY-MM (empty: last month).
         """
         try:
             _, report = await _period_report(period)
@@ -347,17 +349,18 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return report
 
-    async def accounting_period_close(period: str, closed_by: str = "") -> dict:
+    async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
         are missing; afterwards nothing
         can be posted with a date in it. Saves the report in the client's bucket.
 
         Args:
-            period: The month, as YYYY-MM.
+            period: The month, as YYYY-MM (empty: last month).
             closed_by: Who closed it.
         """
         try:
             svc, report = await _period_report(period)
+            period = report["period"]
             if report["closed"]:
                 return {"error": f"Period {period} is already closed.", "closed": report["closed"]}
             if report["blockers"]:
@@ -389,17 +392,18 @@ def build_accounting_tools(
             )
         ]
 
-    async def accounting_outlook(period: str, months: int = 6) -> dict:
+    async def accounting_outlook(period: str = "", months: int = 6) -> dict:
         """Facts to advise a client on what's coming: returns due after the month,
         how close the year's revenue is to regime limits, the VAT trend, and cash
         (receivables / payables aging, bank balance, the next 30 days).
 
         Args:
-            period: The month just finished, as YYYY-MM.
+            period: The month just finished, as YYYY-MM (empty: last month).
             months: How many months of VAT history to compare (2-12).
         """
         tenant = current_tenant()
         try:
+            period = resolve_period(period)
             start, end = parse_period(period)
             svc = services.current()
             profile = _profile()
