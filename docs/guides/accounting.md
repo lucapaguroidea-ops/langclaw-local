@@ -44,6 +44,28 @@ document, non-negative amounts, one side per line, balance re-checked inside the
 posting transaction. `partner_history` in the context comes from these entries,
 so proposals get more consistent as the accountant approves them.
 
+## Closing a month
+
+`accounting_period_report(period="2026-09")` gives, for one client and month:
+
+- **blockers** — invoices dated in the month that still have no entry (filed,
+  needs review, deferred for manual booking);
+- **trial_balance** — debit / credit turnover and balance per account, from the
+  posted journal lines, and whether it balances;
+- **vat** — the D300 draft figures: sales and purchases by rate, reverse charge
+  (counted as both collected and deductible), collected, deductible, payable or
+  refundable. Credit notes count negative.
+
+`accounting_period_close(period, closed_by=)` refuses while there are blockers
+or the balance is off; otherwise it saves the report to
+`reports/<period>/close.json` in the client's bucket and **locks** the month:
+`journal_post` refuses any entry dated in it (`closed_periods` table in the
+client's schema). There's no reopen tool yet — reopening is a database change
+on purpose.
+
+These are figures for the accountant to check and file, not the ANAF D300 XML;
+generating the declaration file (DUKIntegrator) is a later slice.
+
 ## Export to SAGA / NextUp
 
 `accounting_export(target="saga", date_from=, date_to=, again=False)` takes the
@@ -76,3 +98,5 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   covered yet.
 - The SAGA file follows the published import layout but hasn't been imported
   into a real SAGA install yet — try one batch before relying on it.
+- Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
+  line that carries 0% needs the rate filled in before it adds up.

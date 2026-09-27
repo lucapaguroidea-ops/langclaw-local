@@ -2,8 +2,8 @@
 The journal — posted entries, in the client's own schema, one per document.
 
 The only write path is :meth:`Journal.post`, which re-checks balance inside a
-transaction; the tables add row-level guards (non-negative amounts, one side per
-line, one entry per document).
+transaction and refuses dates in a closed period (:meth:`Journal.close_period`);
+the tables add row-level guards (non-negative amounts, one side per line, one entry per document).
 """
 
 from __future__ import annotations
@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS {schema}.journal_lines (
     credit      NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (credit >= 0),
     explanation TEXT NOT NULL DEFAULT '',
     CHECK ((debit > 0) <> (credit > 0))
+);
+CREATE TABLE IF NOT EXISTS {schema}.closed_periods (
+    period     TEXT PRIMARY KEY,
+    closed_by  TEXT NOT NULL DEFAULT '',
+    closed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS journal_partner_idx ON {schema}.journal_entries (partner_cui);
 """
@@ -97,12 +102,19 @@ class Journal:
             )
             if exists:
                 raise JournalError(f"{document['bucket_key']!r} is already posted.")
+            entry_date = _date(document.get("document_date"))
+            if entry_date is not None:
+                period = entry_date.strftime("%Y-%m")
+                if await conn.fetchval(
+                    f"SELECT 1 FROM {self._schema}.closed_periods WHERE period = $1", period
+                ):
+                    raise JournalError(f"Period {period} is closed; nothing can be posted in it.")
             entry_id = await conn.fetchval(
                 f"INSERT INTO {self._schema}.journal_entries (bucket_key, entry_date, direction, "
                 "partner_cui, partner_name, explanation, legal_basis, approved_by) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
                 document["bucket_key"],
-                _date(document.get("document_date")),
+                entry_date,
                 "in" if incoming else "out",
                 fields.get("supplier_cui" if incoming else "customer_cui", ""),
                 document.get("sender" if incoming else "receiver", ""),
@@ -147,6 +159,37 @@ class Journal:
             keys,
         )
         return {r["bucket_key"] for r in rows}
+
+    async def lines_between(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
+        """Every posted line with an entry date in [*date_from*, *date_to*]."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT l.account, l.debit, l.credit FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date BETWEEN $1 AND $2 ORDER BY l.id",
+            date_from,
+            date_to,
+        )
+        return [dict(r) for r in rows]
+
+    async def close_period(self, period: str, *, closed_by: str = "") -> bool:
+        """Lock *period* (``YYYY-MM``); False when it was already closed."""
+        pool = await self._db()
+        done = await pool.fetchval(
+            f"INSERT INTO {self._schema}.closed_periods (period, closed_by) VALUES ($1, $2) "
+            "ON CONFLICT DO NOTHING RETURNING 1",
+            period,
+            closed_by,
+        )
+        return bool(done)
+
+    async def closed_periods(self) -> list[dict[str, Any]]:
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT period, closed_by, closed_at FROM {self._schema}.closed_periods "
+            "ORDER BY period"
+        )
+        return [{**dict(r), "closed_at": r["closed_at"].isoformat()} for r in rows]
 
     async def supplier_history(self, partner_cui: str, limit: int = 5) -> list[dict[str, Any]]:
         """How this partner's invoices were booked before: the non-VAT,
