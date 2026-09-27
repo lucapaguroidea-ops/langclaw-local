@@ -273,3 +273,27 @@ async def test_history_endpoint_uses_api_identity() -> None:
         plane.history.assert_awaited_once_with("api", "admin", "web")
     finally:
         await client.close()
+
+
+async def test_documents_routes(setup) -> None:
+    channel, _bus, client, _cron, _router = setup
+    off = await client.get("/v1/documents", headers=AUTH)
+    assert off.status == 409 and "DOCUMENTS__ENABLED" in (await off.json())["error"]
+
+    class Fake:
+        async def list_documents(self, **kw):
+            return {"documents": [], "count": 0, "mode": "semantic", "semantic": True, "kw": kw}
+
+        async def get_document(self, key):
+            return {"document": {"bucket_key": key}, "link": ""}
+
+    plane = channel._plane
+    plane.list_documents = Fake().list_documents
+    plane.get_document = Fake().get_document
+    resp = await client.get(
+        "/v1/documents", params={"q": "rent", "semantic": "true", "limit": "5"}, headers=AUTH
+    )
+    body = await resp.json()
+    assert body["kw"]["q"] == "rent" and body["kw"]["semantic"] is True and body["kw"]["limit"] == 5
+    detail = await client.get("/v1/documents/inbox/2026-09-27/a-b.pdf", headers=AUTH)
+    assert (await detail.json())["document"]["bucket_key"] == "inbox/2026-09-27/a-b.pdf"

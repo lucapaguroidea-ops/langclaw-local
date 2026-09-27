@@ -234,6 +234,8 @@ class ApiChannel(BaseChannel):
                 web.post("/v1/runs/{run_id}/cancel", self._cancel_run),
                 web.post("/v1/runs/{run_id}/review", self._answer_review),
                 web.get("/v1/reviews", self._list_reviews),
+                web.get("/v1/documents", self._list_documents),
+                web.get("/v1/documents/{key:.+}", self._get_document),
                 web.get("/v1/schedules", self._list_schedules),
                 web.post("/v1/schedules", self._add_schedule),
                 web.delete("/v1/schedules/{job_id}", self._remove_schedule),
@@ -497,6 +499,25 @@ class ApiChannel(BaseChannel):
     # ------------------------------------------------------------------
     # Handlers — schedules
     # ------------------------------------------------------------------
+
+    async def _list_documents(self, request: web.Request) -> web.Response:
+        query = request.query
+        return self._json(
+            await self._require_plane().list_documents(
+                q=query.get("q", ""),
+                semantic=query.get("semantic", "").lower() in ("1", "true", "yes"),
+                sender=query.get("sender", ""),
+                receiver=query.get("receiver", ""),
+                doc_type=query.get("doc_type", ""),
+                date_from=query.get("date_from", ""),
+                date_to=query.get("date_to", ""),
+                status=query.get("status", ""),
+                limit=_parse_int(query.get("limit"), default=50, name="limit"),
+            )
+        )
+
+    async def _get_document(self, request: web.Request) -> web.Response:
+        return self._json(await self._require_plane().get_document(request.match_info["key"]))
 
     async def _list_schedules(self, request: web.Request) -> web.Response:
         return self._json({"schedules": await self._require_plane().list_schedules()})

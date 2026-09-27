@@ -664,3 +664,73 @@ def test_semantic_tools_exist_only_with_an_embedding_model(monkeypatch) -> None:
     assert seen["api_key"] == "sk-or-test"
     names = {t.name for t in build_document_tools(services)}
     assert {"documents_semantic_search", "documents_reindex"} <= names
+
+
+# -- control plane (UI / HTTP API) -------------------------------------------------------
+
+
+def _plane(services: DocumentServices | None, enabled: bool = True):
+    from langclaw.gateway.control import ControlPlane
+
+    config = LangclawConfig()
+    config.documents.enabled = enabled
+    plane = ControlPlane(config=config, bus=MagicMock(), channels=[], agent_names=[])
+    if services is not None:
+        plane.documents = services
+    return plane
+
+
+async def test_documents_api_is_a_clear_error_when_documents_are_off() -> None:
+    from langclaw.gateway.control import FeatureDisabledError
+
+    with pytest.raises(FeatureDisabledError, match="LANGCLAW__DOCUMENTS__ENABLED"):
+        await _plane(None, enabled=False).list_documents()
+
+
+@needs_pg
+async def test_documents_api_lists_filters_and_ranks(store: DocumentStore) -> None:
+    services = DocumentServices(DocumentsConfig(), store=store, embeddings=FakeEmbeddings())
+    save = {t.name: t for t in build_document_tools(services)}["documents_save"]
+    await save.ainvoke({"bucket_key": "a", "summary": "electricity invoice", "sender": "Enel"})
+    await save.ainvoke({"bucket_key": "b", "summary": "apartment lease", "status": "rejected"})
+    plane = _plane(services)
+
+    listed = await plane.list_documents()
+    assert {d["bucket_key"] for d in listed["documents"]} == {"a", "b"}
+    assert listed["semantic"] is True and listed["mode"] == "filter"
+    assert [
+        d["bucket_key"] for d in (await plane.list_documents(status="rejected"))["documents"]
+    ] == ["b"]
+    assert [d["bucket_key"] for d in (await plane.list_documents(sender="enel"))["documents"]] == [
+        "a"
+    ]
+
+    ranked = await plane.list_documents(q="power bill", semantic=True)
+    assert ranked["mode"] == "semantic" and ranked["documents"][0]["bucket_key"] == "a"
+    assert "similarity" in ranked["documents"][0]
+
+
+@needs_pg
+async def test_documents_api_semantic_without_embeddings_falls_back_to_text(
+    store: DocumentStore,
+) -> None:
+    await store.save("a", {"summary": "electricity invoice"})
+    plane = _plane(DocumentServices(DocumentsConfig(), store=store))
+    out = await plane.list_documents(q="electricity", semantic=True)
+    assert out["mode"] == "text" and out["semantic"] is False
+    assert [d["bucket_key"] for d in out["documents"]] == ["a"]
+
+
+@needs_pg
+async def test_documents_api_detail_has_a_download_link(
+    bucket: Bucket, store: DocumentStore
+) -> None:
+    from langclaw.gateway.control import NotFoundError
+
+    await bucket.put("inbox/inv.pdf", b"%PDF-1.4", content_type="application/pdf")
+    await store.save("inbox/inv.pdf", {"summary": "invoice"})
+    plane = _plane(DocumentServices(DocumentsConfig(), bucket=bucket, store=store))
+    doc = await plane.get_document("inbox/inv.pdf")
+    assert doc["document"]["summary"] == "invoice" and doc["link"].startswith("https://")
+    with pytest.raises(NotFoundError):
+        await plane.get_document("nope")
