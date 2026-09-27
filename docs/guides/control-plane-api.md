@@ -44,8 +44,10 @@ curl "$URL/v1/turns/<turn_id>?wait=25" -H "Authorization: Bearer $TOKEN"
 ```
 
 - `messages` holds every output of the turn in order: `ai` text,
-  `tool_progress` (tool name and args in `metadata`), `tool_result`, or
-  `command`.
+  `tool_progress` (tool name and args in `metadata`), `tool_result`,
+  `command`, or `review` — a workflow run paused for review (`metadata` holds
+  `run_id`, `interrupt_id`, `data`, `editable`; answer it with
+  `POST /v1/runs/{run_id}/review`).
 - `wait` (0–120 s) long-polls; omit it to return immediately.
 - `context_id` selects the conversation thread (memory is kept per
   `user_id` + `context_id`). `agent_name` routes to a named agent.
@@ -60,13 +62,22 @@ curl "$URL/v1/turns/<turn_id>?wait=25" -H "Authorization: Bearer $TOKEN"
 | Method & path | Does |
 |---|---|
 | `GET /v1/status` | Version, model, channels, agents, enabled features |
-| `GET /v1/workflows` | Registered workflows (`mode`, `editable`) |
-| `GET /v1/workflows/{name}` | One workflow; saved (JS) workflows include `script` |
-| `PUT /v1/workflows/{name}` | Create/replace a saved JS workflow: `{"script", "description"?, "uses_tools"?}` |
-| `DELETE /v1/workflows/{name}` | Delete a saved workflow |
+| `GET /v1/catalog` | Tool and subagent names workflow steps can use |
+| `GET /v1/workflows` | Workflows (`source`: `file` or `code`, `editable`, `valid`); files that failed to load are listed with their `errors` |
+| `GET /v1/workflows/{name}` | One workflow with a `mermaid` drawing; file workflows include `graph` (the file) |
+| `PUT /v1/workflows/{name}` | Create/replace `workflows/<name>.graph.json`; the body is the file (see the [workflows guide](workflows.md#as-a-file-workflowsnamegraphjson)). An invalid graph is a 400 listing every problem; unknown tools come back as `warnings`. The previous version is kept. |
+| `POST /v1/workflows/{name}/validate` | Check a graph without saving: `{"valid", "errors", "warnings"}` |
+| `DELETE /v1/workflows/{name}` | Delete a workflow file (its history is kept) |
+| `GET /v1/workflows/{name}/versions` | Saved versions, newest first |
+| `GET /v1/workflows/{name}/versions/{version}` | One saved version |
+| `POST /v1/workflows/{name}/versions/{version}/restore` | Make that version current |
 | `POST /v1/workflows/{name}/runs` | Start a run: `{"input"?}` → `202 {"run_id", "turn_id"}` |
-| `GET /v1/runs`, `GET /v1/runs/{run_id}` | Journaled runs (needs `workflows.resume_on_startup`) |
-| `POST /v1/runs/{run_id}/cancel` | Cancel a run this gateway started |
+| `GET /v1/workflows/{name}/runs` | That workflow's runs (`?status=&limit=`) |
+| `GET /v1/runs` | Recent runs (`?workflow=&status=&limit=`) |
+| `GET /v1/runs/{run_id}` | One run: status, trigger, reviews (with answers), final state, and each step's result |
+| `POST /v1/runs/{run_id}/cancel` | Cancel a run executing in this gateway |
+| `GET /v1/reviews` | Reviews waiting for an answer (`?workflow=`) |
+| `POST /v1/runs/{run_id}/review` | Answer a review: `{"action": "approve" \| "edit" \| "reject", "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}`. The run continues on the channel that started it. A second answer is a **409** whose `decision` says who answered first, and where. |
 | `GET /v1/schedules` | Scheduled jobs |
 | `POST /v1/schedules` | `{"name", "channel", "user_id", "message" \| "workflow_name", "cron_expr" \| "every_seconds", "chat_id"?, "workflow_input"?}` |
 | `DELETE /v1/schedules/{id}` | Remove a scheduled job |
@@ -76,11 +87,10 @@ A workflow run started over the API is tracked as a turn: poll
 
 Errors are `{"error": "..."}`: **400** invalid input, **401** bad token,
 **404** not found, **409** feature disabled (the message names the setting to
-turn on), **503** gateway not ready.
+turn on) or review already answered, **503** gateway not ready.
 
-Saved-workflow editing needs `LANGCLAW__WORKFLOWS__ENABLED=true`,
-`LANGCLAW__INTERPRETER__ENABLED=true` (plus `langclaw[interpreter]`) and a
-filesystem-rooted agent backend. Schedules need `LANGCLAW__CRON__ENABLED=true`.
+Workflows need `LANGCLAW__WORKFLOWS__ENABLED=true`; schedules need
+`LANGCLAW__CRON__ENABLED=true`.
 
 ## Building a UI with Appsmith
 
@@ -104,7 +114,7 @@ Appsmith runs API queries **server-side**, so it can reach the private
 | `listTurns` | GET | `/v1/turns?context_id=appsmith` | |
 | `listWorkflows` | GET | `/v1/workflows` | |
 | `getWorkflow` | GET | `/v1/workflows/{{wfTable.selectedRow.name}}` | |
-| `saveWorkflow` | PUT | `/v1/workflows/{{wfName.text}}` | `{"script": {{wfScript.text}}, "description": {{wfDesc.text}}}` |
+| `saveWorkflow` | PUT | `/v1/workflows/{{wfName.text}}` | `{{JSON.parse(wfGraph.text)}}` |
 | `deleteWorkflow` | DELETE | `/v1/workflows/{{wfTable.selectedRow.name}}` | |
 | `runWorkflow` | POST | `/v1/workflows/{{wfTable.selectedRow.name}}/runs` | `{"input": {{JSON.parse(wfInput.text \|\| "{}")}}}` |
 | `listSchedules` | GET | `/v1/schedules` | |
@@ -145,8 +155,9 @@ export default {
   and `currentItem.messages.filter(m => m.type === "ai").map(m => m.content).join("\n\n")`
   (agent). Set `listTurns` to run on page load.
 - **Workflows:** a Table `wfTable` bound to `{{listWorkflows.data.workflows}}`;
-  Inputs `wfName`, `wfDesc`, a multi-line Input `wfScript` (default
-  `{{getWorkflow.data.script}}`, with `getWorkflow` run on row selection), and
+  an Input `wfName`, a multi-line Input `wfGraph` (default
+  `{{JSON.stringify(getWorkflow.data.graph, null, 2)}}`, with `getWorkflow` run on
+  row selection), and
   a JSON Input `wfInput`; Buttons for Save (`saveWorkflow`, then `listWorkflows`),
   Run (`{{Turns.runSelected()}}`), and Delete.
 - **Schedules:** a Table `schedTable` bound to `{{listSchedules.data.schedules}}`

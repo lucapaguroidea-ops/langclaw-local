@@ -7,12 +7,12 @@ Real job: fact-check a drafted answer before it ships. Decompose the draft into
 atomic claims, then for each claim spawn N independent skeptic *subagents* — each
 gathers its OWN evidence with web_search in an isolated context and tries to refute,
 defaulting to REFUTED when unsure. A claim survives only if it isn't out-voted.
-Independence is the whole game, and a subagent makes it real: each skeptic searches
-on its own and never sees the others' findings — so you get genuinely separate
-verdicts, not one context rationalising itself N times.
 
-Decomposition is a one-shot judgment, so it's a model-backed tool; the skeptics do
-multi-step work with their own tools, so they're subagents.
+Independence is the whole game: each skeptic searches on its own and never sees the
+others' findings — separate verdicts, not one context rationalising itself N times.
+
+LangGraph shape: ``decompose`` → ``Send`` one ``skeptic`` task per (claim, vote) —
+all in parallel, each checkpointed — → ``report`` tallies the votes per claim.
 
     /workflows run fact_check {"question": "Is SQLite a good prod database?",
         "answer": "SQLite supports unlimited concurrent writers; NASA uses it for telemetry.",
@@ -21,15 +21,22 @@ multi-step work with their own tools, so they're subagents.
 
 from __future__ import annotations
 
+import operator
 import re
+from typing import Annotated
 
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from examples.workflow_patterns._app import make_app, pick_label
+from langclaw.workflows import steps
 
 VERDICTS = ["refuted", "supported", "unverifiable"]
 _URL_RE = re.compile(r"https?://\S+")
 _VERDICT_RE = re.compile(r"verdict\s*:\s*([a-z]+)", re.IGNORECASE)
+
 _EXTRACT_SYS = (
     "Extract the distinct, atomic, checkable factual claims from the answer. Skip "
     "opinions and hedges. Return at most 6 of the load-bearing claims."
@@ -56,6 +63,74 @@ class Claims(BaseModel):
     claims: list[str] = Field(description="Atomic, checkable factual claims.")
 
 
+class FactCheckState(TypedDict, total=False):
+    question: str
+    answer: str
+    votes: int
+    claims: list[str]
+    ballots: Annotated[list[dict], operator.add]
+    report: str
+
+
+class SkepticTask(TypedDict):
+    claim: str
+
+
+async def decompose(state: FactCheckState) -> dict:
+    extracted = await steps().llm(state["answer"], schema=Claims, system=_EXTRACT_SYS)
+    return {"claims": extracted.claims[:6]}
+
+
+def fan_out(state: FactCheckState) -> list[Send] | str:
+    if not state.get("claims"):
+        return "report"
+    return [
+        Send("skeptic", {"claim": claim})
+        for claim in state["claims"]
+        for _ in range(state.get("votes", 2))
+    ]
+
+
+async def skeptic(task: SkepticTask) -> dict:
+    reply = await steps().subagent("skeptic", f"CLAIM: {task['claim']}")
+    text = reply if isinstance(reply, str) else str(reply)
+    link = m.group(0).rstrip(".,)") if (m := _URL_RE.search(text)) else ""
+    return {"ballots": [{"claim": task["claim"], "verdict": _verdict(text), "link": link}]}
+
+
+def report(state: FactCheckState) -> dict:
+    claims = state.get("claims") or []
+    if not claims:
+        return {"report": "# Fact-check\n\nNo checkable claims found."}
+    rows, kept = [], 0
+    for claim in claims:
+        ballots = [b for b in state.get("ballots", []) if b["claim"] == claim]
+        verdicts = [b["verdict"] for b in ballots]
+        survived = verdicts.count("supported") > verdicts.count("refuted")  # ties lose
+        kept += survived
+        rows.append(f"{'✅' if survived else '❌'} {claim}  _( {'/'.join(verdicts)} )_")
+        rows += [f"    ↳ {b['link']}" for b in ballots if b["link"]][:2]
+    head = [
+        f"# Fact-check — {kept}/{len(claims)} claims survived",
+        "",
+        f"**Question:** {state['question']}",
+        "",
+    ]
+    return {"report": "\n".join(head + rows)}
+
+
+def build() -> StateGraph:
+    builder = StateGraph(FactCheckState)
+    builder.add_node("decompose", decompose)
+    builder.add_node("skeptic", skeptic)
+    builder.add_node("report", report)
+    builder.add_edge(START, "decompose")
+    builder.add_conditional_edges("decompose", fan_out, ["skeptic", "report"])
+    builder.add_edge("skeptic", "report")
+    builder.add_edge("report", END)
+    return builder
+
+
 def register(app):
     # Verification: each skeptic does its OWN multi-step evidence-gathering → a subagent.
     app.subagent(
@@ -71,10 +146,11 @@ def register(app):
         ),
         tools=["web_search"],
     )
-
-    @app.workflow(
+    app.workflow(
         "fact_check",
+        graph=build(),
         input=Draft,
+        output_key="report",
         max_concurrency=6,
         description=(
             "Verify a drafted answer: decompose it into atomic claims, then for each "
@@ -82,46 +158,6 @@ def register(app):
             "and vote refute/support. Returns a report of which claims survived."
         ),
     )
-    async def fact_check(ctx, inp: Draft) -> str:
-        ctx.phase("decompose")
-        # Decomposition is a one-shot judgment → ctx.llm with a schema (a list back).
-        extracted = await ctx.llm(inp.answer, schema=Claims, system=_EXTRACT_SYS)
-        claims = extracted.claims[:6]
-        if not claims:
-            return "# Fact-check\n\nNo checkable claims found."
-        ctx.log(f"{len(claims)} claims to verify")
-
-        ctx.phase("verify")
-
-        async def verify_one(c, claim: str):
-            # N independent skeptic subagents, each with its own isolated evidence pull.
-            replies = await c.parallel(
-                [lambda cc: cc.subagent("skeptic", f"CLAIM: {claim}") for _ in range(inp.votes)]
-            )
-            texts = [r if isinstance(r, str) else str(r) for r in replies]
-            verdicts = [_verdict(t) for t in texts]
-            survived = verdicts.count("supported") > verdicts.count("refuted")  # ties lose
-            links = [m.group(0).rstrip(".,)") for t in texts if (m := _URL_RE.search(t))]
-            return {"claim": claim, "verdicts": verdicts, "survived": survived, "links": links[:2]}
-
-        results = await ctx.parallel([lambda c, cl=cl: verify_one(c, cl) for cl in claims])
-
-        ctx.phase("report")
-        kept = [r for r in results if r["survived"]]
-        out = [
-            f"# Fact-check — {len(kept)}/{len(results)} claims survived",
-            "",
-            f"**Question:** {inp.question}",
-            "",
-        ]
-        for r in results:
-            mark = "✅" if r["survived"] else "❌"
-            tally = "/".join(r["verdicts"])
-            out.append(f"{mark} {r['claim']}  _( {tally} )_")
-            for url in r["links"]:
-                out.append(f"    ↳ {url}")
-        return "\n".join(out)
-
     return app
 
 

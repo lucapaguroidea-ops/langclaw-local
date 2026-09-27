@@ -40,7 +40,7 @@ Think OpenClaw or Hermes - a personal AI that:
 3. **Declarative RBAC, three axes**: `app.role("analyst", tools=["*"], subagents=["researcher"], workflows=["digest"])` - gate tools, subagents, *and* workflows per role. Subagents and workflows are default-deny; permissions run as middleware before the LLM sees anything.
 4. **Subagent delegation**: Register specialist subagents that run in isolated contexts. The main agent delegates via a built-in `task` tool; results flow back cleanly or stream directly to the channel.
 5. **Durable workflows**: Register typed, multi-step routines with `@app.workflow()`. Bounded parallelism, live progress, and crash-resume are handled for you - and the agent, a user, or a cron job can run them. ([jump ↓](#workflows))
-6. **Scheduled jobs**: Ask the agent to schedule recurring tasks, or fire a saved workflow on cron - both publish to the same message bus and flow through the same pipeline as user messages.
+6. **Scheduled jobs**: Ask the agent to schedule recurring tasks, or fire a workflow on cron - both publish to the same message bus and flow through the same pipeline as user messages.
 7. **Guardrails middleware**: Content filtering, PII redaction, and rate limiting run as composable middleware before every LLM call.
 8. **Pluggable everything**: Message bus (asyncio / RabbitMQ / Kafka), checkpointer (SQLite / Postgres), agent filesystem/shell backend (local-shell / filesystem / state / store), LLM providers - swap backends via config, not code changes.
 9. **Not a wrapper**: langclaw compiles down to a real LangGraph `CompiledStateGraph`. Bring any LangChain tool, model, or integration.
@@ -127,38 +127,48 @@ See [`examples/`](examples/) for complete, runnable versions.
 
 ## Workflows
 
-A **workflow** is a durable, typed, multi-step routine you register once and run many ways - the agent calls it as a `workflow_<name>` tool, a user runs `/workflows run`, or a cron job fires it. You write the control flow; langclaw validates input and output, bounds parallelism, streams progress to the channel, and resumes after a crash.
+A workflow is a named, multi-step LangGraph `StateGraph` the agent can run as a tool, a user can start from chat, and cron can fire. Every run is checkpointed (a crash resumes from the last finished step) and can **pause for human review** until someone approves, edits, or rejects.
 
 ```python
-from pydantic import BaseModel
-from langclaw import Langclaw
+from typing import Annotated
+import operator
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
+from typing_extensions import TypedDict
+from langclaw.workflows import request_review, steps
 
-app = Langclaw()
-
-class Brief(BaseModel):
+class Research(TypedDict, total=False):
     topic: str
-    angles: list[str] = ["overview", "risks", "recent news"]
+    angles: list[str]
+    findings: Annotated[list, operator.add]
+    draft: str
+    brief: str
 
-@app.workflow("research", input=Brief, max_concurrency=4,
-              description="Search several angles in parallel, then synthesize.")
-async def research(ctx, inp: Brief) -> str:
-    ctx.phase("gather")                      # named progress, shown live in-channel
+async def search(task: dict) -> dict:                       # one per angle, in parallel
+    hits = await steps().tool("web_search", query=f"{task['topic']} {task['angle']}")
+    return {"findings": [hits]}
 
-    def search(angle: str):                  # one search per angle...
-        return lambda c: c.tool("web_search", query=f"{inp.topic} {angle}")
+async def write(state: Research) -> dict:
+    return {"draft": await steps().llm(f"Brief on {state['topic']}: {state['findings']}")}
 
-    findings = await ctx.parallel([search(a) for a in inp.angles])   # ...run in parallel
+def review(state: Research) -> dict:                      # pauses until you answer
+    decision = request_review("Send this brief?", data={"draft": state["draft"]}, editable="draft")
+    return {"brief": decision["data"].get("draft", state["draft"])}
 
-    ctx.phase("synthesize")
-    return "\n\n".join(f"## {a}\n{r}" for a, r in zip(inp.angles, findings))
+builder = StateGraph(Research)
+builder.add_node("search", search)
+builder.add_node("write", write)
+builder.add_node("review", review)
+builder.add_conditional_edges(
+    START, lambda s: [Send("search", {"topic": s["topic"], "angle": a}) for a in s["angles"]]
+)
+builder.add_edge("search", "write")
+builder.add_edge("write", "review")
+builder.add_edge("review", END)
+
+app.workflow("research", graph=builder, output_key="brief",
+             description="Research a topic from several angles, then ask before sending.")
 ```
-
-A workflow body composes these kinds of step (each becomes a memoized, resumable unit once `LANGCLAW__WORKFLOWS__DURABLE_STEPS=true` - off by default):
-
-- `ctx.tool(name, **kw)` - call a registered tool (deterministic capability)
-- `ctx.subagent(type, prompt)` - delegate to a subagent (its own tools, isolated context)
-- `ctx.llm(prompt, schema=Model)` - **one model call, no tools, no agent loop** - for one-shot judgment (classify / score / extract). With a Pydantic `schema` you get a *validated object back from a single structured call*; without it, plain text. Neither Claude Code nor deepagents exposes a bare model-call step - this is langclaw's, and like every step it's memoized and crash-resumable when `durable_steps` is enabled.
-- `ctx.parallel([...])` - fan the above out concurrently, bounded by `max_concurrency`
 
 ```bash
 LANGCLAW__WORKFLOWS__ENABLED=true    # workflows are off by default
@@ -167,27 +177,17 @@ LANGCLAW__WORKFLOWS__ENABLED=true    # workflows are off by default
 Now the agent sees a `workflow_research` tool, and users can drive it directly:
 
 ```
-/workflows run research {"topic": "solid-state batteries"}
-/workflows runs                      # recent runs from the journal
-/workflows status <run_id>
+/workflows run research {"topic": "solid-state batteries", "angles": ["risks", "news"]}
+/workflows reviews                   # runs waiting for you
+/workflows approve <run_id>          # or reject / edit <run_id> {json}
+/workflows runs                      # recent runs
 ```
 
-**Three ways to author the body:**
+Nodes reach langclaw through `steps()`: `.tool(name, **kw)`, `.llm(prompt, schema=Model)` (one model call; with a Pydantic `schema`, a validated object back), and `.subagent(type, prompt)`. LangGraph does the control flow — conditional edges, `Send` fan-out, loops.
 
-| Mode | Who writes it | Reach for it when |
-|---|---|---|
-| `python` *(recommended)* | You | You want typed, testable, deterministic control flow - `ctx.parallel` / `ctx.phase` / `ctx.tool` / `ctx.subagent` / `ctx.llm`. |
-| `saved` | The agent, once | The agent invents a repeatable job: it writes a sandboxed JS body via the `eval` interpreter, saves it to `workflows/<name>.js`, and it loads as a tool. |
-| `llm_authored` *(experimental)* | The model, per run | Low-stakes, supervised work where you declare only the typed contract and let the model write the body fresh each run. |
+**No-code workflows.** The same engine loads `workflows/<name>.graph.json` files — `llm`, `tool`, `subagent`, `branch`, and `human_review` steps wired by edges — which the UI and the agent can edit. See the [workflows guide](docs/guides/workflows.md) and the six orchestration patterns in [`examples/workflow_patterns/`](examples/workflow_patterns/).
 
-**Put it on a schedule.** A saved workflow fired by cron re-runs with **zero LLM cost** - the frozen body executes verbatim - and delivers to the channel that scheduled it (e.g. a daily digest to your Telegram). Saved + cron is validated end-to-end; see [`examples/workflow_research.py`](examples/workflow_research.py) and [`examples/hn_digest_eval.py`](examples/hn_digest_eval.py).
-
-> **How `saved` and `llm_authored` actually run** - programmatic tool calling (PTC):
->
-> - The model writes a small JS program in the `langchain-quickjs` code-interpreter sandbox.
-> - It calls tools, loops, branches, retries - makes one-shot model calls via `tools.llm({ prompt })` (the JS sibling of `ctx.llm`), and can hand off to deepagents subagents via `tools.task`.
-> - Same approach as [Claude Code's dynamic workflows](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code). The honest difference is **scale**: langclaw's sandbox is tuned for scripted control flow and a few subagents, not the tens-to-hundreds-of-agents parallel fan-out Claude's targets.
-> - Needs `uv add "langclaw[interpreter]"`; capability-scoped to the tools you allow via `uses_tools` - no filesystem, network, or ambient host APIs.
+**Put it on a schedule.** A cron job can fire a workflow directly (no agent turn in between) and deliver the result to the channel that scheduled it.
 
 ## Message Flow
 
@@ -283,7 +283,7 @@ Available extras: `telegram`, `telegram-e2e`, `discord`, `slack`, `matrix`, `web
 | `gateway/` | Channel orchestration (`GatewayManager`), command routing, message dispatch |
 | `bus/` | Message bus abstraction - asyncio (dev), RabbitMQ / Kafka (prod) |
 | `middleware/` | Request pipeline: RBAC, rate limit, content filter, PII redaction |
-| `workflows/` | Durable, typed, multi-step routines - registry, runtime, saved-workflow store, crash-resume |
+| `workflows/` | Checkpointed LangGraph workflows - registry, runtime, `.graph.json` format, runner, human review, crash resume |
 | `interpreter/` | Opt-in sandboxed code interpreter (RLM) - PTC tool allowlist + middleware |
 | `config/` | Pydantic Settings with `LANGCLAW__` env prefix (nested `__` delimiter) |
 | `cron/` | Scheduled jobs via APScheduler v4 |
@@ -324,7 +324,7 @@ This is the open-core path to running claw-like agents across a team or a whole 
 
 ### Shipped
 
-- **Workflows** - durable, typed, multi-step routines (`@app.workflow()`); python / saved / llm-authored modes; runnable by the agent, a user (`/workflows`), or cron
+- **Workflows** - checkpointed LangGraph procedures (`app.workflow(name, graph=...)` or `.graph.json` files) with human-in-the-loop review; runnable by the agent, a user (`/workflows`), cron, or the API
 - **Three-axis RBAC** - `app.role(tools=…, subagents=…, workflows=…)`; subagents and workflows are default-deny; enforced as middleware before the LLM
 - **Named agents** - `app.agent()` registers independent agents (own model, tools, and history); switch with `/agent` (auto-routing still planned)
 - **Code interpreter (opt-in)** - sandboxed JS `eval` so the agent can script tool loops, branches, and fan-out over an allowlist

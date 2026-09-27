@@ -397,12 +397,11 @@ class AgentConfig(BaseModel):
 
     @property
     def workflows_dir(self) -> Path:
-        """Host directory holding runtime-authored (saved) workflow ``.js`` files.
+        """Host directory holding ``<name>.graph.json`` workflow files.
 
         Rooted at the agent's *filesystem backend root* so it matches where the
         agent's own ``write_file`` lands: ``backend.root_dir`` when set, else the
-        workspace dir. (For ``state``/``store`` backends there is no host root and
-        file-authoring is unavailable — see ``WorkflowsConfig``.)"""
+        workspace dir."""
         root = (
             Path(self.backend.root_dir).expanduser()
             if self.backend.root_dir
@@ -646,94 +645,51 @@ class InterpreterConfig(BaseModel):
 
 
 class WorkflowsConfig(BaseModel):
-    """Operator-authored Workflow primitive configuration (issue #38).
+    """Workflow configuration — named, checkpointed LangGraph procedures.
 
-    Opt-in and **off by default**.  When enabled, workflows registered with
-    ``@app.workflow()`` become invocable three ways: the LLM calls the
-    ``workflow_<name>`` tool; an operator runs ``/workflows run <name>``; or a
-    message with ``origin="workflow"`` (e.g. a cron-fired job) dispatches one
-    through the gateway.  Each is typed, multi-step, and RBAC-gated by role.
+    Opt-in and **off by default**. When enabled, every workflow — a Python
+    ``StateGraph`` registered with ``app.workflow(name, graph=...)`` or a
+    ``workflows/<name>.graph.json`` file in the agent workspace — is invocable
+    four ways: the LLM calls the ``workflow_<name>`` tool; an operator runs
+    ``/workflows run <name>``; a cron job fires it; or the control-plane API
+    starts it.
 
-    **Runtime authoring (``mode="saved"``):** when this *and* ``interpreter`` are
-    enabled (and the backend is filesystem-rooted), the agent can save a workflow
-    by **writing a file** with its ordinary ``write_file`` tool — there is no
-    bespoke save tool.  After running an ad-hoc job with ``eval``, the user can say
-    "save that workflow"; the agent writes the same JS to ``workflows/<name>.js``
-    (with ``// @description`` / ``// @uses`` header comments).  The gateway watches
-    that folder, reconciles the file into the registry, and rebuilds the default
-    agent, so the new ``workflow_<name>`` tool goes live in the same session and
-    reloads on every restart.  (Requires the ``interpreter`` extra — a saved body
-    runs in the same QuickJS sandbox as ``eval``.  ``state``/``store`` backends have
-    no host folder, so file-authoring is unavailable there.)
+    Runs are checkpointed on the gateway's checkpointer (thread
+    ``workflow:<run_id>``) with a run index in the same database, so a crash
+    resumes from the last finished node on startup, and a ``human_review`` node
+    pauses the run until someone answers (``/workflows approve|reject|edit``,
+    Telegram, or the UI — first answer wins). Workflow files reload when they
+    change, without a restart.
 
-    RBAC is enforced at the **invocation** boundary: the ``workflow_<name>`` tool
-    gate, the ``/workflows`` command, cron dispatch, and bus dispatch all consult
-    the role's default-deny workflow allowlist.  A workflow's **steps**, however,
-    run **in-process** by calling ``tool.ainvoke`` directly — they bypass the
-    graph, so the per-request ``ToolPermissionMiddleware`` does not filter a
-    step's toolset.  A workflow can therefore reach any tool in the default
-    agent's toolset; restrict reachable tools via the workflow's ``uses_tools``,
-    not per-role tool RBAC.  Bus dispatch runs a *whole workflow* as one bus
-    message; full bus → gateway re-entry per *step* (inheriting rate limiting,
-    channel context, per-step checkpointing, and step-level RBAC) is not yet
-    wired.
+    RBAC is enforced at the **invocation** boundary (the ``workflow_<name>``
+    tool gate, ``/workflows``, cron and bus dispatch all consult the role's
+    default-deny workflow allowlist). A workflow's **nodes** call tools
+    in-process through the default agent's toolset, so per-role tool RBAC does
+    not filter them — restrict what a workflow can reach by what it calls.
 
     Env: ``LANGCLAW__WORKFLOWS__ENABLED=true``
     """
 
     enabled: bool = False
-    """Enable the Workflow primitive.  Off by default — registering workflows
-    is inert until this is set."""
+    """Enable workflows. Off by default — registering workflows is inert until
+    this is set."""
 
     max_concurrent_runs: int = 16
-    """Global ceiling on simultaneously-running workflow runs across the host,
-    regardless of any single workflow's own budget."""
+    """Global ceiling on simultaneously-running workflow runs (a run paused for
+    review does not count)."""
 
     max_steps_per_run: int = 1000
-    """Hard backstop on total steps a single run may execute.  Guards against a
-    runaway loop in an operator-authored body."""
+    """Default LangGraph ``recursion_limit`` per run — a backstop against a loop
+    that never ends. A workflow's own ``max_steps`` overrides it."""
 
-    max_depth: int = 2
-    """Maximum nesting depth — how many levels a workflow may invoke other
-    workflows.  Bounds recursive fan-out."""
+    review_channel: str = ""
+    """Channel that also receives every review request (e.g. ``"telegram"``), in
+    addition to the chat that started the run — so runs started from the UI,
+    the API, or cron still reach you. Requires ``review_chat_id``."""
 
-    durable_steps: bool = False
-    """When ``True``, completed workflow step results are persisted to a
-    LangGraph ``BaseStore`` (a sibling SQLite file or the Postgres DSN, matching
-    the checkpointer backend) instead of an in-process dict, so they survive a
-    process restart.  Off by default.
-
-    NOTE: this only *persists* step results — it does not re-run anything on its
-    own.  Set ``resume_on_startup`` for that.  The store currently has no TTL or
-    pruning, so it grows unbounded; keep an eye on it for long-lived deployments."""
-
-    resume_on_startup: bool = False
-    """When ``True``, workflow runs left incomplete by a previous process (a crash
-    / kill) are re-run on startup from the run journal: completed steps replay
-    from the durable step store and only the unfinished tail executes.  Off by
-    default.  Requires ``durable_steps`` (the step store + run journal share one
-    ``BaseStore``); without it, enabling this logs a warning and does nothing.
-
-    Caveats developers should know before relying on it:
-
-    - **Python-mode workflows only.**  Runs whose spec is no longer registered, or
-      whose ``mode`` is ``llm_authored``, are skipped (logged), not resumed.
-    - **Crash vs. clean failure.**  A killed process leaves a run ``running`` and
-      so resumable; a workflow that raised a normal exception is marked ``failed``
-      and is *not* retried (avoids looping on a deterministic bug).
-    - **No step-result invalidation.**  Resume matches cached steps by a
-      deterministic ``step_id`` (``<phase>#<seq>``).  Editing a workflow body
-      between crash and restart can shift those IDs and replay stale results — bump
-      the workflow name or clear the store after changing a body you may resume.
-    - **Resumes under the default agent's permissions.**  The resume step executor
-      is built from the default agent's role-filtered toolset, not the original
-      invoker's role/named-agent context — a resumed run may see a different
-      toolset than the run that crashed.
-    - **Blocking at startup.**  Incomplete runs are replayed sequentially before
-      the gateway begins serving traffic, so a slow or hanging resumed run delays
-      startup.
-    - **One attempt.**  A run that raises again during resume is marked ``failed``
-      and not retried — even if the cause was transient."""
+    review_chat_id: str = ""
+    """Chat on ``review_channel`` to send review requests to (for Telegram, your
+    numeric chat / user id)."""
 
 
 class ToolsConfig(BaseModel):

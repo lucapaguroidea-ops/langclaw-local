@@ -77,12 +77,12 @@ def workflow_tool_name(workflow_name: str) -> str:
 # --- camelCase tool surface (the JS/PTC namespace) --------------------------
 #
 # A tool's registered ``.name`` is snake_case (``web_fetch``), but inside the
-# QuickJS sandbox the code interpreter (``eval``) and saved/authored workflows
-# reach it as ``tools.<camelCase>`` (``tools.webFetch``). That snake→camel
-# mapping is the boundary between the Python tool registry and the JS surface,
-# and it MUST be computed the same way everywhere a name crosses it — otherwise
-# one site (e.g. a workflow's ``@uses`` allowlist) can disagree with what PTC
-# actually installs and silently drop a tool. So the mapping lives here, once.
+# QuickJS sandbox the code interpreter (``eval``) reaches it as
+# ``tools.<camelCase>`` (``tools.webFetch``). That snake→camel mapping is the
+# boundary between the Python tool registry and the JS surface, and it MUST be
+# computed the same way everywhere a name crosses it — otherwise one site can
+# disagree with what PTC actually installs and silently drop a tool. So the
+# mapping lives here, once.
 
 _CAMEL_SEP = re.compile(r"[-_]+(\w)")
 

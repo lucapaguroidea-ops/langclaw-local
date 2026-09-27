@@ -2,7 +2,8 @@
 Shared harness for the workflow-pattern cookbook.
 
 Each pattern file (``classify_and_act.py``, ``adversarial_verify.py``, …) is a real
-``@app.workflow`` you can run on its own or drive through the probe. They share:
+LangGraph workflow registered with ``app.workflow(name, graph=builder)``. You can
+run it on its own or drive it through the probe. They share:
 
 1. ``make_app()`` — a WebSocket-only Langclaw app with workflows on and the
    outward-facing channels forced off (so an example never hijacks a real bot).
@@ -11,22 +12,21 @@ Each pattern file (``classify_and_act.py``, ``adversarial_verify.py``, …) is a
    read a *subagent's* free-text reply — real models don't always honour "reply with
    only X", so the control flow degrades gracefully instead of crashing.
 
-Two ways to get LLM work into a workflow
-----------------------------------------
-A registered ``@app.workflow`` reaches LLM judgment two ways, and the cookbook uses
-both *by fit*:
+Reaching langclaw from a node
+-----------------------------
+A node is plain LangGraph code. It reaches langclaw's capabilities through
+``steps()``, and each pattern uses them *by fit*:
 
-- **``ctx.llm(prompt, schema=Model)``** — one model call, no tools, no agent loop, for
-  a one-shot judgment (classify / score / compare / extract). With a Pydantic
-  ``schema`` you get a *validated object back from a single call* — no parsing. This
-  is the cookbook's default for judgments.
-- **``ctx.subagent(type, prompt)``** — when the leaf does *multi-step work with its own
-  tools* in an isolated context: research a contender (``landscape``), or independently
-  gather evidence and refute a claim (``fact_check``). A subagent returns free text, so
-  those few spots parse it (hence ``pick_label``).
+- **``steps().llm(prompt, schema=Model)``** — one model call, no tools, no agent loop,
+  for a one-shot judgment (classify / score / compare / extract). With a Pydantic
+  ``schema`` you get a validated object back from a single call — no parsing.
+- **``steps().subagent(type, prompt)``** — when the leaf does multi-step work with its
+  own tools in an isolated context (research a contender, gather evidence).
+- **``steps().tool(name, **kwargs)``** — call a registered tool directly.
 
-Full subagent fan-out also works in the ad-hoc ``eval`` interpreter path
-(``tools.task({subagent_type})``) — see ``examples/hn_digest_eval.py``.
+LangGraph supplies the control flow: conditional edges for routing, ``Send`` for
+fan-out (each branch is its own checkpointed task), and loops back to a node for
+"until done". Every node boundary is a checkpoint, so a crash resumes mid-run.
 
 Run one pattern:
     uv run python -m examples.workflow_patterns.tournament
@@ -42,7 +42,7 @@ from langclaw.config.schema import LangclawConfig
 
 
 def make_app(system_prompt: str = "") -> Langclaw:
-    """A safe, WebSocket-only app with the workflow primitive enabled."""
+    """A safe, WebSocket-only app with workflows enabled."""
     config = LangclawConfig()
     config.channels.websocket.enabled = True
     config.channels.telegram.enabled = False
@@ -73,3 +73,14 @@ def pick_label(text: str, choices: list[str], default: str = "") -> str:
 def norm(s: str) -> str:
     """Normalise an item for dedup (lowercase, strip punctuation/whitespace)."""
     return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+
+def links(hits: object) -> str:
+    """Render up to three search hits as markdown links."""
+    if not isinstance(hits, list) or not hits:
+        return "_no results_"
+    return "\n".join(
+        f"- [{h.get('title') or 'link'}]({h.get('url', '')})"
+        for h in hits[:3]
+        if isinstance(h, dict)
+    )

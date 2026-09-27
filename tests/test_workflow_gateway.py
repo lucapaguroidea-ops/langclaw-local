@@ -7,9 +7,12 @@ closure against a real WorkflowRuntime + registry with a fake channel.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langgraph.graph import END, START, StateGraph
+from typing_extensions import TypedDict
 
 from langclaw.bus.base import InboundMessage
 from langclaw.config.schema import WorkflowsConfig
@@ -31,29 +34,40 @@ class _FakeChannel:
         self.sent.append(m)
 
 
+class _EchoState(TypedDict, total=False):
+    q: Any
+    echo: Any
+
+
+def _graph_of(fn) -> StateGraph:
+    builder = StateGraph(_EchoState)
+    builder.add_node("run", fn)
+    builder.add_edge(START, "run")
+    builder.add_edge("run", END)
+    return builder
+
+
 def _make_registry() -> WorkflowRegistry:
     reg = WorkflowRegistry()
 
-    async def echo_body(ctx, inp):
-        ctx.phase("run")
-        ctx.log("echoing")
-        return {"echo": inp}
+    def echo_node(state: _EchoState) -> dict:
+        return {"echo": dict(state)}
 
-    async def boom_body(ctx, inp):
+    def boom_node(state: _EchoState) -> dict:
         raise RuntimeError("kaboom")
 
-    reg.register(WorkflowSpec(name="echo", description="echo input", fn=echo_body))
-    reg.register(WorkflowSpec(name="boom", description="always fails", fn=boom_body))
+    reg.register(WorkflowSpec(name="echo", description="echo input", graph=_graph_of(echo_node)))
+    reg.register(WorkflowSpec(name="boom", description="always fails", graph=_graph_of(boom_node)))
     return reg
 
 
-def _make_manager(registry, *, run_store=None, cron_manager=None, saved_reload_cb=None):
-    runtime = WorkflowRuntime(WorkflowsConfig(enabled=True), run_store=run_store)
+def _make_manager(registry, *, cron_manager=None, workflows_reload_cb=None):
+    runtime = WorkflowRuntime(WorkflowsConfig(enabled=True))
 
     async def _exec(req):  # echo/boom bodies issue no tool steps
         return None
 
-    runtime.set_resume_executor_factory(lambda _rt: _exec)
+    runtime.set_executor_factory(lambda _rt: _exec)
 
     config = MagicMock()
     config.permissions.enabled = False
@@ -68,9 +82,8 @@ def _make_manager(registry, *, run_store=None, cron_manager=None, saved_reload_c
         channels=[_FakeChannel()],
         workflow_runtime=runtime,
         workflow_registry=registry,
-        workflow_run_store=run_store,
         cron_manager=cron_manager,
-        saved_reload_cb=saved_reload_cb,
+        workflows_reload_cb=workflows_reload_cb,
     )
     return mgr
 
@@ -155,13 +168,16 @@ async def test_handle_workflow_reconciles_from_disk_before_lookup():
     def reload_cb() -> bool:
         # Simulate the disk reconcile registering a workflow that wasn't in the
         # registry when the message arrived.
-        async def late_body(ctx, inp):
-            return {"late": True}
-
-        registry.register(WorkflowSpec(name="late", description="added on disk", fn=late_body))
+        registry.register(
+            WorkflowSpec(
+                name="late",
+                description="added on disk",
+                graph=_graph_of(lambda s: {"echo": "late"}),
+            )
+        )
         return True
 
-    mgr = _make_manager(registry, saved_reload_cb=reload_cb)
+    mgr = _make_manager(registry, workflows_reload_cb=reload_cb)
     channel = mgr._channel_map["websocket"]
 
     await mgr._handle(_wf_msg("late"))
@@ -187,7 +203,7 @@ async def test_workflow_progress_projected_to_channel():
 
     await mgr._handle(_wf_msg("echo"))
     await asyncio.sleep(0.05)  # progress sink sends are fire-and-forget tasks
-    # phase + log events render as tool_progress lines
+    # each finished node renders as a progress line
     progress = [m for m in channel.sent if m.type == "tool_progress"]
     assert any("run" in m.content for m in progress)
 
@@ -228,16 +244,9 @@ async def test_workflow_command_run_unknown():
 
 
 @pytest.mark.asyncio
-async def test_workflow_command_runs_and_status_use_journal():
-    from langgraph.store.memory import InMemoryStore
-
-    from langclaw.workflows.run_store import StoreRunStore
-
-    run_store = StoreRunStore(InMemoryStore())
-    await run_store.mark_running("echo:abc", "echo", {"q": 1})
-    await run_store.mark_completed("echo:abc")
-
-    mgr = _make_manager(_make_registry(), run_store=run_store)
+async def test_workflow_command_runs_and_status_use_the_run_index():
+    mgr = _make_manager(_make_registry())
+    await mgr._handle(_wf_msg("echo", run_id="echo:abc", workflow_input='{"q": 1}'))
 
     runs = await mgr._command_router.dispatch("workflows", _ctx("runs"))
     assert "echo:abc" in runs and "completed" in runs
@@ -262,7 +271,7 @@ def _make_manager_with_perms(registry, perms):
     async def _exec(req):
         return None
 
-    runtime.set_resume_executor_factory(lambda _rt: _exec)
+    runtime.set_executor_factory(lambda _rt: _exec)
 
     config = MagicMock()
     config.permissions = perms

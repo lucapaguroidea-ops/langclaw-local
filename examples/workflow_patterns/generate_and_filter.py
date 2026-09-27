@@ -10,15 +10,25 @@ parallel against a rubric and return only the ones that clear the bar, ranked. T
 generator and the judge are separate isolated calls — the judge never sees which
 angle produced a line, so it can't play favourites.
 
+LangGraph shape: two ``Send`` fan-outs in a row — ``write`` per angle, then
+``judge`` per candidate — each collecting through an ``operator.add`` reducer.
+
     /workflows run tagline_studio {"product": "a durable workflow engine for AI agents",
         "audience": "Python developers", "n": 6, "keep": 3}
 """
 
 from __future__ import annotations
 
+import operator
+from typing import Annotated
+
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from examples.workflow_patterns._app import make_app
+from langclaw.workflows import steps
 
 ANGLES = ["bold", "playful", "technical", "benefit-led", "contrarian", "minimalist"]
 
@@ -42,57 +52,88 @@ class Score(BaseModel):
     why: str = Field(description="One-sentence justification.")
 
 
+class StudioState(TypedDict, total=False):
+    product: str
+    audience: str
+    n: int
+    keep: int
+    bar: int
+    candidates: Annotated[list[dict], operator.add]
+    scored: Annotated[list[dict], operator.add]
+    report: str
+
+
+def to_writers(state: StudioState) -> list[Send]:
+    return [
+        Send("write", {"product": state["product"], "audience": state["audience"], "angle": a})
+        for a in ANGLES[: state.get("n", 6)]
+    ]
+
+
+async def write(task: dict) -> dict:
+    line = await steps().llm(
+        f"PRODUCT: {task['product']}\nAUDIENCE: {task['audience']}\nANGLE: {task['angle']}",
+        system=_WRITE_SYS,
+    )
+    line = (line or "").strip()
+    return {"candidates": [{"angle": task["angle"], "line": line}] if line else []}
+
+
+def to_judges(state: StudioState) -> list[Send] | str:
+    if not state.get("candidates"):
+        return "report"
+    return [Send("judge", {**c, "audience": state["audience"]}) for c in state["candidates"]]
+
+
+async def judge(task: dict) -> dict:
+    verdict = await steps().llm(
+        f"AUDIENCE: {task['audience']}\nTAGLINE: {task['line']}", schema=Score, system=_JUDGE_SYS
+    )
+    return {"scored": [{**task, "score": verdict.score, "why": verdict.why}]}
+
+
+def report(state: StudioState) -> dict:
+    scored = sorted(state.get("scored", []), key=lambda s: s["score"], reverse=True)
+    keep, bar = state.get("keep", 3), state.get("bar", 6)
+    kept = [s for s in scored if s["score"] >= bar][:keep]
+    note = ""
+    if not kept:  # nothing cleared the bar — still return the best, honestly flagged
+        kept = scored[:keep]
+        note = f"_None cleared the bar ({bar}); showing the top {len(kept)} anyway._\n\n"
+    out = [f"# Tagline studio — top {len(kept)} of {len(scored)}", "", note]
+    for s in kept:
+        out.append(f"**{s['score']}/10** · _{s['angle']}_ — {s['line']}")
+        if s["why"]:
+            out.append(f"    {s['why']}")
+    return {"report": "\n".join(out)}
+
+
+def build() -> StateGraph:
+    builder = StateGraph(StudioState)
+    builder.add_node("write", write)
+    builder.add_node("gather", lambda s: {})  # join point after every writer finishes
+    builder.add_node("judge", judge)
+    builder.add_node("report", report)
+    builder.add_conditional_edges(START, to_writers, ["write"])
+    builder.add_edge("write", "gather")
+    builder.add_conditional_edges("gather", to_judges, ["judge", "report"])
+    builder.add_edge("judge", "report")
+    builder.add_edge("report", END)
+    return builder
+
+
 def register(app):
-    @app.workflow(
+    app.workflow(
         "tagline_studio",
+        graph=build(),
         input=StudioBrief,
+        output_key="report",
         max_concurrency=6,
         description=(
             "Generate N taglines from diverse angles, score each against a rubric in "
             "parallel, and return the top `keep` that clear the bar, ranked."
         ),
     )
-    async def tagline_studio(ctx, inp: StudioBrief) -> str:
-        ctx.phase("generate")
-        angles = ANGLES[: inp.n]
-
-        def gen(angle: str):
-            return lambda c: c.llm(
-                f"PRODUCT: {inp.product}\nAUDIENCE: {inp.audience}\nANGLE: {angle}",
-                system=_WRITE_SYS,
-            )
-
-        raw = await ctx.parallel([gen(a) for a in angles])
-        candidates = [(a, r.strip()) for a, r in zip(angles, raw, strict=False) if r and r.strip()]
-        ctx.log(f"generated {len(candidates)} candidates")
-
-        ctx.phase("filter")
-
-        def judge(line: str):
-            # One structured judgment per candidate → a validated Score, no parsing.
-            return lambda c: c.llm(
-                f"AUDIENCE: {inp.audience}\nTAGLINE: {line}", schema=Score, system=_JUDGE_SYS
-            )
-
-        verdicts = await ctx.parallel([judge(line) for _, line in candidates])
-        scored = [
-            {"angle": a, "line": line, "score": v.score, "why": v.why}
-            for (a, line), v in zip(candidates, verdicts, strict=False)
-        ]
-        scored.sort(key=lambda s: s["score"], reverse=True)
-        kept = [s for s in scored if s["score"] >= inp.bar][: inp.keep]
-        if not kept:  # nothing cleared the bar — still return the best, honestly flagged
-            kept = scored[: inp.keep]
-            ctx.log(f"none cleared the bar ({inp.bar}); returning top {len(kept)} anyway")
-
-        ctx.phase("report")
-        out = [f"# Tagline studio — top {len(kept)} of {len(scored)}", ""]
-        for s in kept:
-            out.append(f"**{s['score']}/10** · _{s['angle']}_ — {s['line']}")
-            if s["why"]:
-                out.append(f"    {s['why']}")
-        return "\n".join(out)
-
     return app
 
 

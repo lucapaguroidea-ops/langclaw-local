@@ -20,7 +20,7 @@ from langclaw.app import Langclaw
 from langclaw.config.schema import LangclawConfig, load_config
 from langclaw.context import LangclawContext
 from langclaw.gateway.commands import CommandContext
-from langclaw.workflows.context import WorkflowContext
+from langclaw.workflows import request_review, steps
 
 __version__ = "0.4.0"
 
@@ -29,8 +29,9 @@ __all__ = [
     "CommandContext",
     "Langclaw",
     "LangclawContext",
-    "WorkflowContext",
     "create_claw_agent",
     "LangclawConfig",
     "load_config",
+    "request_review",
+    "steps",
 ]

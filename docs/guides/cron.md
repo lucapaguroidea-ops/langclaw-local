@@ -20,15 +20,15 @@ Schedule the landscape workflow for "agent frameworks" every Monday
 
 The agent translates this into a cron job via the `cron` tool.
 
-## Schedule a saved workflow
+## Schedule a workflow
 
-Saved workflows scheduled via cron run their frozen body **without any LLM call** — deterministic, zero LLM cost:
+A workflow scheduled via cron runs its fixed steps **without an agent turn** — deterministic, and the only model calls are the ones its own steps make:
 
 ```
 Schedule workflow 'digest' every day at 9am
 ```
 
-On fire, the workflow runs verbatim. If the `.js` file is deleted, the job self-disarms.
+On fire, the workflow runs and its result goes to the channel that scheduled it. If the workflow no longer exists (e.g. its `.graph.json` file was deleted), the job removes itself.
 
 ## Manage jobs
 

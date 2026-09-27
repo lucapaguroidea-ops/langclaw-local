@@ -13,7 +13,8 @@ Enable with::
 Every endpoint except ``GET /healthz`` requires ``Authorization: Bearer <token>``.
 Responses are JSON; errors are ``{"error": "..."}`` with 400 (bad input),
 401 (auth), 404 (not found), 409 (feature disabled — the message names the
-setting), or 503 (gateway not ready).
+setting — or a review already answered, with ``decision``), or 503 (gateway not
+ready).
 
 Chat is turn-based because an agent turn (with tool calls) can outlast an HTTP
 client's timeout::
@@ -29,11 +30,19 @@ and returns a completed turn immediately.
 
 Management (see :class:`~langclaw.gateway.control.ControlPlane`)::
 
-    GET    /v1/status
+    GET    /v1/status                    GET /v1/catalog  (tools/subagents for steps)
     GET    /v1/workflows                 GET/PUT/DELETE /v1/workflows/{name}
+                                         (PUT body: the .graph.json content)
+    POST   /v1/workflows/{name}/validate {graph} → {"valid", "errors", "warnings"}
+    GET    /v1/workflows/{name}/versions[/{version}]
+    POST   /v1/workflows/{name}/versions/{version}/restore
     POST   /v1/workflows/{name}/runs     {"input"?}  → 202 {"run_id", "turn_id"}
-    GET    /v1/runs                      GET /v1/runs/{run_id}
+    GET    /v1/workflows/{name}/runs     GET /v1/runs [?workflow=&status=&limit=]
+    GET    /v1/runs/{run_id}             status, reviews, state, and each step's result
     POST   /v1/runs/{run_id}/cancel
+    GET    /v1/reviews [?workflow=]      reviews waiting for an answer
+    POST   /v1/runs/{run_id}/review      {"action": "approve"|"edit"|"reject",
+                                          "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}
     GET    /v1/schedules                 POST /v1/schedules   DELETE /v1/schedules/{id}
 
 A workflow run started here is tracked as a turn: poll ``/v1/turns/{turn_id}``
@@ -56,7 +65,7 @@ from loguru import logger
 from langclaw.bus.base import InboundMessage
 from langclaw.gateway.base import BaseChannel
 from langclaw.gateway.commands import CommandContext
-from langclaw.gateway.control import FeatureDisabledError, NotFoundError
+from langclaw.gateway.control import ConflictError, FeatureDisabledError, NotFoundError
 
 if TYPE_CHECKING:
     from aiohttp import web
@@ -147,6 +156,24 @@ class ApiChannel(BaseChannel):
     async def send_ai_message(self, msg: OutboundMessage) -> None:
         self._record(msg, {"type": "ai", "content": msg.content, "metadata": {}})
 
+    async def send_review_request(
+        self, target: dict[str, str], request: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Record the review as a structured ``review`` message on the run's turn,
+        so a UI can show it (and answer via ``POST /v1/runs/{id}/review``)."""
+        from langclaw.bus.base import OutboundMessage
+
+        msg = OutboundMessage(
+            channel=self.name,
+            user_id=target.get("user_id", ""),
+            context_id=target.get("context_id", "default"),
+            chat_id=target.get("chat_id", ""),
+            content=request.get("message", ""),
+            type="ai",
+        )
+        self._record(msg, {"type": "review", "content": msg.content, "metadata": dict(request)})
+        return None
+
     async def send_tool_progress(self, msg: OutboundMessage) -> None:
         meta = msg.metadata or {}
         self._record(
@@ -191,14 +218,22 @@ class ApiChannel(BaseChannel):
                 web.get("/v1/turns", self._list_turns),
                 web.get("/v1/turns/{turn_id}", self._get_turn),
                 web.get("/v1/history", self._history),
+                web.get("/v1/catalog", self._catalog),
                 web.get("/v1/workflows", self._list_workflows),
                 web.get("/v1/workflows/{name}", self._get_workflow),
                 web.put("/v1/workflows/{name}", self._save_workflow),
                 web.delete("/v1/workflows/{name}", self._delete_workflow),
+                web.post("/v1/workflows/{name}/validate", self._validate_workflow),
+                web.get("/v1/workflows/{name}/versions", self._list_versions),
+                web.get("/v1/workflows/{name}/versions/{version}", self._get_version),
+                web.post("/v1/workflows/{name}/versions/{version}/restore", self._restore_version),
                 web.post("/v1/workflows/{name}/runs", self._start_run),
+                web.get("/v1/workflows/{name}/runs", self._list_workflow_runs),
                 web.get("/v1/runs", self._list_runs),
                 web.get("/v1/runs/{run_id}", self._get_run),
                 web.post("/v1/runs/{run_id}/cancel", self._cancel_run),
+                web.post("/v1/runs/{run_id}/review", self._answer_review),
+                web.get("/v1/reviews", self._list_reviews),
                 web.get("/v1/schedules", self._list_schedules),
                 web.post("/v1/schedules", self._add_schedule),
                 web.delete("/v1/schedules/{job_id}", self._remove_schedule),
@@ -243,6 +278,8 @@ class ApiChannel(BaseChannel):
                 return self._json({"error": str(exc)}, 404)
             except FeatureDisabledError as exc:
                 return self._json({"error": str(exc)}, 409)
+            except ConflictError as exc:
+                return self._json({"error": str(exc), "decision": exc.decision}, 409)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
             except Exception:
@@ -352,20 +389,10 @@ class ApiChannel(BaseChannel):
         return self._json(self._require_plane().get_workflow(request.match_info["name"]))
 
     async def _save_workflow(self, request: web.Request) -> web.Response:
+        # The body is the workflow file itself (see docs/guides/workflows.md);
+        # an invalid graph is a 400 listing every problem.
         body = await self._body(request)
-        script = body.get("script")
-        if not isinstance(script, str) or not script.strip():
-            raise ValueError("'script' is required.")
-        uses = body.get("uses_tools") or []
-        if not isinstance(uses, list) or not all(isinstance(u, str) for u in uses):
-            raise ValueError("'uses_tools' must be a list of tool names.")
-        saved = self._require_plane().save_workflow(
-            request.match_info["name"],
-            script=script,
-            description=str(body.get("description") or ""),
-            uses_tools=uses,
-        )
-        return self._json(saved)
+        return self._json(self._require_plane().save_workflow(request.match_info["name"], body))
 
     async def _delete_workflow(self, request: web.Request) -> web.Response:
         self._require_plane().delete_workflow(request.match_info["name"])
@@ -393,12 +420,75 @@ class ApiChannel(BaseChannel):
             raise
         return self._json({"run_id": run_id, "turn_id": turn.turn_id}, 202)
 
+    async def _catalog(self, request: web.Request) -> web.Response:
+        return self._json(self._require_plane().catalog())
+
+    async def _validate_workflow(self, request: web.Request) -> web.Response:
+        body = await self._body(request)
+        return self._json(self._require_plane().validate_workflow(request.match_info["name"], body))
+
+    async def _list_versions(self, request: web.Request) -> web.Response:
+        name = request.match_info["name"]
+        return self._json({"name": name, "versions": self._require_plane().workflow_versions(name)})
+
+    async def _get_version(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return self._json(self._require_plane().workflow_version(info["name"], info["version"]))
+
+    async def _restore_version(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return self._json(self._require_plane().restore_workflow(info["name"], info["version"]))
+
     async def _list_runs(self, request: web.Request) -> web.Response:
         limit = _parse_int(request.query.get("limit"), default=20, name="limit")
-        return self._json(await self._require_plane().list_runs(limit=limit))
+        return self._json(
+            await self._require_plane().list_runs(
+                limit=limit,
+                workflow=request.query.get("workflow", ""),
+                status=request.query.get("status", ""),
+            )
+        )
+
+    async def _list_workflow_runs(self, request: web.Request) -> web.Response:
+        plane = self._require_plane()
+        name = request.match_info["name"]
+        plane.get_workflow(name)  # 404 for an unknown workflow
+        limit = _parse_int(request.query.get("limit"), default=20, name="limit")
+        return self._json(
+            await plane.list_runs(
+                limit=limit, workflow=name, status=request.query.get("status", "")
+            )
+        )
 
     async def _get_run(self, request: web.Request) -> web.Response:
-        return self._json(await self._require_plane().run_status(request.match_info["run_id"]))
+        return self._json(await self._require_plane().get_run(request.match_info["run_id"]))
+
+    async def _list_reviews(self, request: web.Request) -> web.Response:
+        reviews = await self._require_plane().list_reviews(request.query.get("workflow", ""))
+        return self._json({"reviews": reviews})
+
+    async def _answer_review(self, request: web.Request) -> web.Response:
+        body = await self._body(request)
+        action = body.get("action")
+        if not isinstance(action, str) or not action:
+            raise ValueError("'action' is required: approve, edit, or reject.")
+        data = body.get("data") or {}
+        if not isinstance(data, dict):
+            raise ValueError("'data' must be an object.")
+        review = await self._require_plane().answer_review(
+            request.match_info["run_id"],
+            {"action": action, "data": data, "comment": str(body.get("comment") or "")},
+            by=str(body.get("by") or self._config.user_id),
+            via=str(body.get("via") or self.name),
+            interrupt_id=str(body.get("interrupt_id") or ""),
+            fallback_target={
+                "channel": self.name,
+                "user_id": self._config.user_id,
+                "context_id": "workflows",
+                "chat_id": "",
+            },
+        )
+        return self._json({"review": review, "continuing": True})
 
     async def _cancel_run(self, request: web.Request) -> web.Response:
         self._require_plane().cancel_run(request.match_info["run_id"])

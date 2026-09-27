@@ -34,14 +34,13 @@ CRON_TOOL_DOC = """Schedule, list, view, or remove recurring jobs.
       - include defaults for optional choices
       - avoid open questions unless truly required to run
 
-    SCHEDULING A SAVED WORKFLOW (deterministic)
-    -------------------------------------------
-    If a saved workflow exists (a ``workflow_<name>`` tool, e.g. saved earlier
-    to ``workflows/<name>.js``), schedule it by passing ``workflow_name`` instead
-    of re-describing the whole task in ``message``. The frozen script then runs
-    verbatim on every fire — no LLM re-authoring, deterministic, cheaper. Do NOT
-    paste the workflow's steps into ``message``; that defeats the saved workflow
-    and makes the agent improvise the task freehand each time.
+    SCHEDULING A WORKFLOW (deterministic)
+    -------------------------------------
+    If a workflow exists for the job (a ``workflow_<name>`` tool), schedule it by
+    passing ``workflow_name`` instead of re-describing the whole task in
+    ``message``. The workflow then runs its fixed steps on every fire — no agent
+    turn, deterministic, cheaper. Do NOT paste the workflow's steps into
+    ``message``; that makes the agent improvise the task freehand each time.
 
     TIMEZONE
     --------
@@ -75,10 +74,10 @@ CRON_TOOL_DOC = """Schedule, list, view, or remove recurring jobs.
                        e.g. ``'0 9 * * *'`` = daily at 09:00 {timezone}.
                        Mutually exclusive with ``every_seconds``.
         job_id:        ID of the job to view or remove. Required for ``view`` and ``remove``.
-        workflow_name: Name of a saved workflow to run on fire (the ``<name>`` of a
-                       ``workflow_<name>`` tool). When set, the job runs that frozen
-                       workflow verbatim instead of injecting ``message`` as a prompt.
-                       Prefer this over re-describing a saved workflow in ``message``.
+        workflow_name: Name of a workflow to run on fire (the ``<name>`` of a
+                       ``workflow_<name>`` tool). When set, the job runs that workflow
+                       instead of injecting ``message`` as a prompt. Prefer this over
+                       re-describing a workflow's steps in ``message``.
         workflow_input: Optional JSON string passed as input to the workflow.
                         Only meaningful together with ``workflow_name``.
 
@@ -108,7 +107,7 @@ CRON_TOOL_DOC = """Schedule, list, view, or remove recurring jobs.
              type='task',
              cron_expr='30 13 * * *')
 
-    Run a saved workflow every day at 10:00 (deterministic, no re-authoring)::
+    Run a workflow every day at 10:00 (deterministic, no agent turn)::
 
         cron(action='add',
              type='task',
@@ -206,11 +205,11 @@ def make_cron_tool(
             if workflow_name and workflow_registry is not None:
                 known = sorted(workflow_registry.names())
                 if workflow_name not in known:
-                    available = ", ".join(known) if known else "(none saved yet)"
+                    available = ", ".join(known) if known else "(none registered yet)"
                     return (
-                        f"Error: no saved workflow named {workflow_name!r}. "
-                        f"Available: {available}. Save it first "
-                        f"(write workflows/{workflow_name}.js) or fix the name."
+                        f"Error: no workflow named {workflow_name!r}. "
+                        f"Available: {available}. Fix the name, or create the "
+                        f"workflow first (workflows/{workflow_name}.graph.json)."
                     )
 
             name = f"{message[:40].strip()}..."

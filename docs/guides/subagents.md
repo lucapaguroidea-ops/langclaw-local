@@ -21,23 +21,23 @@ The main agent delegates via the built-in `task` tool.
 
 ## Delegation from a workflow
 
+A workflow node delegates with `steps().subagent(...)`. With `Send`, each
+contender gets its own isolated subagent run, in parallel:
+
 ```python
-@app.workflow("landscape", input=Landscape, max_concurrency=5)
-async def landscape(ctx, inp: Landscape) -> str:
-    ctx.phase("research")
+from langgraph.types import Send
+from langclaw.workflows import steps
 
-    # Each contender gets its own isolated researcher — no context cross-contamination.
-    findings = await ctx.parallel([
-        lambda c, name=name: c.subagent(
-            "researcher",
-            f"Research '{name}' as an agent framework.",
-        )
-        for name in inp.contenders
-    ], return_exceptions=True)
+async def research(task: dict) -> dict:
+    notes = await steps().subagent("researcher", f"Research '{task['name']}'.")
+    return {"notes": [notes]}
 
-    ctx.phase("synthesize")
-    ...
+builder.add_conditional_edges(
+    START, lambda s: [Send("research", {"name": n}) for n in s["contenders"]]
+)
 ```
+
+See `examples/workflow_patterns/fan_out_synthesize.py` for the full pattern.
 
 ## Output modes
 

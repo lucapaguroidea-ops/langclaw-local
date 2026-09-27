@@ -20,6 +20,7 @@ import asyncio
 import logging
 import re
 import time
+from typing import TYPE_CHECKING, Any
 
 from telegram import Bot
 from telegram.ext import Application
@@ -44,6 +45,9 @@ from langclaw.gateway.utils import (
     split_message,
 )
 
+if TYPE_CHECKING:
+    from langclaw.gateway.control import ControlPlane
+
 logger = logging.getLogger(__name__)
 
 # Lazily resolved at import time so the retry decorator can reference it at
@@ -63,6 +67,14 @@ _MAX_MESSAGE_LEN = 4000
 # ---------------------------------------------------------------------------
 # Markdown → Telegram HTML
 # ---------------------------------------------------------------------------
+
+
+def _review_text(request: dict) -> str:
+    """Review request body, kept under Telegram's 4096-character message limit."""
+    from langclaw.gateway.reviews import review_request_text
+
+    text = review_request_text(request, commands=False)
+    return text if len(text) <= 3800 else text[:3800] + "…"
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -155,6 +167,7 @@ class TelegramChannel(BaseChannel):
         # Keyed by (chat_id, context_id); tracks live streaming edit state.
         # Each entry: {"msg_id": int, "buffer": str, "last_edit": float}
         self._stream_state: dict[tuple[str, str], dict] = {}
+        self._plane: ControlPlane | None = None
 
     def is_enabled(self) -> bool:
         return self._config.enabled and bool(self._config.token)
@@ -165,7 +178,7 @@ class TelegramChannel(BaseChannel):
 
     async def start(self, bus: BaseMessageBus) -> None:
         try:
-            from telegram.ext import Application, MessageHandler, filters
+            from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
             from telegram.request import HTTPXRequest
         except ImportError as exc:
             raise ImportError(
@@ -196,6 +209,8 @@ class TelegramChannel(BaseChannel):
 
         app.add_error_handler(self._on_error)
         app.add_handler(MessageHandler(filters.COMMAND, self._handle_command))
+        # Approve / Edit / Reject buttons on workflow review requests.
+        app.add_handler(CallbackQueryHandler(self._handle_review_button, pattern=r"^wfr:"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
         app.add_handler(
             MessageHandler(
@@ -228,7 +243,7 @@ class TelegramChannel(BaseChannel):
             logger.warning(f"Failed to register bot commands: {e}")
 
         await app.updater.start_polling(
-            allowed_updates=["message"],
+            allowed_updates=["message", "callback_query"],
             drop_pending_updates=True,
         )
 
@@ -490,6 +505,95 @@ class TelegramChannel(BaseChannel):
     # ------------------------------------------------------------------
     # PTB message handlers
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Workflow review requests (buttons)
+    # ------------------------------------------------------------------
+
+    def set_control_plane(self, plane: ControlPlane) -> None:
+        self._plane = plane
+
+    async def send_review_request(
+        self, target: dict[str, str], request: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Send the review with Approve / Edit / Reject buttons; returns its message id."""
+        if self._app is None:
+            return None
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from langclaw.gateway.reviews import review_callback
+
+        key = request["key"]
+        buttons = [
+            InlineKeyboardButton("✅ Approve", callback_data=review_callback("approve", key))
+        ]
+        if request.get("editable"):
+            buttons.append(
+                InlineKeyboardButton("✏️ Edit", callback_data=review_callback("edit", key))
+            )
+        buttons.append(
+            InlineKeyboardButton("❌ Reject", callback_data=review_callback("reject", key))
+        )
+        chat_id = target.get("chat_id") or target.get("user_id", "")
+        sent = await self._app.bot.send_message(
+            chat_id=chat_id,
+            text=_review_text(request),
+            reply_markup=InlineKeyboardMarkup([buttons]),
+        )
+        return {"message_id": sent.message_id}
+
+    async def mark_review_resolved(
+        self, notice: dict[str, Any], request: dict[str, Any], decision: dict[str, Any]
+    ) -> None:
+        """Show who answered, and remove the buttons."""
+        if self._app is None or not notice.get("message_id"):
+            return
+        from langclaw.gateway.reviews import resolution_line
+
+        await self._app.bot.edit_message_text(
+            chat_id=notice["chat_id"],
+            message_id=notice["message_id"],
+            text=f"{_review_text(request)}\n\n{resolution_line(decision)}",
+            reply_markup=None,
+        )
+
+    async def _handle_review_button(self, update: object, context: object) -> None:
+        """Answer a review from its button (first answer wins across every surface)."""
+        from telegram import Update as TGUpdate
+
+        from langclaw.gateway.control import ConflictError, NotFoundError
+        from langclaw.gateway.reviews import edit_instructions, parse_review_callback
+
+        if not isinstance(update, TGUpdate) or update.callback_query is None:
+            return
+        query = update.callback_query
+        user = query.from_user
+        if user is None or not self._is_allowed(str(user.id), user.username):
+            await query.answer("You are not authorised to answer reviews.", show_alert=True)
+            return
+        parsed = parse_review_callback(query.data or "")
+        if parsed is None or self._plane is None:
+            await query.answer("Reviews aren't available right now.", show_alert=True)
+            return
+        action, key = parsed
+
+        if action == "edit":
+            request = await self._plane.review_request(key)
+            await query.answer()
+            if request is not None and query.message is not None:
+                await query.message.reply_text(edit_instructions(request))
+            return
+
+        who = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        try:
+            await self._plane.answer_review_by_key(key, action, by=who, via="telegram")
+        except ConflictError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+        except (NotFoundError, ValueError) as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+        await query.answer("Approved — continuing." if action == "approve" else "Rejected.")
 
     async def _handle_message(self, update: object, context: object) -> None:
         """Forward an incoming Telegram text message to the bus."""

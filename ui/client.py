@@ -60,28 +60,16 @@ class LangclawClient:
             turn = self.turn(turn["turn_id"], wait=_WAIT_SECONDS)
         return turn
 
-    # -- status & chat ---------------------------------------------------------
+    # -- status ------------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
         return self._request("GET", "/v1/status")
 
+    def catalog(self) -> dict[str, list[str]]:
+        return self._request("GET", "/v1/catalog")
+
     def turn(self, turn_id: str, wait: int = 0) -> dict[str, Any]:
         return self._request("GET", f"/v1/turns/{turn_id}", params={"wait": wait} if wait else None)
-
-    def turns(self, context_id: str) -> list[dict[str, Any]]:
-        return self._request("GET", "/v1/turns", params={"context_id": context_id})["turns"]
-
-    def history(self, context_id: str) -> list[dict[str, Any]]:
-        return self._request("GET", "/v1/history", params={"context_id": context_id})["messages"]
-
-    def chat_and_wait(self, content: str, *, context_id: str) -> dict[str, Any]:
-        turn = self._request(
-            "POST",
-            "/v1/chat",
-            params={"wait": _WAIT_SECONDS},
-            json={"content": content, "context_id": context_id},
-        )
-        return self._follow(turn)
 
     # -- workflows -------------------------------------------------------------
 
@@ -91,19 +79,64 @@ class LangclawClient:
     def workflow(self, name: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/workflows/{name}")
 
-    def save_workflow(self, name: str, script: str, description: str = "") -> dict[str, Any]:
-        return self._request(
-            "PUT", f"/v1/workflows/{name}", json={"script": script, "description": description}
-        )
+    def save_workflow(self, name: str, graph: dict[str, Any]) -> dict[str, Any]:
+        """Create/replace ``workflows/<name>.graph.json`` (400 lists every problem)."""
+        return self._request("PUT", f"/v1/workflows/{name}", json=graph)
 
-    def delete_workflow(self, name: str) -> None:
+    def validate_workflow(self, name: str, graph: dict[str, Any]) -> dict[str, Any]:
+        """``{"valid", "errors", "warnings"}`` without saving."""
+        return self._request("POST", f"/v1/workflows/{name}/validate", json=graph)
+
+    def delete_workflow(self, name: str) -> bool:
         self._request("DELETE", f"/v1/workflows/{name}")
+        return True
 
-    def run_workflow_and_wait(self, name: str, workflow_input: Any) -> dict[str, Any]:
-        started = self._request(
-            "POST", f"/v1/workflows/{name}/runs", json={"input": workflow_input}
-        )
-        return self._follow({"turn_id": started["turn_id"], "status": "running"})
+    def versions(self, name: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/v1/workflows/{name}/versions")["versions"]
+
+    def version(self, name: str, version: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/workflows/{name}/versions/{version}")
+
+    def restore(self, name: str, version: str) -> dict[str, Any]:
+        return self._request("POST", f"/v1/workflows/{name}/versions/{version}/restore")
+
+    # -- runs & reviews ------------------------------------------------------------
+
+    def runs(self, workflow: str = "", *, status: str = "", limit: int = 50) -> list[dict]:
+        params = {"limit": limit, **({"status": status} if status else {})}
+        if workflow:
+            return self._request("GET", f"/v1/workflows/{workflow}/runs", params=params)["runs"]
+        return self._request("GET", "/v1/runs", params=params)["runs"]
+
+    def run(self, run_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/runs/{run_id}")
+
+    def reviews(self, workflow: str = "") -> list[dict[str, Any]]:
+        params = {"workflow": workflow} if workflow else None
+        return self._request("GET", "/v1/reviews", params=params)["reviews"]
+
+    def answer_review(
+        self,
+        run_id: str,
+        action: str,
+        *,
+        interrupt_id: str = "",
+        data: dict[str, Any] | None = None,
+        by: str = "ui",
+    ) -> dict[str, Any]:
+        """Approve / edit / reject. A 409 ``LangclawError`` means someone answered first."""
+        body = {"action": action, "interrupt_id": interrupt_id, "by": by, "via": "ui"}
+        if data:
+            body["data"] = data
+        return self._request("POST", f"/v1/runs/{run_id}/review", json=body)
+
+    def start_run(self, name: str, workflow_input: Any) -> dict[str, Any]:
+        """Start a run; returns ``{"run_id", "turn_id"}`` immediately."""
+        return self._request("POST", f"/v1/workflows/{name}/runs", json={"input": workflow_input})
+
+    def follow_turn(self, turn_id: str) -> dict[str, Any]:
+        """Long-poll a turn (a run's progress lines and output) until it finishes."""
+        return self._follow({"turn_id": turn_id, "status": "running"})
 
     # -- schedules -------------------------------------------------------------
 
@@ -114,5 +147,6 @@ class LangclawClient:
         body = {k: v for k, v in fields.items() if v not in (None, "")}
         return self._request("POST", "/v1/schedules", json=body)["id"]
 
-    def delete_schedule(self, job_id: str) -> None:
+    def delete_schedule(self, job_id: str) -> bool:
         self._request("DELETE", f"/v1/schedules/{job_id}")
+        return True

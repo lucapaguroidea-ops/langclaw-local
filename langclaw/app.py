@@ -36,12 +36,7 @@ from langclaw.config.schema import (
 from langclaw.context import LangclawContext
 from langclaw.gateway.commands import CommandContext
 from langclaw.naming import check_command_name_allowed, check_tool_name_allowed
-from langclaw.workflows import (
-    SavedWorkflowStore,
-    WorkflowRegistry,
-    WorkflowRuntime,
-    WorkflowSpec,
-)
+from langclaw.workflows import WorkflowRegistry, WorkflowRuntime, WorkflowSpec
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -52,18 +47,7 @@ if TYPE_CHECKING:
     from langclaw.bus.base import BaseMessageBus, InboundMessage
     from langclaw.cron.scheduler import CronManager
     from langclaw.gateway.base import BaseChannel
-    from langclaw.workflows.authored import ScriptStore
-    from langclaw.workflows.resume import StepStore
-    from langclaw.workflows.run_store import RunStore
-
-
-def _noop_saved_body(ctx: Any, inp: Any) -> None:
-    """Placeholder body for ``mode="saved"`` specs.
-
-    A saved workflow runs its frozen ``script`` (JS), never a Python body — but
-    :class:`WorkflowSpec` requires a callable ``fn``, so this stands in and is
-    never invoked by the runtime's saved-mode path."""
-    return None
+    from langclaw.workflows.graph import RunIndex
 
 
 class Langclaw:
@@ -142,12 +126,10 @@ class Langclaw:
         self._named_agents: dict[str, dict[str, Any]] = {}
         self._workflows = WorkflowRegistry()
         self._workflow_runtime: WorkflowRuntime | None = None
-        # Set at startup when ``workflows.durable_steps`` is on, else None.
-        self._step_store: StepStore | None = None
-        self._run_store: RunStore | None = None
-        self._script_store: ScriptStore | None = None
-        # File-backed store for runtime-authored (agent-written) workflow files.
-        self._saved_store: SavedWorkflowStore | None = None
+        # Durable run records (status, reviews); opened at startup.
+        self._graph_run_index: RunIndex | None = None
+        #: Validation errors of workflow files that failed to load, by name.
+        self.graph_file_errors: dict[str, list[str]] = {}
         self._startup_hooks: list[Callable] = []
         self._shutdown_hooks: list[Callable] = []
         self._bus: BaseMessageBus | None = None
@@ -299,89 +281,81 @@ class Langclaw:
         self,
         name: str,
         *,
+        graph: Any,
         description: str = "",
         input: type | None = None,
         output: type | None = None,
-        mode: str = "python",
         max_steps: int | None = None,
         max_concurrency: int = 8,
         timeout_s: float | None = None,
         uses_tools: list[str] | None = None,
-    ) -> Callable:
-        """Register an operator-authored workflow via decorator (issue #38).
+        output_key: str = "",
+    ) -> Any:
+        """Register a LangGraph workflow.
 
-        A workflow is an ``async def (ctx, inp) -> output`` that orchestrates
-        multi-step agent work.  Each step (``ctx.agent`` / ``ctx.subagent`` /
-        ``ctx.tool`` / ``ctx.parallel``) round-trips through the same bus →
-        gateway pipeline as an ordinary message, so RBAC, rate limiting, channel
-        context, and checkpointing are inherited.  Unlike the interpreter
-        (``eval``), a workflow is durable, typed, named, and RBAC-gated.
+        Pass an **uncompiled** ``StateGraph``; langclaw compiles it with the
+        gateway's checkpointer, so every run is checkpointed (a crash resumes from
+        the last finished node) and can pause for human review. Nodes reach
+        langclaw's tools, models and subagents through
+        :func:`langclaw.workflows.steps`, and pause for a person with
+        :func:`langclaw.workflows.request_review`::
 
-        Workflows are inert unless ``config.workflows.enabled`` is ``True``.
+            from langclaw.workflows import request_review, steps
 
-        Example::
+            async def classify(state):
+                text = await steps().tool("bucket_read", key=state["key"])
+                return {"sender": await steps().llm(f"Who sent this?\\n{text}")}
 
-            class Brief(BaseModel):
-                topic: str
+            builder = StateGraph(DocState)
+            builder.add_node("classify", classify)
+            ...
+            app.workflow("doc_intake", graph=builder, description="File a document")
 
-            @app.workflow("research", input=Brief, description="Deep research")
-            async def research(ctx, inp: Brief) -> str:
-                ctx.phase("gather")
-                facts = await ctx.parallel([
-                    lambda c: c.subagent("researcher", f"Find facts on {inp.topic}"),
-                    lambda c: c.subagent("researcher", f"Find risks of {inp.topic}"),
-                ])
-                ctx.phase("synthesize")
-                return await ctx.agent("writer", f"Summarize: {facts}")
+        The run input is the graph's input state; the output is its final state
+        (or one key of it, with *output_key*). Workflows can also be files —
+        ``workflows/<name>.graph.json`` in the agent workspace — which load
+        automatically. Workflows are inert unless ``config.workflows.enabled`` is
+        ``True``.
 
         Args:
-            name:            Unique workflow handle (invoked as ``workflow_<name>``,
-                             ``/workflows run <name>``, cron, or PTC).
-            description:     Becomes the **tool description** the LLM reads to
-                             decide *when* to call this workflow — exactly like a
-                             ``@app.tool`` docstring. Write it as guidance ("Research
-                             a topic across several angles in parallel; prefer over
-                             ad-hoc searches when multiple perspectives help"), not a
-                             label. Omitting it falls back to a bland
-                             ``"Run the '<name>' workflow."`` that rarely beats a
-                             plain ``web_search`` or ``task``. (The *input* shape is
-                             advertised separately, from the ``input`` model below.)
-            input:           Optional Pydantic model validating the run input. Its
-                             fields become the tool's argument schema, so add
-                             ``Field(description=...)`` to tell the LLM *what* to pass.
-            output:          Optional Pydantic model validating the run output.
-            mode:            ``"python"`` (default, recommended — you author the
-                             body; reviewed, typed, testable) or ``"llm_authored"``
-                             (Mode 2, **experimental** — the LLM authors the body
-                             from this contract; an escape hatch for variable,
-                             low-stakes, supervised tasks, not a peer of python).
-            max_steps:       Per-workflow step budget (``None`` → global default).
-            max_concurrency: Fan-out width for ``ctx.parallel``.
+            name:            Unique handle: tool ``workflow_<name>``,
+                             ``/workflows run <name>``, cron, API.
+            graph:           The uncompiled ``StateGraph``.
+            description:     The **tool description** the LLM reads to decide
+                             *when* to run this workflow — write it as guidance.
+            input:           Optional Pydantic model validating the run input.
+            output:          Optional Pydantic model describing the output.
+            max_steps:       LangGraph ``recursion_limit`` per run (``None`` → global).
+            max_concurrency: Max nodes running in parallel within one run.
             timeout_s:       Per-run wall-clock budget in seconds.
             uses_tools:      Tool names this workflow declares it needs.
+            output_key:      State key returned as the run's output (e.g. ``"report"``);
+                             ``""`` ⇒ the whole final state.
+
+        Returns:
+            *graph*, unchanged.
 
         Raises:
             ValueError: If the name collides with an existing workflow, tool,
-                        subagent, named agent, or command.
+                        subagent, named agent, or command, or *graph* is not an
+                        uncompiled ``StateGraph``.
         """
-
-        def decorator(func: Callable) -> Callable:
-            spec = WorkflowSpec(
+        self._workflows.register(
+            WorkflowSpec(
                 name=name,
-                fn=func,
+                graph=graph,
                 description=description,
                 input_model=input,
                 output_model=output,
-                mode=mode,
                 max_steps=max_steps,
                 max_concurrency=max_concurrency,
                 timeout_s=timeout_s,
                 uses_tools=list(uses_tools or []),
-            )
-            self._workflows.register(spec, reserved_names=self._reserved_names())
-            return func
-
-        return decorator
+                output_key=output_key,
+            ),
+            reserved_names=self._reserved_names(),
+        )
+        return graph
 
     # ------------------------------------------------------------------
     # RBAC
@@ -753,7 +727,7 @@ class Langclaw:
             context_schema=context_schema,
             display_name=effective_config.agents.display_name or None,
             # Pass the registry whenever workflows are enabled (even if empty) so
-            # a saved workflow the agent writes to disk goes live on rebuild.
+            # a workflow file added at runtime goes live on rebuild.
             workflow_registry=self._workflows if effective_config.workflows.enabled else None,
             workflow_runtime=self._get_workflow_runtime(effective_config),
         )
@@ -761,142 +735,124 @@ class Langclaw:
     def _get_workflow_runtime(self, effective_config: LangclawConfig) -> WorkflowRuntime | None:
         """Lazily build (and cache) the shared :class:`WorkflowRuntime`.
 
-        Returns ``None`` only when workflows are disabled.  Built whenever the
-        feature is enabled — even with zero registered workflows — so the gateway
-        can register (and run) a workflow authored at runtime by writing a file.
-        Cached so every agent (default + named) shares one
-        runtime — i.e. one global ``max_concurrent_runs`` ceiling.
+        Returns ``None`` only when workflows are disabled. Built whenever the
+        feature is enabled — even with zero registered workflows — so a workflow
+        file added at runtime can run. Cached so every agent shares one runtime,
+        i.e. one global ``max_concurrent_runs`` ceiling.
         """
         if not effective_config.workflows.enabled:
             return None
         if self._workflow_runtime is None:
-            self._workflow_runtime = WorkflowRuntime(
-                effective_config.workflows,
-                step_store=self._step_store,
-                run_store=self._run_store,
-                script_store=self._script_store,
+            from langclaw.workflows.files import WorkflowFiles
+
+            runtime = WorkflowRuntime(effective_config.workflows)
+            runtime.files = WorkflowFiles(
+                self._config.agents.workflows_dir,
+                registry=self._workflows,
+                reload_cb=self._reload_workflow_files,
+                catalog=runtime.catalog,
             )
+            self._workflow_runtime = runtime
         return self._workflow_runtime
 
-    def _saved_workflow_store(self) -> SavedWorkflowStore:
-        """Return the file-backed saved-workflow store (host workspace path)."""
-        if self._saved_store is None:
-            self._saved_store = SavedWorkflowStore(self._config.agents.workflows_dir)
-        return self._saved_store
+    def _reload_workflow_files(self) -> bool:
+        """Reconcile the registry with ``workflows/<name>.graph.json`` files.
 
-    def _reload_saved_workflows(self) -> bool:
-        """Reconcile ``mode="saved"`` specs in the registry against the ``.js`` files
-        the agent has written into the ``workflows/`` folder.
-
-        Idempotent — run at startup (before the agent is built) and again whenever
-        the gateway notices the folder changed, so a workflow the agent authors by
-        writing a file goes live (and a deleted/edited file is removed/updated)
-        without a restart.  Returns whether the registry changed.
-
-        No-op unless both the workflow primitive and the interpreter are enabled —
-        a saved body is JavaScript run in the ``eval`` sandbox, so it needs the
-        interpreter to execute and the workflow machinery to surface it as a tool.
-
-        Only ``mode="saved"`` specs are touched: an in-code ``@app.workflow`` (or a
-        reserved name) always wins, so a file can never shadow or evict it.
+        Idempotent — run at startup (before the agent is built) and whenever the
+        gateway notices the folder changed, so an added, edited, or deleted file
+        goes live without a restart. Only file-loaded specs are touched; a
+        workflow registered in Python always wins, so a file can never shadow or
+        evict it. Invalid files are skipped and their errors kept in
+        :attr:`graph_file_errors`. Returns whether the registry changed.
         """
-        cfg = self._config
-        # Gate on _interpreter_active() (not raw cfg.interpreter.enabled) so the
-        # `Langclaw(enable_interpreter=True)` constructor flag enables reconcile too —
-        # consistent with how the agent builder decides the interpreter is active.
-        if not (cfg.workflows.enabled and self._interpreter_active()):
+        if not self._config.workflows.enabled:
             return False
-        desired = {sw.name: sw for sw in self._saved_workflow_store().load_all()}
-        reserved = self._reserved_names()
-        changed = False
+        from langclaw.workflows.graph import build_state_graph, load_graph_files
 
-        # 1. Drop saved specs whose file is gone or whose content changed.
+        valid, invalid = load_graph_files(self._config.agents.workflows_dir)
+        self.graph_file_errors = {name: exc.errors for name, exc in invalid.items()}
+        for name, exc in invalid.items():
+            logger.warning(f"Skipping workflow file {name!r}: {exc}")
+        changed = False
         for name in self._workflows.names():
             spec = self._workflows.get(name)
-            if spec is None or spec.mode != "saved":
+            if spec is None or spec.graph_spec is None:
                 continue
-            want = desired.get(name)
-            if want is None or want.script != spec.script or want.description != spec.description:
+            want = valid.get(name)
+            if want is None or want.model_dump() != spec.graph_spec.model_dump():
                 self._workflows.unregister(name)
                 changed = True
-
-        # 2. (Re)register desired files not currently present.
-        for name, sw in desired.items():
+        reserved = self._reserved_names()
+        for name, graph_spec in valid.items():
             if name in self._workflows:
-                # Either unchanged-saved (kept above) or an in-code workflow wins.
-                if self._workflows.get(name).mode != "saved":
+                if self._workflows.get(name).graph_spec is None:
                     logger.warning(
-                        f"Saved workflow file {name!r} shadows a registered workflow; ignoring."
+                        f"Workflow file {name!r} shadows a workflow registered in code; ignoring."
                     )
                 continue
             try:
                 self._workflows.register(
                     WorkflowSpec(
-                        name=sw.name,
-                        fn=_noop_saved_body,
-                        description=sw.description,
-                        mode="saved",
-                        script=sw.script,
-                        uses_tools=list(sw.uses_tools),
+                        name=name,
+                        graph=build_state_graph(graph_spec),
+                        description=graph_spec.description,
+                        graph_spec=graph_spec,
                     ),
                     reserved_names=reserved,
                 )
                 changed = True
             except ValueError as exc:
-                logger.warning(f"Skipping saved workflow {sw.name!r}: {exc}")
-        if changed:
-            active = sum(
-                1 for n in self._workflows.names() if self._workflows.get(n).mode == "saved"
-            )
-            logger.info(
-                f"Reconciled saved workflows from {self._saved_workflow_store().directory} "
-                f"({active} active)"
-            )
+                logger.warning(f"Skipping workflow file {name!r}: {exc}")
         return changed
 
     async def _open_workflow_stores(self, stack: AsyncExitStack, cp_cfg: Any, wf_cfg: Any) -> None:
-        """Open the opt-in durable step store + run journal, bound to *stack*.
+        """Open the durable run index (status, reviews), bound to *stack*.
 
-        Sets ``self._step_store`` (``durable_steps``) and ``self._run_store``
-        (``resume_on_startup``).  Both share one ``BaseStore`` — a sibling SQLite
-        file (avoids write-lock contention with the checkpointer) or the Postgres
-        DSN.  No-op when workflows / ``durable_steps`` are off.
+        Uses the checkpointer's backend: a sibling SQLite file (avoids write-lock
+        contention with the checkpointer DB) or the same Postgres DSN. No-op when
+        workflows are off.
         """
-        if not (wf_cfg.enabled and wf_cfg.durable_steps):
-            if wf_cfg.enabled and wf_cfg.resume_on_startup:
-                logger.warning("workflows.resume_on_startup needs durable_steps — skipping.")
+        if not wf_cfg.enabled:
             return
 
         from pathlib import Path
 
-        from langclaw.workflows.authored import StoreScriptStore
-        from langclaw.workflows.run_store import StoreRunStore
-        from langclaw.workflows.step_store import StoreStepStore, make_step_store_backend
+        from langclaw.workflows.graph import RunIndex, StoreRunIndexBackend
+        from langclaw.workflows.store import make_workflow_store_backend
 
-        steps_db = str(Path(cp_cfg.sqlite.db_path).expanduser().with_suffix(".steps.db"))
-        backend = make_step_store_backend(cp_cfg.backend, db_path=steps_db, dsn=cp_cfg.postgres.dsn)
+        db_path = str(Path(cp_cfg.sqlite.db_path).expanduser().with_suffix(".workflows.db"))
+        backend = make_workflow_store_backend(
+            cp_cfg.backend, db_path=db_path, dsn=cp_cfg.postgres.dsn
+        )
         await stack.enter_async_context(backend)
-        store = backend.get_store()
-        self._step_store = StoreStepStore(store)
-        # Mode-2 bodies share the same store so llm_authored runs survive a restart
-        # (frozen-body replay on resume).
-        self._script_store = StoreScriptStore(store)
-        if wf_cfg.resume_on_startup:
-            self._run_store = StoreRunStore(store)
-        logger.info("Workflow durable step store enabled ({})", cp_cfg.backend)
+        self._graph_run_index = RunIndex(StoreRunIndexBackend(backend.get_store()))
+
+    def _attach_graph_runner(self, cfg: LangclawConfig, checkpointer: Any) -> None:
+        """Run workflows on the gateway checkpointer + durable run index."""
+        runtime = self._get_workflow_runtime(self._build_effective_config())
+        if runtime is None:
+            return
+        from langclaw.workflows.graph import GraphWorkflowRunner
+
+        runtime.set_graph_runner(
+            GraphWorkflowRunner(
+                checkpointer=checkpointer,
+                index=self._graph_run_index,
+                max_steps=cfg.workflows.max_steps_per_run,
+            )
+        )
 
     async def _resume_incomplete_workflows(self) -> None:
-        """Re-run workflow runs left incomplete by a prior process (crash recovery).
+        """Continue runs a prior process left mid-flight (crash recovery).
 
-        Must run *after* the agent is built — that's when the runtime's resume
-        executor factory is registered.  No-op unless ``resume_on_startup`` opened
-        a run journal.
+        Must run *after* the agent is built — that's when the step executor is
+        registered. Runs paused for review stay paused.
         """
-        if self._run_store is None or self._workflow_runtime is None:
+        if self._workflow_runtime is None or self._graph_run_index is None:
             return
-        resumed = await self._workflow_runtime.resume_incomplete(get_spec=self._workflows.get)
+        resumed = await self._workflow_runtime.resume_incomplete(self._workflows.get)
         if resumed:
-            logger.info(f"Resumed {len(resumed)} incomplete workflow run(s).")
+            logger.info(f"Resumed {len(resumed)} interrupted workflow run(s).")
 
     # ------------------------------------------------------------------
     # Gateway (high-level API)
@@ -1013,7 +969,7 @@ class Langclaw:
 
                 # Load runtime-authored (file-written) workflows from disk so they
                 # boot as workflow_<name> tools alongside @app.workflow ones.
-                self._reload_saved_workflows()
+                self._reload_workflow_files()
 
                 cron_manager = None
                 if cfg.cron.enabled:
@@ -1031,6 +987,7 @@ class Langclaw:
                 # Build the main agent and capture the spec used so that the
                 # gateway can rebuild it when AGENTS.md changes.
                 checkpointer = checkpointer_backend.get()
+                self._attach_graph_runner(cfg, checkpointer)
                 agent = self.create_agent(
                     checkpointer=checkpointer,
                     cron_manager=cron_manager,
@@ -1067,22 +1024,14 @@ class Langclaw:
                     # enabled so /workflows stays registered/discoverable; None
                     # when the feature is off so the command stays hidden.
                     workflow_registry=(self._workflows if cfg.workflows.enabled else None),
-                    workflow_run_store=self._run_store,
-                    # Reconcile saved workflow files on folder change → live tools.
-                    # _interpreter_active() (not raw cfg) so the enable_interpreter=True
-                    # constructor flag wires the folder-watch reload too.
-                    saved_reload_cb=(
-                        self._reload_saved_workflows
-                        if (cfg.workflows.enabled and self._interpreter_active())
-                        else None
+                    # Reconcile workflows/<name>.graph.json on folder change → live tools.
+                    workflows_reload_cb=(
+                        self._reload_workflow_files if cfg.workflows.enabled else None
                     ),
                     mcp_servers=self._mcp_servers,
-                    # The same store backs the control plane's workflow editing.
-                    saved_store=(
-                        self._saved_workflow_store()
-                        if (cfg.workflows.enabled and self._interpreter_active())
-                        else None
-                    ),
+                    # The control plane saves/deletes workflow files here.
+                    workflows_dir=cfg.agents.workflows_dir if cfg.workflows.enabled else None,
+                    workflow_file_errors=lambda: self.graph_file_errors,
                 )
 
                 cron_status = "enabled" if cron_manager else "disabled"

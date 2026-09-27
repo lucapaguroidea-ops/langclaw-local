@@ -13,17 +13,32 @@ from langclaw.gateway.control import (
     NotFoundError,
 )
 from langclaw.workflows import WorkflowRegistry, WorkflowSpec
-from langclaw.workflows.saved_store import SavedWorkflowStore
+from tests.test_graph_workflows import DOC_FLOW
+from tests.test_workflows import _graph
 
 
 def _registry() -> WorkflowRegistry:
     reg = WorkflowRegistry()
-
-    async def body(ctx, inp):
-        return inp
-
-    reg.register(WorkflowSpec(name="echo", description="echo input", fn=body))
+    reg.register(WorkflowSpec(name="echo", description="echo input", graph=_graph()))
     return reg
+
+
+def _app_plane(tmp_path):
+    """A plane over a real app's registry + file reconcile (save → live)."""
+    from langclaw import Langclaw
+
+    cfg = LangclawConfig()
+    cfg.agents.root_dir = str(tmp_path)
+    cfg.workflows.enabled = True
+    app = Langclaw(config=cfg)
+    app.workflow("echo", graph=_graph(), description="echo input")
+    plane = _plane(
+        workflow_registry=app._workflows,
+        workflows_dir=cfg.agents.workflows_dir,
+        workflows_reload_cb=app._reload_workflow_files,
+        workflow_file_errors=lambda: app.graph_file_errors,
+    )
+    return app, plane
 
 
 class _Channel:
@@ -67,52 +82,72 @@ def test_list_and_get_workflow() -> None:
     plane = _plane(workflow_registry=_registry())
 
     assert plane.list_workflows() == [
-        {"name": "echo", "description": "echo input", "mode": "python", "editable": False}
+        {
+            "name": "echo",
+            "description": "echo input",
+            "source": "code",
+            "editable": False,
+            "valid": True,
+        }
     ]
     assert plane.get_workflow("echo")["name"] == "echo"
     with pytest.raises(NotFoundError):
         plane.get_workflow("missing")
 
 
-def test_save_workflow_requires_saved_store() -> None:
+def test_save_workflow_requires_a_workflows_folder() -> None:
     plane = _plane(workflow_registry=_registry())
-    with pytest.raises(FeatureDisabledError, match="interpreter"):
-        plane.save_workflow("digest", script="tools.output({result: 1})")
+    with pytest.raises(FeatureDisabledError, match="folder"):
+        plane.save_workflow("doc_flow", DOC_FLOW)
 
 
-def test_save_and_delete_saved_workflow_reloads_registry(tmp_path) -> None:
-    reload_cb = MagicMock(return_value=True)
-    plane = _plane(
-        workflow_registry=_registry(),
-        saved_store=SavedWorkflowStore(tmp_path),
-        saved_reload_cb=reload_cb,
-    )
+def test_save_get_and_delete_a_workflow_file(tmp_path) -> None:
+    app, plane = _app_plane(tmp_path)
+    saved = plane.save_workflow("doc_flow", DOC_FLOW)
+    assert saved["source"] == "file" and saved["editable"] is True
+    assert saved["graph"]["nodes"]["classify"]["type"] == "llm"
+    assert "classify" in saved["mermaid"]
+    path = app._config.agents.workflows_dir / "doc_flow.graph.json"
+    assert path.exists()
+    assert "doc_flow" in [w["name"] for w in plane.list_workflows()]
 
-    saved = plane.save_workflow(
-        "digest", script="tools.output({result: 1})", description="daily digest"
-    )
-
-    assert saved["name"] == "digest"
-    assert (tmp_path / "digest.js").exists()
-    assert reload_cb.call_count == 1
-
-    assert plane.delete_workflow("digest") is True
-    assert not (tmp_path / "digest.js").exists()
-    assert reload_cb.call_count == 2
+    assert plane.delete_workflow("doc_flow") is True
+    assert not path.exists()
+    assert app._workflows.get("doc_flow") is None
     with pytest.raises(NotFoundError):
-        plane.delete_workflow("digest")
+        plane.delete_workflow("doc_flow")
 
 
-def test_save_workflow_rejects_invalid_name(tmp_path) -> None:
-    plane = _plane(workflow_registry=_registry(), saved_store=SavedWorkflowStore(tmp_path))
-    with pytest.raises(ValueError):
-        plane.save_workflow("bad-name", script="x")
+def test_save_rejects_an_invalid_graph_listing_every_problem(tmp_path) -> None:
+    _, plane = _app_plane(tmp_path)
+    bad = {"nodes": {"a": {"type": "llm", "prompt": "{{nope}}"}}, "edges": []}
+    with pytest.raises(ValueError) as exc:
+        plane.save_workflow("bad", bad)
+    assert "no edge from START" in str(exc.value)
+    assert "unknown key 'nope'" in str(exc.value)
+    assert plane.validate_workflow("bad", bad)["valid"] is False
+    assert plane.validate_workflow("doc_flow", DOC_FLOW) == {
+        "valid": True,
+        "errors": [],
+        "warnings": [],
+    }
 
 
-def test_saved_workflow_cannot_shadow_code_workflow(tmp_path) -> None:
-    plane = _plane(workflow_registry=_registry(), saved_store=SavedWorkflowStore(tmp_path))
-    with pytest.raises(ValueError, match="in-code"):
-        plane.save_workflow("echo", script="x")
+def test_save_rejects_bad_name_and_code_workflow(tmp_path) -> None:
+    _, plane = _app_plane(tmp_path)
+    with pytest.raises(ValueError, match="snake_case"):
+        plane.save_workflow("bad-name", DOC_FLOW)
+    with pytest.raises(ValueError, match="defined in code"):
+        plane.save_workflow("echo", DOC_FLOW)
+
+
+def test_workflow_file_errors_are_reported(tmp_path) -> None:
+    app, plane = _app_plane(tmp_path)
+    folder = app._config.agents.workflows_dir
+    folder.mkdir(parents=True)
+    (folder / "broken.graph.json").write_text("{nope")
+    app._reload_workflow_files()
+    assert "not valid JSON" in plane.workflow_file_errors()["broken"][0]
 
 
 async def test_start_workflow_publishes_origin_workflow_message() -> None:
@@ -140,9 +175,9 @@ async def test_start_unknown_workflow_raises() -> None:
         await plane.start_workflow("nope", "", channel="api", user_id="a", context_id="c")
 
 
-async def test_runs_without_journal() -> None:
+async def test_runs_without_runtime() -> None:
     runs = await _plane(workflow_registry=_registry()).list_runs()
-    assert runs == {"journal_enabled": False, "runs": []}
+    assert runs == {"runs": []}
 
 
 def test_cancel_run() -> None:

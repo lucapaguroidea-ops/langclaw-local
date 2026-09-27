@@ -1,60 +1,44 @@
 """
-Bridge — make registered workflows invocable (issue #38, Phase 1 integration).
+Bridge — expose registered workflows to the agent as ``workflow_<name>`` tools.
 
-Two pieces turn the inert registry into something the running agent can call:
-
-- :func:`build_toolset_executor` — the *default step executor*.  It maps each
-  :class:`~langclaw.workflows.context.StepRequest` a workflow body issues onto
-  the live toolset: ``ctx.tool(name, **kw)`` invokes that tool; ``ctx.subagent``
-  invokes that subagent's *compiled graph directly* with the prompt as a fresh
-  user message and returns its final AI text.  (It deliberately does **not** go
-  through the deepagents ``task`` tool: ``task`` needs an injected ``ToolRuntime``
-  — state / config / tool_call_id — that only exists inside the agent graph, so
-  calling it from the out-of-graph workflow executor fails.  Passing the subagent
-  runnables in sidesteps that entirely.)  This is the in-process executor; a
-  future slice may publish each step to the bus so it re-enters
-  ``GatewayManager._handle`` (full RBAC/rate-limit/checkpointing).
-- :func:`make_workflow_tools` — one ``workflow_<name>`` LangChain tool per
-  registered workflow.  The tool validates the run input against the spec's
-  model, runs the workflow via :class:`~langclaw.workflows.runtime.WorkflowRuntime`,
-  and returns the output — or, per the cron-tool convention, an ``"Error: ..."``
-  string on failure rather than raising into the agent loop.
-
-The executor is injected via ``executor_factory`` so the bridge is unit-testable
-without a live agent: pass a factory returning a canned ``async def (req)``.
+- :func:`make_workflow_tools` — one LangChain tool per registered workflow. It
+  starts a run through :class:`~langclaw.workflows.runtime.WorkflowRuntime` and
+  returns the output, or — when the run pauses for human review — what it is
+  waiting on and how to answer. Failures come back as ``"Error: ..."`` strings
+  (the cron-tool convention) instead of raising into the agent loop.
+- :func:`workflow_system_prompt` — the ``<workflows>`` nudge listing them.
+- :func:`resolve_workflow_ptc_names` — which workflow tools the ``eval``
+  interpreter may call.
 """
 
 from __future__ import annotations
 
-import json
 import uuid
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from langchain.tools import ToolRuntime
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from langclaw.naming import WORKFLOW_TOOL_PREFIX, workflow_tool_name
-from langclaw.workflows.context import StepExecutor, StepRequest, WorkflowStepError
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
 
     from langclaw.config.schema import PermissionsConfig, WorkflowsConfig
-    from langclaw.workflows.js_runner import ScriptAuthorFn, ScriptRunnerFn
+    from langclaw.workflows.files import WorkflowFiles
     from langclaw.workflows.registry import WorkflowRegistry, WorkflowSpec
     from langclaw.workflows.runtime import WorkflowRuntime
 
-ExecutorFactory = Callable[[Any], Awaitable[StepExecutor]]
-#: Build the Mode-2 author / script-runner for one spec (closing over the model
-#: and the live, role-filtered toolset). ``None`` → Mode 2 is unavailable and an
-#: llm_authored workflow returns a clean error instead of running.
-AuthorFactory = Callable[["WorkflowSpec"], "ScriptAuthorFn"]
-ScriptRunnerFactory = Callable[["WorkflowSpec"], "ScriptRunnerFn"]
-
-# The ``workflow_<name>`` tool/PTC prefix is owned by ``langclaw.naming`` (the
-# single source of truth shared with the reservation guard and the permission
-# middleware). Re-exported here for back-compat with existing imports.
+# The ``workflow_<name>`` tool/PTC prefix is owned by ``langclaw.naming``;
+# re-exported here for back-compat with existing imports.
+__all__ = [
+    "WORKFLOW_TOOL_PREFIX",
+    "make_manage_workflows_tool",
+    "make_workflow_tools",
+    "resolve_workflow_ptc_names",
+    "workflow_system_prompt",
+]
 
 
 def resolve_workflow_ptc_names(
@@ -107,301 +91,48 @@ class _WorkflowToolArgs(BaseModel):
     )
 
 
-def build_toolset_executor(
-    available_tools: list[Any],
-    *,
-    subagent_runnables: dict[str, Any] | None = None,
-    default_model: Any | None = None,
-    model_resolver: Callable[[str], Any] | None = None,
-) -> StepExecutor:
-    """Return a :class:`StepExecutor` backed by a live toolset.
-
-    Args:
-        available_tools: The tools (objects with ``.name`` and ``.ainvoke``)
-            the workflow's steps may reach.  Typically the same role-filtered
-            toolset the agent itself was built with.
-        subagent_runnables: ``{subagent_type: compiled graph}`` the workflow may
-            delegate to via ``ctx.subagent``.  Each graph is invoked directly
-            (``ainvoke({"messages": [HumanMessage(prompt)]})``) — not via the
-            ``task`` tool — so it works from outside the agent graph.  ``None`` ⇒
-            no subagent is reachable and ``ctx.subagent`` raises a clear error.
-        default_model: The chat model ``ctx.llm`` calls when no per-call ``model``
-            override is given.  ``None`` ⇒ ``ctx.llm`` raises a clear error.
-        model_resolver: ``(model_spec) -> chat model`` used to resolve a per-call
-            ``ctx.llm(model=...)`` override.  ``None`` ⇒ overrides aren't allowed.
-
-    Returns:
-        An async ``(StepRequest) -> result`` callable:
-
-        - ``kind == "tool"``  → ``tool.ainvoke(payload_dict)``.
-        - ``kind == "subagent"`` → invoke ``subagent_runnables[target]`` with the
-          payload as a user message; return its final AI text.
-        - ``kind == "llm"`` → one model call (no tools, no loop); plain text, or a
-          validated object when the step carries a ``schema``.
-
-    Raises (inside the returned callable):
-        WorkflowStepError: when a referenced tool is absent, a subagent is not
-            registered, no model is configured for ``ctx.llm``, or a named-``agent``
-            step is requested (unsupported).
-    """
-    by_name: dict[str, Any] = {}
-    for t in available_tools:
-        name = getattr(t, "name", None)
-        if name:
-            by_name[name] = t
-    runnables: dict[str, Any] = subagent_runnables or {}
-
-    async def _executor(request: StepRequest) -> Any:
-        if request.kind == "tool":
-            tool = by_name.get(request.target)
-            if tool is None:
-                raise WorkflowStepError(
-                    f"Workflow step referenced tool {request.target!r} which is "
-                    "not available to this run."
-                )
-            args = request.payload if isinstance(request.payload, dict) else {}
-            return await tool.ainvoke(args)
-
-        if request.kind == "llm":
-            return await _run_llm_step(request, default_model, model_resolver)
-
-        if request.kind == "subagent":
-            runnable = runnables.get(request.target)
-            if runnable is None:
-                available = ", ".join(sorted(runnables)) or "none"
-                raise WorkflowStepError(
-                    f"Workflow step requested subagent {request.target!r}, which is not "
-                    f"a registered subagent (available: {available}). Register it with "
-                    "app.subagent(...)."
-                )
-            from langchain_core.messages import HumanMessage
-
-            result = await runnable.ainvoke(
-                {"messages": [HumanMessage(content=str(request.payload))]}
-            )
-            return _subagent_reply_text(result)
-
-        if request.kind == "agent":
-            raise WorkflowStepError(
-                "ctx.agent (delegating to a named agent) is not supported from a "
-                "workflow yet; use ctx.subagent(<type>, ...) to delegate to a subagent."
-            )
-
-        raise WorkflowStepError(f"Unknown workflow step kind: {request.kind!r}")
-
-    return _executor
-
-
-def _subagent_reply_text(result: Any) -> str:
-    """Extract a subagent graph's final reply: the last non-empty AI message text.
-
-    Mirrors how deepagents' ``task`` tool reduces a subagent result — walk back to
-    the last :class:`AIMessage` with text (a trailing empty ``end_turn`` message is
-    skipped).  Returns ``""`` when the subagent produced no text.
-    """
-    from langchain_core.messages import AIMessage
-
-    messages = result.get("messages", []) if isinstance(result, dict) else []
-    for msg in reversed(messages):
-        if not isinstance(msg, AIMessage):
-            continue
-        content = msg.content
-        if isinstance(content, str):
-            if content.strip():
-                return content.strip()
-            continue
-        if isinstance(content, list):  # content blocks → join the text parts
-            parts = [
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            ]
-            text = " ".join(parts).strip()
-            if text:
-                return text
-    return ""
-
-
-async def _run_llm_step(
-    request: StepRequest,
-    default_model: Any | None,
-    model_resolver: Callable[[str], Any] | None,
-) -> Any:
-    """Execute a ``ctx.llm`` step: one model call, optionally schema-validated.
-
-    ``request.target`` is the per-call model spec (``""`` ⇒ default); ``request.payload``
-    is ``{"prompt", "system"}``; ``request.schema`` (when set) forces structured output.
-    """
-    payload = request.payload if isinstance(request.payload, dict) else {"prompt": request.payload}
-
-    model = default_model
-    if request.target:
-        if model_resolver is None:
-            raise WorkflowStepError(
-                f"ctx.llm requested model {request.target!r} but no model resolver is "
-                "configured for this run."
-            )
-        model = model_resolver(request.target)
-    if model is None:
-        raise WorkflowStepError("ctx.llm has no model to call — none was configured for this run.")
-
-    messages: list[Any] = []
-    system = payload.get("system")
-    if system:
-        messages.append(("system", system))
-    messages.append(("user", payload.get("prompt", "")))
-
-    if request.schema is None:
-        return _ai_text(await model.ainvoke(messages))
-
-    # Structured output. Prefer the provider's native path; fall back to a JSON
-    # instruction + parse so ctx.llm(schema=...) works even on endpoints that don't
-    # support native structured output (e.g. some OpenAI-compatible proxies).
-    try:
-        return await model.with_structured_output(request.schema).ainvoke(messages)
-    except Exception as native_exc:  # noqa: BLE001 — fall back, don't surface raw provider errors
-        logger.debug(f"ctx.llm native structured output failed ({native_exc}); using JSON fallback")
-        return await _llm_json_fallback(model, messages, request.schema, native_exc)
-
-
-async def _llm_json_fallback(
-    model: Any, messages: list[Any], schema: type, native_exc: Exception
-) -> Any:
-    """Get structured output by instructing the model to emit JSON, then validating."""
-    schema_json = json.dumps(schema.model_json_schema())
-    instruction = (
-        "Respond with ONLY a single JSON object matching this JSON Schema — no prose, "
-        f"no markdown fences:\n{schema_json}"
-    )
-    reply = _ai_text(await model.ainvoke([*messages, ("user", instruction)]))
-    try:
-        obj = json.loads(_extract_json(reply))
-    except (ValueError, TypeError) as exc:
-        raise WorkflowStepError(
-            f"ctx.llm could not produce structured output for schema "
-            f"{getattr(schema, '__name__', schema)!r}: native structured output failed "
-            f"({native_exc}) and the JSON fallback reply was not parseable."
-        ) from exc
-    return schema.model_validate(obj)
-
-
-def _extract_json(text: str) -> str:
-    """Pull a JSON object out of a model reply (strip ``` fences, slice to braces)."""
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.strip("`")
-        if t[:4].lower() == "json":
-            t = t[4:]
-    start, end = t.find("{"), t.rfind("}")
-    return t[start : end + 1] if start != -1 and end > start else t
-
-
-def _ai_text(msg: Any) -> str:
-    """Extract plain text from a single chat-model reply (``AIMessage``)."""
-    content = getattr(msg, "content", msg)
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = [
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-        ]
-        return " ".join(parts).strip()
-    return str(content).strip()
-
-
-def make_workflow_tools(
-    registry: WorkflowRegistry,
-    runtime: WorkflowRuntime,
-    *,
-    executor_factory: ExecutorFactory,
-    author_factory: AuthorFactory | None = None,
-    script_runner_factory: ScriptRunnerFactory | None = None,
-) -> list[BaseTool]:
+def make_workflow_tools(registry: WorkflowRegistry, runtime: WorkflowRuntime) -> list[BaseTool]:
     """Build one ``workflow_<name>`` LangChain tool per registered workflow.
 
-    Each tool accepts a single ``workflow_input`` argument (validated against the
-    workflow's input model by the runtime), runs the workflow, and returns its
-    output.  Failures are returned as ``"Error: ..."`` strings rather than raised
-    — matching the cron tool's convention so a broken workflow never breaks the
-    agent loop.
-
-    Args:
-        registry:         The populated :class:`WorkflowRegistry`.
-        runtime:          The :class:`WorkflowRuntime` driving runs.
-        executor_factory: Async ``(tool_runtime) -> StepExecutor`` producing the
-                          step executor for one run (``mode="python"``).  Injected
-                          so the bridge is testable; production wiring passes a
-                          factory closing over the live, role-filtered toolset.
-        author_factory:        Optional ``(spec) -> author`` for ``mode="llm_authored"``
-                          (Mode 2). Required to run llm_authored workflows.
-        script_runner_factory: Optional ``(spec) -> script_runner`` executing an
-                          authored body (Mode 2). Required alongside *author_factory*.
-
-    Returns:
-        A list of ``BaseTool`` instances, one per registered workflow.
+    Each tool takes a single ``workflow_input`` argument (validated against the
+    workflow's input model), starts a run, and returns its output — or, when the
+    run pauses for review, a message saying so and how to answer.
     """
     from langchain_core.tools import StructuredTool
 
-    tools: list[BaseTool] = []
-    for spec in registry.specs():
-        tools.append(
-            _make_one_workflow_tool(
-                spec,
-                runtime,
-                executor_factory,
-                StructuredTool,
-                author_factory=author_factory,
-                script_runner_factory=script_runner_factory,
-            )
-        )
-    return tools
+    return [_make_one_workflow_tool(spec, runtime, StructuredTool) for spec in registry.specs()]
+
+
+def _origin(tool_runtime: Any) -> dict[str, str] | None:
+    """The chat a tool call came from (so a review request goes back there)."""
+    ctx = getattr(tool_runtime, "context", None)
+    channel = getattr(ctx, "channel", "") if ctx is not None else ""
+    if not channel:
+        return None
+    return {
+        "channel": channel,
+        "user_id": getattr(ctx, "user_id", ""),
+        "context_id": getattr(ctx, "context_id", ""),
+        "chat_id": getattr(ctx, "chat_id", ""),
+    }
 
 
 def _make_one_workflow_tool(
-    spec: WorkflowSpec,
-    runtime: WorkflowRuntime,
-    executor_factory: ExecutorFactory,
-    structured_tool_cls: type[BaseTool],
-    *,
-    author_factory: AuthorFactory | None = None,
-    script_runner_factory: ScriptRunnerFactory | None = None,
+    spec: WorkflowSpec, wf_runtime: WorkflowRuntime, structured_tool_cls: type[BaseTool]
 ) -> BaseTool:
     description = spec.description or f"Run the {spec.name!r} workflow."
 
-    async def _run(workflow_input: Any = None) -> str:
+    async def _run(workflow_input: Any = None, runtime: ToolRuntime = None) -> str:  # type: ignore[assignment]
         run_id = f"{spec.name}:{uuid.uuid4().hex[:12]}"
         try:
-            if spec.mode == "saved":
-                if script_runner_factory is None:
-                    raise WorkflowStepError(
-                        f"workflow {spec.name!r} is mode='saved' but the script "
-                        "runner is not wired (needs the interpreter extra)."
-                    )
-                output = await runtime.start_run(
-                    spec,
-                    workflow_input,
-                    run_id=run_id,
-                    script_runner=script_runner_factory(spec),
-                )
-            elif spec.mode == "llm_authored":
-                if author_factory is None or script_runner_factory is None:
-                    raise WorkflowStepError(
-                        f"workflow {spec.name!r} is mode='llm_authored' but Mode 2 "
-                        "is not wired (needs a model + interpreter extra)."
-                    )
-                output = await runtime.start_run(
-                    spec,
-                    workflow_input,
-                    run_id=run_id,
-                    author=author_factory(spec),
-                    script_runner=script_runner_factory(spec),
-                )
-            else:
-                executor = await executor_factory(None)
-                output = await runtime.start_run(
-                    spec, workflow_input, run_id=run_id, executor=executor
-                )
-            return _stringify(output)
+            result = await wf_runtime.run_graph(
+                spec,
+                workflow_input,
+                run_id=run_id,
+                trigger="agent",
+                reply_to=_origin(runtime),
+            )
+            return result.to_text()
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as text
             logger.warning(f"Workflow {spec.name!r} run {run_id} failed: {exc}")
             return f"Error: workflow {spec.name!r} failed: {exc}"
@@ -414,84 +145,125 @@ def _make_one_workflow_tool(
     )
 
 
+#: Compact format reference shown to the model (the full guide is docs/guides/workflows.md).
+GRAPH_FORMAT_HELP = """\
+A workflow file is JSON: {"description": str, "input": {field: {"type", "description"}},
+"nodes": {id: node}, "edges": [{"from": "START"|id|[ids], "to": id|"END"}], "output": path}.
+Node types:
+- {"type": "llm", "prompt": str, "system"?: str, "output"?: {field: {"type": "string"|"number"|
+  "integer"|"boolean"|"array"|"object", "description"?}}}  one model call; "output" = structured
+- {"type": "tool", "tool": name, "args": {...}}  call one tool
+- {"type": "subagent", "subagent": name, "prompt": str}
+- {"type": "branch", "rules": [{"if": {"path", "op", "value"}, "then": id}], "else": id|"END"}
+  ops: eq ne lt le gt ge in not_in contains exists not_exists truthy falsy.
+  No edges out of a branch.
+- {"type": "human_review", "message": str, "show"?: [keys], "editable"?: key,
+  "on_reject"?: id|"END"}  pauses the run until the user approves, edits, or rejects.
+Each node's result is stored under its id; templates like {{input.x}} or {{node_id.field}} read
+them. Node ids are snake_case; a node with no outgoing edge ends the run."""
+
+
+class _ManageWorkflowsArgs(BaseModel):
+    action: str = Field(
+        description="One of: list, get, validate, save, delete, versions, restore, format."
+    )
+    name: str = Field(default="", description="Workflow name (snake_case).")
+    graph: Any = Field(
+        default=None,
+        description="For validate/save: the workflow file (a JSON object or JSON string).",
+    )
+    version: str = Field(default="", description="For restore: a version id from `versions`.")
+
+
+def make_manage_workflows_tool(files: WorkflowFiles) -> BaseTool:
+    """The ``manage_workflows`` tool: list, read, validate, save, delete, and restore
+    ``workflows/<name>.graph.json`` files through :class:`WorkflowFiles` (the same
+    validated, versioned path the UI uses). Errors come back as ``{"error": ...}``."""
+    from langchain_core.tools import StructuredTool
+
+    from langclaw.workflows.files import WorkflowFileNotFound
+
+    def _run(action: str, name: str = "", graph: Any = None, version: str = "") -> dict:
+        action = (action or "").strip().lower()
+        try:
+            if action == "format":
+                return {"format": GRAPH_FORMAT_HELP}
+            if action == "list":
+                return {"workflows": files.names()}
+            if not name:
+                return {"error": f"'{action}' needs a workflow name."}
+            if action == "get":
+                return {"name": name, "graph": files.read(name)}
+            if action == "versions":
+                return {"name": name, "versions": files.versions(name)}
+            if action == "restore":
+                if not version:
+                    return {"error": "restore needs a version (see action='versions')."}
+                return files.restore(name, version)
+            if action == "delete":
+                files.delete(name)
+                return {"deleted": name, "note": "Its history is kept; restore can bring it back."}
+            if action in ("validate", "save"):
+                if graph is None:
+                    return {"error": f"'{action}' needs the workflow file in 'graph'."}
+                if action == "validate":
+                    return files.validate(name, graph)
+                check = files.validate(name, graph)
+                if not check["valid"]:
+                    return {"error": "The workflow is invalid.", "errors": check["errors"]}
+                return files.save(name, graph)
+            return {"error": f"Unknown action {action!r}."}
+        except WorkflowFileNotFound as exc:
+            return {"error": str(exc)}
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+    return StructuredTool.from_function(
+        func=_run,
+        name="manage_workflows",
+        description=(
+            "Create, edit, inspect, or delete saved workflows (workflows/<name>.graph.json). "
+            "Actions: list; get(name); validate(name, graph); save(name, graph) — validates, "
+            "keeps the previous version, and makes it live as workflow_<name>; delete(name); "
+            "versions(name); restore(name, version); format — the file format reference. "
+            "Always validate or call format first when unsure, and confirm with the user "
+            "before delete.\n\n" + GRAPH_FORMAT_HELP
+        ),
+        args_schema=_ManageWorkflowsArgs,
+    )
+
+
 def workflow_system_prompt(registry: WorkflowRegistry, *, authoring: bool = False) -> str:
-    """System-prompt nudge that makes workflows discoverable to the agent.
+    """The ``<workflows>`` system-prompt block listing registered workflows.
 
-    The workflow-axis analogue of
-    :func:`langclaw.interpreter.interpreter_system_prompt`'s ``<code_interpreter>``
-    block: without it the ``workflow_<name>`` tools are present but unexplained, so
-    the model rarely reaches for them. Lists each registered workflow (tool name +
-    mode + description).
-
-    Args:
-        registry:  The populated :class:`WorkflowRegistry`.
-        authoring: When ``True`` the agent can author workflows (by writing a
-                   ``workflows/<name>.js`` file), so the nudge teaches the run →
-                   save loop ("run an ``eval`` program, then save it as a file")
-                   and drops the "cannot create" contract. When ``False`` the
-                   agent can only run pre-registered workflows.
-
-    Returns:
-        The ``<workflows>`` block, or ``""`` when there is nothing to say
-        (no registered workflows and authoring off).
+    Without it the ``workflow_<name>`` tools are present but unexplained, so the
+    model rarely reaches for them. With *authoring*, it also says the agent can
+    create and edit workflows with ``manage_workflows``. Returns ``""`` when there
+    is nothing to say.
     """
     specs = registry.specs()
     if not specs and not authoring:
         return ""
-
     lines = []
     for s in specs:
-        mode = "" if getattr(s, "mode", "python") == "python" else f" [{s.mode}]"
         desc = f" — {s.description}" if s.description else ""
-        lines.append(f"  - {workflow_tool_name(s.name)}{mode}{desc}")
-    listing = "\n".join(lines) if lines else "  (none registered yet)"
-
-    intro = (
-        "Workflows are durable, typed, multi-step orchestrations exposed as "
-        "`workflow_<name>` tools. When a request matches one, run that tool instead "
-        "of improvising the same steps yourself — it is budgeted and resumable, so "
-        "more reliable than an ad-hoc sequence."
+        lines.append(f"  - {workflow_tool_name(s.name)}{desc}")
+    listing = "\n".join(lines) or "  (none yet)"
+    authoring_line = (
+        "You can create or change workflows with `manage_workflows` when the user asks "
+        "for a repeatable procedure (validate first; confirm before deleting). A saved "
+        "workflow becomes a `workflow_<name>` tool on your next turn.\n"
+        if authoring
+        else ""
     )
-    if authoring:
-        authoring_block = (
-            "\nYou can also CREATE a workflow at runtime by writing a file — there is no "
-            "special tool, just use `write_file`. When the user asks to save, remember, "
-            "or 'turn into a workflow' a multi-step task you just ran via `eval`, write "
-            "the SAME JavaScript program to `workflows/<name>.js` in your workspace. "
-            "Rules:\n"
-            "  - `<name>` must be snake_case — letters, digits, and underscores only "
-            "(e.g. `hn_ai_digest`), no hyphens or spaces. It becomes the "
-            "`workflow_<name>` tool.\n"
-            "  - Start the file with metadata comments: `// @description <one line>` and, "
-            "if it calls tools, `// @uses tool_a, tool_b`. `@uses` names langclaw tools "
-            "only (web_search, web_fetch, cron, …) — NOT the backend file tools "
-            "(read_file, write_file, ls, glob, grep, edit_file), which a workflow can't "
-            "reach; use web_fetch to read a URL or file.\n"
-            "  - The body is the same sandboxed JS as `eval`: it receives the run input "
-            "as the global `inp` and must emit its result with "
-            "`await tools.output({ result: <value> })`.\n"
-            "  - Optional progress: `await tools.phase({ name: 'gather' })` and "
-            "`await tools.log({ message: '3/10 done' })` narrate to the user during long "
-            "runs (safe no-ops otherwise) — the same phases a code workflow shows.\n"
-            "Once written, it is loaded automatically and becomes a `workflow_<name>` "
-            "tool you can run later (and after a restart). Use this for repeatable jobs; "
-            "for a one-off, just run `eval` and don't save."
-        )
-    else:
-        authoring_block = (
-            "\nYou can run the workflows below but cannot create or modify them (that is "
-            "done in code by the developer). For ad-hoc control flow that no workflow "
-            "covers, use the `eval` interpreter if available."
-        )
-    return f"<workflows>\n{intro}{authoring_block}\nAvailable workflows:\n{listing}\n</workflows>"
-
-
-def _stringify(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if hasattr(value, "model_dump"):
-        value = value.model_dump()
-    try:
-        return json.dumps(value, default=str)
-    except (TypeError, ValueError):
-        return str(value)
+    return (
+        "<workflows>\n"
+        "Workflows are saved, multi-step LangGraph procedures exposed as "
+        "`workflow_<name>` tools. When a request matches one, run that tool instead "
+        "of improvising the same steps yourself. A run may pause for human review; "
+        "if the tool says so, tell the user how to answer (the message includes the "
+        "commands) rather than retrying.\n"
+        f"{authoring_line}"
+        f"Available workflows:\n{listing}\n"
+        "</workflows>"
+    )

@@ -39,8 +39,9 @@ uv run pre-commit run --all-files  # Full pre-commit suite
 | Modify config schema | `langclaw/config/schema.py` (Pydantic Settings) |
 | Code interpreter (RLM) | `langclaw/interpreter/__init__.py` (PTC resolver + middleware factory) |
 | Probe harness (E2E feature testing) | `langclaw/testing/` (`probe()` core + `ProbeTransport` + WS/Telegram drivers); `langclaw gateway --probe` (WS-only seam in `app.py:_build_all_channels`) + `langclaw probe` CLI. Design: [docs/PROBE.md](docs/PROBE.md) |
-| Runtime workflow authoring | `langclaw/workflows/saved_store.py` (parse/load) + `app._reload_saved_workflows` + gateway folder-watch |
+| Workflows (LangGraph, HITL) | `langclaw/workflows/graph/` — `spec.py` (`.graph.json` format + validator), `compile.py` (→ `StateGraph`), `runner.py` (checkpointed runs, reviews, crash resume), `runs.py` (run index, first-answer-wins), `steps.py` (`steps()` / `request_review()`); `workflows/files.py` (`WorkflowFiles`: the one validated + versioned write path, used by the API and the agent's `manage_workflows` tool); `app.workflow(name, graph=builder)`; `/workflows reviews|approve|reject|edit`. Guide: [docs/guides/workflows.md](docs/guides/workflows.md) |
 | Control-plane HTTP API (UIs) | `langclaw/gateway/control.py` (`ControlPlane`, shared with `/workflows`) + `langclaw/gateway/api.py` (`ApiChannel`). Guide: [docs/guides/control-plane-api.md](docs/guides/control-plane-api.md) |
+| Workflow console (Streamlit UI) | `ui/app.py` (pages/tabs) + `ui/client.py` (API client) + `ui/editor.py` (pure draft-editing helpers, tested in `tests/test_ui_editor.py`); deployed as its own Railway service (`ui/railway.json`). Chat stays in Telegram. |
 | MCP servers → tools | `langclaw/mcp.py` (`load_mcp_tools`, fail-soft per server) + `config.mcp.servers`; tools named `mcp_<server>_<tool>` (prefix reserved in `langclaw/naming.py`). Guide: [docs/guides/mcp.md](docs/guides/mcp.md) |
 | CLI commands | `langclaw/cli/app.py` (Typer) |
 | Agent construction | `langclaw/agents/builder.py` |
@@ -357,67 +358,57 @@ allowlist of tools — including `tools.task({subagent_type})` to orchestrate
   of subagent types a script may reach via `tools.task`
   (`allowed_subagents` / `check_subagent_permission`).
 
-## Runtime Workflow Authoring (file-edit)
+## Workflows (LangGraph, human review)
 
-The bridge between the throwaway `eval` script and the durable workflow
-primitive. There is **no bespoke save tool** — the agent saves a workflow by
-writing a file with its ordinary `write_file`. Active when **both**
-`workflows.enabled` and `interpreter.enabled` are on **and** the backend is
-filesystem-rooted (`local_shell` default / `filesystem`). Flow:
+A workflow is a LangGraph `StateGraph` — the only workflow engine. Two sources,
+one runner (`langclaw/workflows/graph/runner.py`):
 
-1. User: *"Run a workflow to: …"* → the agent writes an `eval` program (the
-   `<code_interpreter>` nudge routes "run a workflow"/"orchestrate" phrasing here).
-2. User: *"Save that workflow as hn_digest"* → the agent calls
-   `write_file("workflows/hn_digest.js", <the same JS>)`. The convention (taught
-   in the `<workflows>` nudge): name `[A-Za-z0-9_]+` (snake_case, no hyphens — a
-   hyphen makes the in-sandbox `tools.workflow_my-flow` un-callable); optional
-   `// @description` and `// @uses a, b` header comments; body gets `inp`, emits
-   via `tools.output({result})`, and may narrate progress via
-   `tools.phase({name})` / `tools.log({message})` — the sandbox counterparts of a
-   Python workflow's `ctx.phase` / `ctx.log`, surfaced through the same
-   `emit_progress` → `render_workflow_progress` channel stream (wired in
-   `runtime._progress_callbacks`, exposed by `js_runner.build_workflow_script_runner`).
-3. **Same-session liveness:** `GatewayManager._ensure_agent_fresh` hashes the
-   `workflows/` folder (alongside the AGENTS.md content hash). On change it calls
-   the `saved_reload_cb` → `app._reload_saved_workflows()`, which reconciles files
-   into the registry (add/update/remove `mode="saved"` specs), bumping
-   `registry.version` → rebuilds the **default** agent so `workflow_<name>` goes
-   live without a restart. The rebuild threads `workflow_registry`/`workflow_runtime`
-   through (previously an AGENTS.md reload silently dropped workflow tools).
-4. **Restart:** the same reconcile runs in `_run_async` before the agent build.
+- **Code:** `app.workflow(name, graph=builder, input=Model, output_key="report")`
+  with an *uncompiled* builder. Nodes reach langclaw via `steps()` (`.tool`,
+  `.llm(schema=...)`, `.subagent`) and pause via `request_review(...)`.
+- **File:** `workflows/<name>.graph.json` in `config.agents.workflows_dir`
+  (`spec.py` format: `llm` / `tool` / `subagent` / `branch` / `human_review`
+  nodes + edges, `{{path}}` templates). `app._reload_workflow_files` reconciles
+  the folder at startup and whenever `GatewayManager._ensure_agent_fresh` sees the
+  folder hash change (the registry version bump rebuilds the default agent so
+  `workflow_<name>` goes live). Invalid files are skipped; errors in
+  `app.graph_file_errors`. A code workflow always wins over a same-named file.
 
-**`mode="saved"` execution:** the frozen `spec.script` (the file contents) runs
-verbatim via `build_workflow_script_runner` (same QuickJS path as `llm_authored`,
-minus the per-run authoring step) — `runtime._run_saved`. Saved workflows are
-global (default agent only); named agents don't carry workflow tools.
+**Runs:** one checkpointer thread per run (`workflow:<run_id>`) on the gateway
+checkpointer, plus a `RunIndex` (`runs.py`) in a `BaseStore` on the same backend
+(`workflows/store.py`) holding status, trigger, `reply_to`, and reviews. Startup
+calls `resume_incomplete` (continue `running` runs from their last checkpoint;
+re-apply answers claimed before a crash). Nodes emit a progress line each.
 
-**Scheduling a saved workflow:** the agent `cron` tool takes `workflow_name`
-(+ optional JSON `workflow_input`) → `CronManager.add_job` → fires
-`origin="workflow"` → `GatewayManager._handle_workflow` runs the frozen script
-**without** the LLM (deterministic). Prefer this over a prose `task` job that
-re-describes the steps (the LLM would re-author it freehand every fire).
-**Self-disarm:** the cron job references the workflow by string name. If the
-`.js` is deleted (via the agent *or* straight in the folder), `_handle_workflow`
-reconciles from disk first (so manual deletes are seen), then — when the name no
-longer resolves and the fire carries its `cron_job_id` — removes its own schedule
-so it stops re-firing. `/workflows run` (no `cron_job_id`) just reports the
-unknown name.
+**Editing:** all writes go through `WorkflowFiles` (`runtime.files`): validate
+(errors block; unknown tools/subagents vs the runtime `catalog()` are warnings),
+snapshot the old file to `workflows/.history/<name>/`, write, reconcile. Both the
+API (`PUT /v1/workflows/{name}`, versions/restore) and the agent's
+`manage_workflows` tool use it. Code workflows can't be overwritten.
 
-**Parsing/format:** `langclaw/workflows/saved_store.py` — `parse_metadata` reads
-the `// @` header; `render_saved_file` writes the canonical form (used by
-`SavedWorkflowStore.save` and mirrored by the prompt). The `.js` file is the
-source of truth (editable, version-controllable).
+**Review requests:** when a run pauses, the runner calls the runtime's review hook
+→ `ControlPlane.notify_review_requests`, which sends each request to the run's
+`reply_to` chat and to `workflows.review_channel`/`review_chat_id` (deduped) via
+`BaseChannel.send_review_request` (Telegram: inline Approve/Edit/Reject buttons,
+payload `wfr:<a|e|r>:<review key>` — `gateway/reviews.py`; default: text with the
+commands) and records each sent message as a *notice* on the review. After any
+answer, `mark_review_resolved` updates every notice (Telegram edits the message
+and drops the buttons). Agent-tool runs take `reply_to` from `ToolRuntime.context`.
 
-**Honest limits:** requires *both* flags **and** a filesystem-rooted backend —
-`state`/`store` backends have no host folder for the agent's `write_file` / the
-loader, so file-authoring is gated off there. The folder is rooted at the backend
-fs root (`workflows_dir`) so it matches where `write_file` lands. A saved body is
-JS in the eval sandbox; its capability surface is the workflow step toolset
-narrowed by `@uses` — **langclaw-registered tools only**. The deepagents *backend*
-file tools (`read_file`/`write_file`/`ls`/`glob`/`grep`/`edit_file`) are injected
-inside `create_deep_agent` bound to an injected `ToolRuntime` the workflow PTC
-bridge can't supply, so a workflow can't `@uses` them (the `eval` interpreter can,
-because it bridges the live per-call toolset). Declaring one fails fast at run
-start with a clear error (`resolve_workflow_tools`) instead of `TypeError: not a
-function` in the sandbox; use `web_fetch` to read a URL/file. Saved-mode resume is
-at-least-once / non-idempotent (no per-step memoization), like `llm_authored`.
+**Reviews (HITL):** a paused run's reviews are answered via
+`ControlPlane.answer_review` (used by `/workflows approve|reject|edit`,
+`POST /v1/runs/{id}/review`, and Telegram buttons via `answer_review_by_key`): it claims the review in the index (**first answer
+wins**; a late answer gets `ConflictError` → API 409 naming who answered), then
+publishes an `origin="workflow"` message with `metadata["review"]` so the run
+continues on the bus worker and delivers to the channel that started it
+(`GatewayManager._handle_workflow`). Keep side effects *after* `request_review` in
+a node — LangGraph re-runs the node from the top on resume.
+
+**Scheduling:** the `cron` tool takes `workflow_name` (+ JSON `workflow_input`) →
+fires `origin="workflow"` → `_handle_workflow` runs it with no agent turn. If the
+workflow no longer exists when the job fires, the job removes itself.
+
+**Honest limits:** the first-answer-wins lock is per process (one gateway
+replica). A step mid-flight at a crash re-runs (make side effects idempotent).
+Nodes call tools in-process through the default agent's toolset, so per-role
+tool RBAC doesn't filter them (workflow RBAC gates who can *start* one).
