@@ -246,6 +246,9 @@ The **Client overview** page shows the chosen client and month. It uses
 - **Close tab:** the VAT position, the expected documents and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
+- **Results tab:** the month's and the year-to-date profit and loss, plus the
+  income-tax estimate.
+- **Partners tab:** open partner balances on the month's last day.
 - **Bank tab:** the open movements.
 
 The page is read-only. Posting, closing a month and confirming a match happen

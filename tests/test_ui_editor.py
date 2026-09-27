@@ -182,3 +182,9 @@ def test_recent_months_and_overview_alerts() -> None:
     assert "1 bank movement(s) not matched" in alerts
     errored = editor.overview_alerts({"report": {"error": "boom"}, "outlook": {}, "bank": {}})
     assert errored == ["Close report: boom"]
+
+
+def test_overview_alerts_cover_results_and_partners_errors() -> None:
+    view = {"report": {}, "outlook": {}, "bank": {}, "results": {"error": "db"},
+            "partners": {"error": "db"}}  # fmt: skip
+    assert editor.overview_alerts(view) == ["Results: db", "Partners: db"]
