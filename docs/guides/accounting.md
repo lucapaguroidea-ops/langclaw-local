@@ -127,6 +127,34 @@ person to approve or edit it before it reaches the client. The limits live in
 `langclaw/accounting/outlook.py:LIMITS` — reference data for your accountant
 to review, like the VAT table.
 
+## The monthly loop
+
+The **accounting_month** template (`ui/templates/accounting_month.graph.json`)
+does a client's month in one run:
+
+1. `efactura_sync` imports new invoices from SPV.
+2. `accounting_queue` starts `accounting_proposal` for every filed invoice
+   without an entry. These runs go on in parallel and ask for review where they
+   should.
+3. `accounting_period_report` produces the month's report: blockers, expected
+   documents, the trial balance and VAT.
+4. `accounting_outlook` produces the outlook: deadlines, limits and cash.
+5. The model drafts a status for the accountant and advice for the client.
+6. The run pauses for a person to approve or edit.
+
+With an empty `period` it works on **last month**. The period tools take `""`
+too (`resolve_period`), so a schedule never needs updating.
+
+To run it every month, create the workflow from the template in the console
+(New workflow → template). Then, **in the client's chat**, ask for it to be
+scheduled, e.g. "run accounting_month on the 1st of every month at 08:00". The
+`cron` tool stores `workflow_name`, and the run belongs to the client linked to
+that chat.
+
+Because the queued proposals run alongside the loop, the month report is taken
+when they start. Its blockers include the invoices just queued. Run the report
+again, or open the console's Client overview, once they're reviewed.
+
 ## In the console
 
 The **Client overview** page shows the chosen client and month. It uses

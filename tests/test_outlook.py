@@ -90,3 +90,24 @@ def test_cash_position_ages_unpaid_invoices() -> None:
     assert cash["next_30_days"] == {"in": D("1000.00"), "out": D("300.00")}
     assert cash["bank_balance"] == D("2500.00")
     assert cash["projected_30_days"] == D("3200.00")
+
+
+def test_the_monthly_loop_template_is_valid_against_the_real_tools() -> None:
+    from unittest.mock import MagicMock
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.config.schema import DocumentsConfig
+    from langclaw.documents import DocumentServices, build_document_tools
+    from langclaw.workflows.graph import parse_graph_spec
+
+    services = DocumentServices(DocumentsConfig(efactura={"mode": "demo"}))
+    names = {t.name for t in build_accounting_tools(services, bus=MagicMock())}
+    names |= {t.name for t in build_document_tools(services, bus=MagicMock())}
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    spec = json.loads(path.read_text())
+    parse_graph_spec("accounting_month", spec, available_tools=names)
+    tools = [n["tool"] for n in spec["nodes"].values() if n["type"] == "tool"]
+    assert tools == ["efactura_sync", "accounting_queue", "accounting_period_report",
+                     "accounting_outlook"]  # fmt: skip

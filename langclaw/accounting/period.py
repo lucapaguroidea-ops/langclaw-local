@@ -36,6 +36,22 @@ def parse_period(period: str) -> tuple[date, date]:
     return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
 
 
+def resolve_period(period: str, *, today: date | None = None) -> str:
+    """*period* as ``YYYY-MM``; ``""`` or ``"last"`` means the month before *today*
+    (so a scheduled run can always ask for "last month").
+
+    Raises:
+        ValueError: not a ``YYYY-MM`` month.
+    """
+    value = (period or "").strip()
+    if value in ("", "last"):
+        today = today or date.today()
+        year, month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+        return f"{year:04d}-{month:02d}"
+    parse_period(value)
+    return value
+
+
 def _dec(value: Any) -> Decimal:
     try:
         return Decimal(str(value if value not in (None, "") else 0)).quantize(_CENT)

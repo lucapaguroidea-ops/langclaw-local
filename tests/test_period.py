@@ -101,3 +101,13 @@ def test_expected_documents_are_counted_per_type() -> None:
     assert document_state(docs, None)["missing"] == []
     with pytest.raises(ValueError, match="expected_documents"):
         document_state(docs, [{"label": "no type"}])
+
+
+def test_an_empty_period_means_last_month() -> None:
+    from langclaw.accounting.period import resolve_period
+
+    assert resolve_period("", today=date(2026, 1, 5)) == "2025-12"
+    assert resolve_period("last", today=date(2026, 9, 27)) == "2026-08"
+    assert resolve_period(" 2026-03 ", today=date(2026, 9, 27)) == "2026-03"
+    with pytest.raises(ValueError, match="YYYY-MM"):
+        resolve_period("march", today=date(2026, 9, 27))
