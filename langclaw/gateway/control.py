@@ -132,6 +132,9 @@ class ControlPlane:
         self._mcp_servers = [dict(m) for m in (mcp_servers or [])]
         self._sessions = sessions
         self._checkpointer = checkpointer
+        #: Document services (bucket + table); ``None`` ⇒ the shared ones for
+        #: ``config.documents`` (tests inject their own).
+        self.documents: Any | None = None
 
     # ------------------------------------------------------------------
     # Status
@@ -152,9 +155,85 @@ class ControlPlane:
                 "schedules": self._cron is not None,
                 "interpreter": bool(self._config.interpreter.enabled),
                 "mcp": bool(self._mcp_servers),
+                "documents": bool(self._config.documents.enabled),
+                "ocr": bool(self._config.documents.ocr_model),
+                "semantic_search": bool(self._config.documents.embedding_model),
             },
             "mcp_servers": self._mcp_servers,
         }
+
+    # ------------------------------------------------------------------
+    # Documents (read-only: the UI's view of the documents table)
+    # ------------------------------------------------------------------
+
+    def _documents(self) -> Any:
+        if self.documents is not None:
+            return self.documents
+        if not self._config.documents.enabled:
+            raise FeatureDisabledError("Documents are off: set LANGCLAW__DOCUMENTS__ENABLED=true.")
+        from langclaw.documents.tools import shared_services
+
+        self.documents = shared_services(self._config.documents)
+        return self.documents
+
+    async def list_documents(
+        self,
+        *,
+        q: str = "",
+        semantic: bool = False,
+        sender: str = "",
+        receiver: str = "",
+        doc_type: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Filtered documents; with *q*, a text match — or ranked by meaning when
+        *semantic* and an embedding model is configured.
+
+        Returns ``{"documents", "count", "mode", "semantic"}`` where ``mode`` is
+        ``filter`` / ``text`` / ``semantic`` (what was actually done) and
+        ``semantic`` says whether meaning search is available.
+        """
+        from langclaw.documents.store import DocumentStoreError
+
+        services = self._documents()
+        filters = {
+            "sender": sender,
+            "receiver": receiver,
+            "doc_type": doc_type,
+            "date_from": date_from,
+            "date_to": date_to,
+            "status": status,
+        }
+        can_rank = services.embeddings is not None
+        try:
+            if q and semantic and can_rank:
+                vector = await services.embeddings.aembed_query(q)
+                rows = await services.store.similar(vector, limit=limit, **filters)
+                mode = "semantic"
+            else:
+                rows = await services.store.search(text=q, limit=limit, **filters)
+                mode = "text" if q else "filter"
+        except DocumentStoreError as exc:
+            raise ValueError(str(exc)) from exc
+        return {"documents": rows, "count": len(rows), "mode": mode, "semantic": can_rank}
+
+    async def get_document(self, bucket_key: str) -> dict[str, Any]:
+        """One record plus a temporary download link for its file (``""`` if the
+        bucket can't make one)."""
+        from langclaw.documents.bucket import BucketError
+
+        services = self._documents()
+        row = await services.store.get(bucket_key)
+        if row is None:
+            raise NotFoundError(f"No document {bucket_key!r}.")
+        try:
+            link = await services.bucket.link(bucket_key, expires_s=3600)
+        except BucketError:
+            link = ""
+        return {"document": row, "link": link}
 
     # ------------------------------------------------------------------
     # Conversation history

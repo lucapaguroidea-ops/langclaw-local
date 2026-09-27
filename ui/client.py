@@ -71,6 +71,21 @@ class LangclawClient:
     def turn(self, turn_id: str, wait: int = 0) -> dict[str, Any]:
         return self._request("GET", f"/v1/turns/{turn_id}", params={"wait": wait} if wait else None)
 
+    # -- documents -------------------------------------------------------------
+
+    def documents(self, q: str = "", *, semantic: bool = False, **filters: Any) -> dict:
+        """``{"documents", "count", "mode", "semantic"}`` — see ``GET /v1/documents``."""
+        params = {k: v for k, v in filters.items() if v}
+        if q:
+            params["q"] = q
+        if semantic:
+            params["semantic"] = "true"
+        return self._request("GET", "/v1/documents", params=params)
+
+    def document(self, key: str) -> dict[str, Any]:
+        """``{"document": {...}, "link": "https://..."}``."""
+        return self._request("GET", f"/v1/documents/{key}")
+
     # -- workflows -------------------------------------------------------------
 
     def workflows(self) -> list[dict[str, Any]]:

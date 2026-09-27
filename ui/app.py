@@ -725,6 +725,107 @@ def page_reviews(lc: LangclawClient) -> None:
         _review_card(lc, review, key=f"all:{review['run_id']}:{review['interrupt_id']}")
 
 
+STATUSES = ["", "filed", "processing", "needs_review", "rejected"]
+
+
+def page_documents(lc: LangclawClient) -> None:
+    st.header("📄 Documents")
+    st.caption("What the intake workflow filed. Read-only — edits happen through workflows.")
+    with st.form("doc_search"):
+        q = st.text_input("Search", placeholder="e.g. electricity bills from last spring")
+        cols = st.columns(4)
+        sender = cols[0].text_input("Sender")
+        doc_type = cols[1].text_input("Type", placeholder="invoice")
+        status = cols[2].selectbox("Status", STATUSES, format_func=lambda s: s or "any")
+        by_meaning = cols[3].toggle("By meaning", value=True, help="Semantic search")
+        dates = st.columns(2)
+        date_from = dates[0].date_input("From", value=None)
+        date_to = dates[1].date_input("To", value=None)
+        st.form_submit_button("Search")
+    result = _call(
+        lc.documents,
+        q,
+        semantic=by_meaning,
+        sender=sender,
+        doc_type=doc_type,
+        status=status,
+        date_from=date_from.isoformat() if date_from else "",
+        date_to=date_to.isoformat() if date_to else "",
+    )
+    if not result:
+        return
+    if q and by_meaning and not result["semantic"]:
+        st.info(
+            "Search by meaning is off (set LANGCLAW__DOCUMENTS__EMBEDDING_MODEL) — "
+            "showing text matches."
+        )
+    docs = result["documents"]
+    st.write(
+        f"**{result['count']}** document(s)"
+        + (" · ranked by meaning" if result["mode"] == "semantic" else "")
+    )
+    if not docs:
+        return
+    rows = [
+        {
+            "date": d.get("document_date") or "",
+            "type": d.get("doc_type", ""),
+            "sender": d.get("sender", ""),
+            "receiver": d.get("receiver", ""),
+            "amount": f"{d['amount']:,.2f} {d.get('currency', '')}".strip()
+            if d.get("amount") is not None
+            else "",
+            "status": d.get("status", ""),
+            **({"match": d["similarity"]} if "similarity" in d else {}),
+            "summary": d.get("summary", ""),
+            "file": d["bucket_key"],
+        }
+        for d in docs
+    ]
+    picked = st.dataframe(
+        rows,
+        hide_index=True,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="single-row",
+        column_config={"match": st.column_config.ProgressColumn("match", min_value=0, max_value=1)},
+    )
+    selected = picked.selection.rows if picked else []
+    if not selected:
+        st.caption("Select a row to see the full record.")
+        return
+    _document_detail(lc, docs[selected[0]]["bucket_key"])
+
+
+def _document_detail(lc: LangclawClient, key: str) -> None:
+    detail = _call(lc.document, key)
+    if not detail:
+        return
+    doc = detail["document"]
+    st.subheader(doc.get("filename") or key)
+    if detail.get("link"):
+        st.link_button("⬇️ Open file", detail["link"])
+    left, right = st.columns(2)
+    for label, field in [
+        ("Type", "doc_type"),
+        ("Sender", "sender"),
+        ("Receiver", "receiver"),
+        ("Date", "document_date"),
+        ("Status", "status"),
+    ]:
+        left.write(f"**{label}:** {doc.get(field) or '—'}")
+    if doc.get("amount") is not None:
+        right.write(f"**Amount:** {doc['amount']:,.2f} {doc.get('currency', '')}")
+    right.write(f"**Filed:** {doc.get('created_at', '')[:16]}")
+    right.write(f"**Updated:** {doc.get('updated_at', '')[:16]}")
+    right.write(f"**Bucket key:** `{key}`")
+    if doc.get("summary"):
+        st.write(doc["summary"])
+    if doc.get("fields"):
+        with st.expander("Other extracted fields"):
+            st.json(doc["fields"])
+
+
 def page_status(lc: LangclawClient) -> None:
     st.header("📊 Status")
     status = _call(lc.status)
@@ -784,13 +885,15 @@ def main(lc: LangclawClient) -> None:
         st.query_params["wf"] = choice
     page = st.sidebar.radio(
         "View",
-        ["Workflow", f"Review queue ({len(reviews)})", "Status"],
+        ["Workflow", f"Review queue ({len(reviews)})", "Documents", "Status"],
         label_visibility="collapsed",
     )
     st.sidebar.caption("Chat with langclaw in Telegram.")
     _flash()
     if page.startswith("Review queue"):
         page_reviews(lc)
+    elif page == "Documents":
+        page_documents(lc)
     elif page == "Status":
         page_status(lc)
     elif choice == NEW:
