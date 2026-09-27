@@ -758,6 +758,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bank-statements-and-payments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bank statements and payments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#advice-whats-coming" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1357,6 +1368,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bank-statements-and-payments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bank statements and payments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#advice-whats-coming" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1548,6 +1570,28 @@ client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.</p>
 <p>These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration file (DUKIntegrator) is a later slice.</p>
+<h2 id="bank-statements-and-payments">Bank statements and payments<a class="headerlink" href="#bank-statements-and-payments" title="Permanent link">&para;</a></h2>
+<p>Put a statement in the client's bucket (MT940 <code>.sta</code>/<code>.txt</code> or CAMT.053 <code>.xml</code>, as
+exported from the bank) and call <code>bank_import(key)</code>:</p>
+<ol>
+<li>It parses the statement — no model involved — and checks that opening +
+   movements = closing. The statement is filed as a <code>bank_statement</code> document,
+   dated its last day, so it satisfies <code>expected_documents</code> at month close. If the
+   balances don't add up, it's filed as <code>needs_review</code>.</li>
+<li>Movements go to <code>bank_transactions</code> in the client's schema. Each has a stable
+   key, so importing the same file twice adds nothing.</li>
+<li>Each new movement is matched to an open invoice:</li>
+<li>Money in only pays sales invoices, and money out only pays purchases.</li>
+<li>The amount must equal the invoice total.</li>
+<li>The amount plus one more signal is a <strong>certain</strong> match. The signal is the
+     invoice number in the description, the supplier's IBAN, or the partner's
+     name. The invoice gets <code>paid_on</code> / <code>payment_ref</code> / <code>payment_tx</code>.</li>
+<li>The amount alone, with only one candidate invoice, is <strong>probable</strong>. It's
+     listed under <code>to_confirm</code> for a person to confirm with
+     <code>bank_confirm_match(movement_key, bucket_key)</code>.</li>
+<li>With several candidates, nothing is matched.</li>
+</ol>
+<p><code>bank_movements(unmatched_only=True)</code> lists what's still open.</p>
 <h2 id="advice-whats-coming">Advice: what's coming<a class="headerlink" href="#advice-whats-coming" title="Permanent link">&para;</a></h2>
 <p><code>accounting_outlook(period, months=6)</code> computes, for one client, the facts to
 advise on — nothing here is written by a model:</p>
@@ -1603,6 +1647,9 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
   line that carries 0% needs the rate filled in before it adds up.</li>
 <li>Advice covers deadlines, regime limits and the VAT trend only — cash flow,
   payments and profit forecasts need bank data that isn't imported yet.</li>
+<li>Bank matching is one movement to one invoice. Partial payments, one payment
+  for several invoices, and FX movements stay with the accountant
+  (<code>bank_movements</code>).</li>
 </ul>
 
 
