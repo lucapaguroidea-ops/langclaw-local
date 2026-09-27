@@ -1639,7 +1639,7 @@ capabilities:</p>
 </tr>
 <tr>
 <td><code>await steps().tool(name, **kwargs)</code></td>
-<td>Call a registered tool.</td>
+<td>Call a registered tool. A tool that <em>returns</em> an error (<code>{"error": ...}</code> or <code>"Error: ..."</code>) fails the step with <code>WorkflowStepError</code>, so the run shows <strong>failed</strong> with the tool's message instead of completing with nothing done. Catch it in a code node to handle it yourself.</td>
 </tr>
 <tr>
 <td><code>await steps().subagent(type, prompt)</code></td>
