@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import io
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 
 import pytest
 
@@ -31,10 +31,20 @@ ROW = {
         "total_vat": "56.70",
         "vat_breakdown": [{"category": "S", "rate": "21.00", "taxable": "270.00", "vat": "56.70"}],
         "lines": [
-            {"name": "Hosting", "quantity": "2.00", "unit": "H87", "net": "200.00",
-             "vat_rate": "21.00"},
-            {"name": "Support", "quantity": "1.00", "unit": "HUR", "net": "70.00",
-             "vat_rate": "21.00"},
+            {
+                "name": "Hosting",
+                "quantity": "2.00",
+                "unit": "H87",
+                "net": "200.00",
+                "vat_rate": "21.00",
+            },
+            {
+                "name": "Support",
+                "quantity": "1.00",
+                "unit": "HUR",
+                "net": "70.00",
+                "vat_rate": "21.00",
+            },
         ],  # fmt: skip
     },
 }
