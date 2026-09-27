@@ -1,0 +1,112 @@
+"""
+Forward-looking facts — what's coming for a client, computed, not guessed.
+
+- :func:`deadlines`: the returns due after a month (D300 / D394 for VAT payers,
+  D112 with employees, D100 for micro-enterprises), all on the 25th of the
+  following month, monthly or at quarter end per the client's profile.
+- :func:`thresholds`: how close the year's revenue is to a limit that changes
+  the client's regime (VAT registration for non-payers, the micro-enterprise
+  revenue ceiling).
+- :func:`trend`: the latest month's VAT against the months before.
+
+An advice workflow (``monthly_advice`` template) hands these to a model that
+writes the advice; the model interprets, it doesn't compute. The limits below
+are reference data — have your accountant review them and add a row when the
+law changes.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+from langclaw.accounting.period import parse_period
+
+
+@dataclass(frozen=True, slots=True)
+class Limit:
+    name: str
+    applies: str  # "vat_non_payer" | "micro"
+    year_from: int
+    amount: Decimal
+    currency: str  # "RON" | "EUR"
+    note: str = ""
+
+
+#: Regime limits by year (the newest row whose year_from ≤ year applies).
+LIMITS: tuple[Limit, ...] = (
+    Limit("vat_registration", "vat_non_payer", 2025, Decimal(395000), "RON",
+          "Codul fiscal art. 310: above it, register for VAT."),
+    Limit("micro_revenue", "micro", 2025, Decimal(250000), "EUR",
+          "Micro-enterprise revenue ceiling."),
+    Limit("micro_revenue", "micro", 2026, Decimal(100000), "EUR",
+          "Micro-enterprise revenue ceiling (lowered for 2026)."),
+)  # fmt: skip
+#: Share of a limit at which it's flagged.
+WARN_AT = Decimal(80)
+_CENT = Decimal("0.01")
+
+
+def _next_25th(end: date) -> str:
+    year, month = (end.year + 1, 1) if end.month == 12 else (end.year, end.month + 1)
+    return date(year, month, 25).isoformat()
+
+
+def deadlines(period: str, profile: dict[str, Any]) -> list[dict[str, str]]:
+    """Returns due for *period* (``YYYY-MM``) given the client's *profile*
+    (``vat_payer``, ``vat_period`` monthly/quarterly, ``employees``, ``tax_regime``)."""
+    _, end = parse_period(period)
+    quarter_end = end.month % 3 == 0
+    due = _next_25th(end)
+    out: list[dict[str, str]] = []
+    if profile.get("vat_payer") and (profile.get("vat_period") != "quarterly" or quarter_end):
+        out.append({"form": "D300", "what": "VAT return and payment", "due": due})
+        out.append({"form": "D394", "what": "Informative statement of domestic supplies",
+                    "due": due})  # fmt: skip
+    if profile.get("employees"):
+        out.append({"form": "D112", "what": "Payroll contributions and income tax", "due": due})
+    if profile.get("tax_regime") == "micro" and quarter_end:
+        out.append({"form": "D100", "what": "Micro-enterprise income tax", "due": due})
+    return out
+
+
+def thresholds(revenue_ytd: Decimal, *, year: int, profile: dict[str, Any]) -> list[dict]:
+    """How far *revenue_ytd* (RON, net) is into each limit that applies to the client."""
+    applies = set()
+    if profile.get("vat_payer") is False:
+        applies.add("vat_non_payer")
+    if profile.get("tax_regime") == "micro":
+        applies.add("micro")
+    current: dict[str, Limit] = {}
+    for limit in LIMITS:
+        if limit.applies in applies and limit.year_from <= year:
+            if limit.name not in current or limit.year_from > current[limit.name].year_from:
+                current[limit.name] = limit
+    out = []
+    for limit in current.values():
+        amount = limit.amount
+        if limit.currency == "EUR":
+            rate = profile.get("eur_ron")
+            if not rate:
+                out.append({"name": limit.name, "note": "Set eur_ron on the client's profile "
+                            f"to compare with the {limit.amount} EUR limit."})  # fmt: skip
+                continue
+            amount = (amount * Decimal(str(rate))).quantize(_CENT)
+        used = (revenue_ytd * 100 / amount).quantize(Decimal("0.1"))
+        out.append({"name": limit.name, "limit": amount, "revenue_ytd": revenue_ytd,
+                    "used_pct": used, "warn": used >= WARN_AT, "note": limit.note})  # fmt: skip
+    return out
+
+
+def trend(months: list[tuple[str, Decimal]]) -> dict[str, Any]:
+    """The last month's value against the average of the months before it."""
+    if not months:
+        return {"months": [], "last": None, "average_before": None, "change_pct": None}
+    last = months[-1][1]
+    before = [v for _, v in months[:-1]]
+    avg = (sum(before, Decimal(0)) / len(before)).quantize(_CENT) if before else None
+    change = ((last - avg) * 100 / avg).quantize(Decimal("0.1")) if avg else None
+    return {"months": [{"period": p, "value": v} for p, v in months], "last": last,
+            "average_before": avg, "change_pct": change}  # fmt: skip
