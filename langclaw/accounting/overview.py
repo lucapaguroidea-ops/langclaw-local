@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 async def accounting_overview(
     services: DocumentServices, tenant: Tenant | None, period: str
 ) -> dict[str, Any]:
-    """``{"period", "report", "outlook", "bank", "results", "partners", "cash"}`` for
-    *tenant* and *period* (partner balances as of the month's last day).
+    """``{"period", "report", "outlook", "bank", "results", "partners", "cash",
+    "reports"}`` for *tenant* and *period* (partner balances as of the month's last day).
 
     Each part is the tool's own result, so a failing part carries its
     ``{"error": ...}`` without hiding the others.
@@ -39,8 +39,12 @@ async def accounting_overview(
         end = report.get("period") and _month_end(report["period"])
         partners = await tools["partner_balances"].ainvoke({"day": end or ""})
         cash = await tools["cash_book"].ainvoke({"period": report.get("period") or period})
+        reports = await tools["accounting_reports"].ainvoke(
+            {"period": report.get("period") or period}
+        )
     return {"period": period, "report": report, "outlook": outlook, "bank": bank,
-            "results": results, "partners": partners, "cash": cash}  # fmt: skip
+            "results": results, "partners": partners, "cash": cash,
+            "reports": reports}  # fmt: skip
 
 
 def _month_end(period: str) -> str:

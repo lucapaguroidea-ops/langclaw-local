@@ -581,6 +581,7 @@ async def test_the_overview_gathers_a_clients_month(acme) -> None:
     assert "cash" in view["outlook"] and view["bank"]["movements"] == []
     assert "year_to_date" in view["results"] and view["partners"]["partners"] == []
     assert view["cash"]["period"] == period and "days" in view["cash"]
+    assert view["reports"]["period"] == period and "files" in view["reports"]
     bad = await accounting_overview(services, client, "sept")
     assert "YYYY-MM" in bad["report"]["error"]
 
@@ -1434,3 +1435,30 @@ async def test_opening_balances_are_posted_once_and_open_the_trial_balance(acme)
     bank = next(r for r in sheet["accounts"] if r["account"] == "5121")
     assert bank["opening_debit"] == "1000.00" and sheet["balanced"]
     assert other["entries"] == 1
+
+
+@needs_pg
+async def test_closing_a_month_files_its_journal_register_and_trial_balance(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": False})
+    with tenant_scope(client):
+        await tools["cash_z_report"].ainvoke(
+            {"day": "2027-02-03", "lines": [{"rate": 0, "gross": 50}]}
+        )
+        closed = await tools["accounting_period_close"].ainvoke({"period": "2027-02"})
+    assert closed["registers"] == {"journal": "reports/2027-02/registru-jurnal.csv",
+                                   "trial_balance": "reports/2027-02/balanta.csv"}  # fmt: skip
+    for key in closed["registers"].values():
+        data, _ = await scoped.bucket.get(key)
+        assert b"5311" in data
+    with tenant_scope(client):
+        files = await tools["accounting_reports"].ainvoke({"period": "2027-02"})
+        empty = await tools["accounting_reports"].ainvoke({"period": "2027-03"})
+    assert sorted(f["name"] for f in files["files"]) == [
+        "balanta.csv", "close.json", "registru-jurnal.csv"]  # fmt: skip
+    assert all(f["url"] and f["key"].startswith("reports/2027-02/") for f in files["files"])
+    assert empty["files"] == []

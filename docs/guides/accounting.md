@@ -88,8 +88,15 @@ so proposals get more consistent as the accountant approves them.
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
 depreciation, the VAT settlement and, in December, the year-end entry, dated the
-last day of the month, and saves the report to
-`reports/<period>/close.json` in the client's bucket and **locks** the month:
+last day of the month. It then saves three files in the client's bucket:
+
+- the report, as `reports/<period>/close.json`;
+- the journal register, as `registru-jurnal.csv`;
+- the trial balance, as `balanta.csv`.
+
+The two registers include the closing entries, and their keys come back under
+`registers`. If either register can't be written, the month stays open.
+Finally it **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.
@@ -420,6 +427,10 @@ The **Client overview** page shows the chosen client and month. It uses
 - **Bank tab:** the open movements.
 - **Cash tab:** opening and closing cash, the problem days, the cash book day
   by day and the open employee advances.
+- **Files tab:** what's saved under `reports/<period>/`, with 24-hour download
+  links. That's the close report, the journal register and the trial balance
+  from the close, plus any ledgers or D394 draft made that month. The same list
+  comes from the `accounting_reports(period)` tool.
 
 The page is read-only. Posting, closing a month and confirming a match happen
 in chat or in workflows.
