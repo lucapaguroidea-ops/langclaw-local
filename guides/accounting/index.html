@@ -802,6 +802,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cash-register-raport-z" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash register (raport Z)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cash register (raport Z)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#invoices-paid-in-cash" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invoices paid in cash
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cash-receipts-without-an-invoice-bon-fiscal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash receipts without an invoice (bon fiscal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#employee-cash-advances-avans-de-trezorerie-542" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Employee cash advances (avans de trezorerie, 542)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cash-book-registru-de-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash book (registru de casă)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paying-suppliers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paying suppliers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#results-and-income-tax" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1467,6 +1539,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cash-register-raport-z" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash register (raport Z)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cash register (raport Z)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#invoices-paid-in-cash" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invoices paid in cash
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cash-receipts-without-an-invoice-bon-fiscal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash receipts without an invoice (bon fiscal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#employee-cash-advances-avans-de-trezorerie-542" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Employee cash advances (avans de trezorerie, 542)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cash-book-registru-de-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cash book (registru de casă)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paying-suppliers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paying suppliers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#results-and-income-tax" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1690,16 +1834,31 @@ so proposals get more consistent as the accountant approves them.</p>
   the asset goes into service, is <code>value / life_months</code> rounded to the ban, and
   the last month takes the rounding.</p>
 </li>
+<li>
+<p><strong>year_end</strong>: in December, the preview of the year-end closing entry. Every
+  class 6 and class 7 account, including income tax, is brought to zero against
+  121, which then holds the year's result (credit for a profit, debit for a loss).
+  The preview already includes December's depreciation. <code>accounting_results</code>
+  ignores this entry, so the P&amp;L still shows the year after the close.</p>
+</li>
 </ul>
 <p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
-depreciation and the VAT settlement, dated the last day of the month, and saves the report to
+depreciation, the VAT settlement and, in December, the year-end entry, dated the
+last day of the month, and saves the report to
 <code>reports/&lt;period&gt;/close.json</code> in the client's bucket and <strong>locks</strong> the month:
 <code>journal_post</code> refuses any entry dated in it (<code>closed_periods</code> table in the
 client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.</p>
+<p><code>accounting_d394(period)</code> gives the <strong>D394</strong> figures (the informative statement of
+domestic supplies and purchases). It covers the month's invoices with a partner
+tax ID. They are grouped by partner, direction (<code>out</code> supplies, <code>in</code> purchases),
+VAT rate and type (<code>normal</code> / <code>reverse_charge</code>). Each group has the invoice
+count, taxable base and VAT, and credit notes count negative. The rows are also
+saved as <code>reports/&lt;period&gt;/d394.csv</code> in the client's bucket.</p>
 <p>These are figures for the accountant to check and file, not the ANAF D300 XML;
-generating the declaration file (DUKIntegrator) is a later slice.</p>
+generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
+ANAF schemas and is a later slice.</p>
 <h2 id="bank-statements-and-payments">Bank statements and payments<a class="headerlink" href="#bank-statements-and-payments" title="Permanent link">&para;</a></h2>
 <p>Put a statement in the client's bucket (MT940 <code>.sta</code>/<code>.txt</code> or CAMT.053 <code>.xml</code>, as
 exported from the bank) and call <code>bank_import(key)</code>:</p>
@@ -1742,7 +1901,11 @@ exported from the bank) and call <code>bank_import(key)</code>:</p>
    another account for an IBAN, set it on the profile, e.g.
    <code>"bank_accounts": {"RO49…": "5121.01"}</code>.
 5. An unmatched debit described as a bank fee ("comision", "taxa bancara"…) is
-   booked D 627 / C bank.</p>
+   booked D 627 / C bank.
+6. A movement described as a cash deposit ("depunere numerar") or withdrawal
+   ("retragere numerar", "ridicare numerar", ATM) goes through 581 (cash in
+   transit): a deposit is D 581 / C 5311 and D bank / C 581, a withdrawal the
+   reverse. It shows under <code>cash_transfers</code> and leaves the unmatched list.</p>
 <p>A payment dated in a <strong>closed</strong> month is still applied to the invoice, but it
 isn't booked. It's listed under <code>not_booked</code> with the reason, for the
 accountant.</p>
@@ -1812,8 +1975,109 @@ works like this:</p>
 <p>On the next run, <code>receivables_overdue</code> shows <code>reminders_sent</code> and
 <code>last_reminder</code> per invoice, and the model escalates: first notice, second
 reminder, final notice.</p>
-<p>Nothing is emailed automatically, because customer email addresses aren't
-captured yet. Send the filed text from the chat or your mail client.</p>
+<p>Customer emails come from the e-Factura invoices. The UBL parser reads each
+party's <code>cac:Contact/cbc:ElectronicMail</code>, and sync stores it as <code>customer_email</code>
+/ <code>supplier_email</code>. <code>receivables_overdue</code> shows the email per customer.</p>
+<p>When Gmail is connected with write access (<code>LANGCLAW__TOOLS__GMAIL__ENABLED=true</code>,
+<code>…__READONLY=false</code>), <code>reminders_file</code> also creates a <strong>Gmail draft</strong> per
+reminder, addressed to the customer. A person still presses send. Customers
+without an email are filed and reported with <code>"draft": "no email address for
+this customer"</code>. Without Gmail, reminders are only filed.</p>
+<h2 id="cash-register-raport-z">Cash register (raport Z)<a class="headerlink" href="#cash-register-raport-z" title="Permanent link">&para;</a></h2>
+<p><code>cash_z_report(day, lines)</code> books a day's Z report from its gross sales per VAT
+rate, e.g. <code>[{"rate": 21, "gross": 1210}]</code>. The entry is:</p>
+<ul>
+<li>D 5311 for the total;</li>
+<li>C the revenue account for the net, i.e. the profile's <code>cash_revenue_account</code>
+  (707 by default, 704 for services);</li>
+<li>C 4427 for the VAT, worked out per rate from the gross.</li>
+</ul>
+<p>Rates must be valid on the day, and a day can be booked only once. A closed
+month refuses it.</p>
+<p>The report is filed as a <code>z_report</code> document. It counts towards
+<code>expected_documents</code>, e.g. <code>["z_report"]</code>, and its VAT goes into the month's
+VAT summary (the D300 draft). It doesn't go into D394, which lists invoices
+with a partner tax ID. Cash deposited at or withdrawn from the bank is booked
+through 581 by <code>bank_import</code> (see the bank section).</p>
+<h3 id="invoices-paid-in-cash">Invoices paid in cash<a class="headerlink" href="#invoices-paid-in-cash" title="Permanent link">&para;</a></h3>
+<p><code>cash_pay_invoice(bucket_key, amount, day, document)</code> records an invoice paid
+or collected in cash, with the chitanță or dispoziție de plată number:</p>
+<ul>
+<li>a supplier invoice is booked D 401 / C 5311, and a sale D 5311 / C 4111
+  (using the partner account the invoice was booked on);</li>
+<li>if <code>amount</code> is empty, it pays whatever is left, and it refuses more than
+  that;</li>
+<li>the invoice's payments are updated, and <code>paid_on</code> is set once nothing is
+  left;</li>
+<li>the same document can't be booked twice.</li>
+</ul>
+<p>If the profile sets <code>cash_payment_limit</code>, a warning is returned when the cash
+paid to or received from one partner on one day goes above it. The check adds up
+all of that partner's invoices, using their tax ID. No legal limit is built in,
+so set the one that applies to the client.</p>
+<h3 id="cash-receipts-without-an-invoice-bon-fiscal">Cash receipts without an invoice (bon fiscal)<a class="headerlink" href="#cash-receipts-without-an-invoice-bon-fiscal" title="Permanent link">&para;</a></h3>
+<p><code>cash_receipt(day, amount, account, vat_rate, document, description,
+deduct_vat)</code> books a purchase paid in cash with only a receipt, such as fuel or
+small supplies:</p>
+<ul>
+<li>D the cost account (6xx expense, 3xx stock or 2xx asset);</li>
+<li>D 4426 for the VAT;</li>
+<li>C 5311.</li>
+</ul>
+<p>The VAT is deducted only when the client is a VAT payer and <code>deduct_vat</code> is
+true. Set it to false when the receipt doesn't show the client's tax ID; the
+VAT then stays in the cost. The rate must be valid on the day, and a receipt
+number can be booked once.</p>
+<p>The receipt is filed as a <code>cash_receipt</code> document, and its deductible VAT goes
+into the month's VAT summary. Whether a particular receipt qualifies for
+deduction is left to the accountant.</p>
+<h3 id="employee-cash-advances-avans-de-trezorerie-542">Employee cash advances (avans de trezorerie, 542)<a class="headerlink" href="#employee-cash-advances-avans-de-trezorerie-542" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>cash_advance(day, amount, employee, document)</code> gives an employee cash:
+  D 542 / C 5311.</li>
+<li><code>cash_receipt(..., employee="Ana Pop")</code> books a receipt paid from that
+  advance: C 542 instead of 5311.</li>
+<li><code>cash_advance(..., returned=true)</code> takes back what the employee didn't spend:
+  D 5311 / C 542. It refuses more than the employee still has open.</li>
+<li><code>advances_open(day)</code> lists what each employee still has to settle.</li>
+<li>A negative figure means they spent more than they were given, so the
+    company owes them.</li>
+</ul>
+<p>Employees are identified by the name as written, so use the same spelling
+every time.</p>
+<h3 id="cash-book-registru-de-casa">Cash book (registru de casă)<a class="headerlink" href="#cash-book-registru-de-casa" title="Permanent link">&para;</a></h3>
+<p><code>cash_book(period)</code> reads 5311 back from the journal. It gives the opening
+balance, then for each day the receipts, payments, closing balance and the
+entries behind them, and finally the month's closing balance.</p>
+<p><code>problems</code> lists each day where:</p>
+<ul>
+<li>the cash went <strong>negative</strong>, which usually means a receipt is missing or was
+  booked late;</li>
+<li>the cash was above the profile's <code>cash_limit</code>, if one is set. Nothing is
+  checked by default.</li>
+</ul>
+<p>The month report (<code>accounting_period_report</code>) has a <code>cash</code> section with:</p>
+<ul>
+<li>the opening and closing cash;</li>
+<li>the same problems;</li>
+<li><code>open_advances</code>, the employees' unsettled 542 advances at month end.</li>
+</ul>
+<p><code>accounting_period_close</code> refuses a month in which the cash went negative. Book
+the missing Z reports or receipts first. Days above <code>cash_limit</code> and open
+advances are reported but don't block the close.</p>
+<h2 id="paying-suppliers">Paying suppliers<a class="headerlink" href="#paying-suppliers" title="Permanent link">&para;</a></h2>
+<p><code>payables_due(day, days=7)</code> lists the supplier invoices to pay: unpaid, and due
+within <code>days</code>. Overdue ones are included and flagged. The list is grouped by
+supplier and shows the IBAN from the invoice, what's left after partial
+payments, and the invoice numbers.</p>
+<p><code>payables_batch(day, days)</code> writes those payments as a CSV in the client's bucket
+at <code>payments/&lt;date&gt;-batch.csv</code>, and files it as a <code>payment_batch</code> document. It
+returns a 24-hour download link. The columns are <code>beneficiary; tax_id; iban;
+amount; currency; details</code>, where the details read "Plata fact. …".</p>
+<p>Suppliers without an IBAN are left out and listed under <code>missing_iban</code>. Nothing
+is paid from langclaw. The accountant uploads the file to internet banking, or
+copies it into the bank's own import format, since each bank's format differs.
+The payments are booked when the next statement is imported.</p>
 <h2 id="results-and-income-tax">Results and income tax<a class="headerlink" href="#results-and-income-tax" title="Permanent link">&para;</a></h2>
 <p><code>accounting_results(period)</code> computes the profit and loss for the month and the
 year to date from the journal:</p>
@@ -1861,7 +2125,9 @@ again, or open the console's Client overview, once they're reviewed.</p>
 <code>GET /v1/accounting/overview</code>, which runs the same tools as the agent.</p>
 <ul>
 <li><strong>Alerts:</strong> invoices without an entry, missing documents, limits close to being
-  crossed, overdue receivables, and unmatched bank movements.</li>
+  crossed, overdue receivables, unmatched bank movements, days with negative
+  cash (the month can't close), days above <code>cash_limit</code>, and open employee
+  advances.</li>
 <li><strong>Close tab:</strong> the VAT position, the expected documents and the trial balance.</li>
 <li><strong>Outlook tab:</strong> deadlines, limits, the bank balance, the 30-day projection
   and aging.</li>
@@ -1869,6 +2135,8 @@ again, or open the console's Client overview, once they're reviewed.</p>
   income-tax estimate.</li>
 <li><strong>Partners tab:</strong> open partner balances on the month's last day.</li>
 <li><strong>Bank tab:</strong> the open movements.</li>
+<li><strong>Cash tab:</strong> opening and closing cash, the problem days, the cash book day
+  by day and the open employee advances.</li>
 </ul>
 <p>The page is read-only. Posting, closing a month and confirming a match happen
 in chat or in workflows.</p>
@@ -1912,6 +2180,8 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
 <li>Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
   accelerated methods, and assets bought in a closed month stay with the
   accountant.</li>
+<li>The year-end entry assumes the financial year is the calendar year. The profit
+  distribution (129 / 1061 / 117) stays with the accountant.</li>
 </ul>
 
 
