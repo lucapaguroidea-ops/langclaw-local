@@ -40,7 +40,7 @@ from langclaw.accounting.bank.booking import (
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
-from langclaw.accounting.cash import CASH_ACCOUNT, z_report_entry
+from langclaw.accounting.cash import CASH_ACCOUNT, cash_expense_entry, z_report_entry
 from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
@@ -351,9 +351,10 @@ def build_accounting_tools(
             date_from=start.isoformat(), date_to=end.isoformat(), limit=200
         )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
-        booked += await svc.store.search(  # cash sales (Z reports) carry VAT too
-            doc_type="z_report", date_from=start.isoformat(), date_to=end.isoformat(), limit=200
-        )
+        for cash_type in ("z_report", "cash_receipt"):  # cash sales / purchases carry VAT too
+            booked += await svc.store.search(
+                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
         if settles_vat(period, _profile()):
@@ -1170,6 +1171,45 @@ def build_accounting_tools(
         return json.loads(json.dumps({"posted": posted, "paid": str(paid), "left": str(left - paid),
                                       "warnings": warnings}, default=str))  # fmt: skip
 
+    async def cash_receipt(
+        day: str, amount: str, account: str, vat_rate: float = 21,
+        document: str = "", description: str = "", deduct_vat: bool = True,
+    ) -> dict:  # fmt: skip
+        """Book a purchase paid in cash with a receipt and no invoice (bon fiscal,
+        e.g. fuel or small supplies): D expense/stock account / D 4426 / C 5311.
+        The VAT is deducted only for a VAT payer and when deduct_vat is true (the
+        receipt must show the client's tax ID); otherwise it stays in the cost.
+
+        Args:
+            day: The receipt's date (YYYY-MM-DD).
+            amount: The gross amount paid.
+            account: Where the cost goes, e.g. 6022 fuel, 604 supplies, 6231 protocol.
+            vat_rate: The receipt's VAT rate in percent.
+            document: The receipt number; a receipt can be booked once.
+            description: What was bought.
+            deduct_vat: False when the VAT can't be deducted.
+        """
+        try:
+            on = date.fromisoformat(day)
+            deduct = deduct_vat and _profile().get("vat_payer", True) is not False
+            entry = cash_expense_entry(on, amount, vat_rate, account, deduct_vat=deduct)
+            svc = services.current()
+            key = f"cash/receipt/{on.isoformat()}/{document or amount}"
+            doc = {"bucket_key": key, "document_date": on.isoformat(),
+                   "fields": {"direction": "in"}, "sender": description}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
+            totals = entry["totals"]
+            breakdown = [{"rate": str(vat_rate), "taxable": str(totals["net"]),
+                          "vat": str(totals["vat"])}] if deduct else []  # fmt: skip
+            await svc.store.save(key, {
+                "doc_type": "cash_receipt", "document_date": on.isoformat(),
+                "amount": totals["gross"], "status": "posted",
+                "summary": f"Bon {document} {on.isoformat()}: {description} {totals['gross']}",
+                "fields": {"direction": "in", "vat_breakdown": breakdown}})  # fmt: skip
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
+
     fns = [
         accounting_context,
         accounting_check,
@@ -1195,6 +1235,7 @@ def build_accounting_tools(
         cash_z_report,
         cash_book,
         cash_pay_invoice,
+        cash_receipt,
     ]
     if bus is not None:
         fns.append(accounting_queue)

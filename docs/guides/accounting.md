@@ -278,6 +278,25 @@ If the profile sets `cash_payment_limit`, a warning is returned when an
 invoice's cash payments on one day go above it. No legal limit is built in,
 so set the one that applies to the client.
 
+### Cash receipts without an invoice (bon fiscal)
+
+`cash_receipt(day, amount, account, vat_rate, document, description,
+deduct_vat)` books a purchase paid in cash with only a receipt, such as fuel or
+small supplies:
+
+- D the cost account (6xx expense, 3xx stock or 2xx asset);
+- D 4426 for the VAT;
+- C 5311.
+
+The VAT is deducted only when the client is a VAT payer and `deduct_vat` is
+true. Set it to false when the receipt doesn't show the client's tax ID; the
+VAT then stays in the cost. The rate must be valid on the day, and a receipt
+number can be booked once.
+
+The receipt is filed as a `cash_receipt` document, and its deductible VAT goes
+into the month's VAT summary. Whether a particular receipt qualifies for
+deduction is left to the accountant.
+
 ### Cash book (registru de casă)
 
 `cash_book(period)` reads 5311 back from the journal. It gives the opening

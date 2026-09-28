@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from langclaw.accounting.cash import cash_book, z_report_entry
+from langclaw.accounting.cash import cash_book, cash_expense_entry, z_report_entry
 
 D = Decimal
 
@@ -62,3 +62,23 @@ def test_a_cash_limit_is_checked_only_when_set() -> None:
     assert cash_book(D("0"), lines)["problems"] == []
     problems = cash_book(D("0"), lines, limit=D("500"))["problems"]
     assert problems and "500.00" in problems[0]["problem"]
+
+
+def test_a_cash_receipt_books_the_expense_and_deductible_vat() -> None:
+    entry = cash_expense_entry(date(2026, 9, 15), "121", 21, "6022", deduct_vat=True)
+    assert [(x["account"], x["debit"], x["credit"]) for x in entry["lines"]] == [
+        ("6022", "100.00", "0"), ("4426", "21.00", "0"), ("5311", "0", "121.00")]  # fmt: skip
+
+
+def test_without_deduction_the_vat_is_part_of_the_expense() -> None:
+    entry = cash_expense_entry(date(2026, 9, 15), "121", 21, "6022", deduct_vat=False)
+    assert [(x["account"], x["debit"]) for x in entry["lines"][:-1]] == [("6022", "121.00")]
+
+
+def test_cash_receipts_need_an_expense_account_and_a_valid_rate() -> None:
+    with pytest.raises(ValueError, match="4111"):
+        cash_expense_entry(date(2026, 9, 15), "121", 21, "4111", deduct_vat=True)
+    with pytest.raises(ValueError, match="19"):
+        cash_expense_entry(date(2026, 9, 15), "119", 19, "6022", deduct_vat=True)
+    with pytest.raises(ValueError, match="above 0"):
+        cash_expense_entry(date(2026, 9, 15), "0", 21, "6022", deduct_vat=True)

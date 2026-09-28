@@ -1198,3 +1198,29 @@ async def test_invoices_paid_in_cash_go_through_5311(acme) -> None:
     f = (await scoped.store.get(bill["bucket_key"]))["fields"]
     assert f["paid_on"] == "2026-09-21" and len(f["payments"]) == 2
     assert book["closing"] == str(-gross) and book["problems"]
+
+
+@needs_pg
+async def test_cash_receipts_are_booked_once_and_count_as_deductible_vat(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    receipt = {"day": "2026-11-03", "amount": "121", "account": "6022", "vat_rate": 21,
+               "document": "B 55", "description": "motorină"}  # fmt: skip
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        before = await tools["accounting_period_report"].ainvoke({"period": "2026-11"})
+        out = await tools["cash_receipt"].ainvoke(receipt)
+        twice = await tools["cash_receipt"].ainvoke(receipt)
+        bad = await tools["cash_receipt"].ainvoke({**receipt, "account": "4111", "document": "x"})
+        after = await tools["accounting_period_report"].ainvoke({"period": "2026-11"})
+        book = await tools["cash_book"].ainvoke({"period": "2026-11"})
+    assert [(x["account"], x["debit"], x["credit"]) for x in out["posted"]["lines"]] == [
+        ("6022", 100.0, 0.0), ("4426", 21.0, 0.0), ("5311", 0.0, 121.0)]  # fmt: skip
+    assert "already posted" in twice["error"] and "4111" in bad["error"]
+    assert Decimal(after["vat"]["deductible"]) - Decimal(before["vat"]["deductible"]) == 21
+    assert book["closing"] == "-121.00"
