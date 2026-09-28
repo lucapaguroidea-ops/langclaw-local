@@ -82,3 +82,39 @@ def fee_entry(amount: str, *, bank: str) -> dict[str, Any]:
         "reasoning": "Comision bancar din extras.",
         "legal_basis": "OMFP 1802/2014",
     }  # fmt: skip
+
+
+_DEPOSIT = re.compile(r"depunere\s+numerar|depunere\s+cash|cash\s+deposit", re.I)
+_WITHDRAWAL = re.compile(r"retragere\s+numerar|ridicare\s+numerar|retragere\s+atm|"
+                         r"cash\s+withdrawal", re.I)  # fmt: skip
+TRANSFER_ACCOUNT, CASH_ACCOUNT = "581", "5311"
+
+
+def cash_transfer(description: str) -> str | None:
+    """``"deposit"`` / ``"withdrawal"`` when the movement moves cash in or out of the
+    bank account, else ``None``."""
+    if _DEPOSIT.search(description or ""):
+        return "deposit"
+    if _WITHDRAWAL.search(description or ""):
+        return "withdrawal"
+    return None
+
+
+def cash_transfer_entry(kind: str, amount: str, *, bank: str) -> dict[str, Any]:
+    """Cash moved between the register and the bank, through 581 (viramente interne)."""
+    source, target = (CASH_ACCOUNT, bank) if kind == "deposit" else (bank, CASH_ACCOUNT)
+    note = "Depunere numerar" if kind == "deposit" else "Ridicare numerar"
+
+    def line(account: str, debit: str, credit: str) -> dict[str, str]:
+        return {"account": account, "debit": debit, "credit": credit, "explanation": note}
+
+    return {
+        "lines": [
+            line(TRANSFER_ACCOUNT, amount, "0"),
+            line(source, "0", amount),
+            line(target, amount, "0"),
+            line(TRANSFER_ACCOUNT, "0", amount),
+        ],
+        "reasoning": f"{note} prin 581.",
+        "legal_basis": "OMFP 1802/2014",
+    }

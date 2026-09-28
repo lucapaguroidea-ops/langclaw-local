@@ -29,7 +29,14 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
-from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fee, payment_entry
+from langclaw.accounting.bank.booking import (
+    bank_account,
+    cash_transfer,
+    cash_transfer_entry,
+    fee_entry,
+    is_bank_fee,
+    payment_entry,
+)
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
@@ -584,7 +591,8 @@ def build_accounting_tools(
     async def bank_import(key: str) -> dict:
         """Import a bank statement (MT940 or CAMT.053) from the client's bucket, match
         its movements to the invoices they pay and book them (payments: 5121 against
-        the invoice's partner account; bank fees: 627). Safe to run twice.
+        the invoice's partner account; bank fees: 627; cash deposits and withdrawals
+        through 581). Safe to run twice.
 
         Certain matches (amount plus invoice number, IBAN or partner name) mark the
         invoice paid; probable ones (amount only) are listed to confirm with
@@ -624,7 +632,7 @@ def build_accounting_tools(
             fresh = [t for t in statement.transactions if t.key in new]
             matches = match_payments(fresh, await _open_invoices(svc))
             by_key = {t.key: t for t in fresh}
-            booked, not_booked, fees = 0, [], []
+            booked, not_booked, fees, cash = 0, [], [], []
             for m in matches:
                 keys = ",".join(a["bucket_key"] for a in m["allocations"])
                 await book.set_match(m["key"], keys, m["kind"], m["because"])
@@ -640,6 +648,21 @@ def build_accounting_tools(
                         else:
                             booked += 1
             matched = {m["key"] for m in matches}
+            for t in fresh:
+                kind = cash_transfer(f"{t.counterparty} {t.description}")
+                if t.key in matched or not kind:
+                    continue
+                bank = bank_account(statement.iban, t.currency, _profile())
+                doc = {"bucket_key": f"bank/{t.key}/cash", "document_date": t.booked,
+                       "fields": {"direction": "in"}, "sender": t.counterparty}  # fmt: skip
+                entry = cash_transfer_entry(kind, str(abs(t.amount)), bank=bank)
+                why = await _book(svc, doc, entry)
+                if why:
+                    not_booked.append({"movement": t.key, "reason": why})
+                    continue
+                await book.set_match(t.key, "", "cash", kind)
+                matched.add(t.key)
+                cash.append({"key": t.key, "kind": kind, "amount": str(t.amount)})
             for t in fresh:
                 if t.key in matched or t.amount >= 0:
                     continue
@@ -666,10 +689,11 @@ def build_accounting_tools(
             "paid": [m for m in matches if m["kind"] == "certain"],
             "partial": [m for m in matches if m["kind"] == "partial"],
             "fees": fees,
+            "cash_transfers": cash,
             "booked_entries": booked,
             "not_booked": not_booked,
             "to_confirm": [m for m in matches if m["kind"] == "probable"],
-            "unmatched": len(fresh) - len(matches) - len(fees),
+            "unmatched": len(fresh) - len(matches) - len(fees) - len(cash),
         }
 
     async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:

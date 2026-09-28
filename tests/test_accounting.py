@@ -718,6 +718,31 @@ async def test_payments_and_fees_are_booked_in_the_journal(acme) -> None:
 
 
 @needs_pg
+async def test_cash_deposits_and_withdrawals_go_through_581(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    await scoped.bucket.put(
+        "bank/c1.sta",
+        _mt940(("C", 500.0, "Depunere numerar casierie"), ("D", 200.0, "Retragere numerar")),
+    )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["bank_import"].ainvoke({"key": "bank/c1.sta"})
+        again = await tools["bank_import"].ainvoke({"key": "bank/c1.sta"})
+        assert (await tools["bank_movements"].ainvoke({}))["movements"] == []
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    assert [c["kind"] for c in out["cash_transfers"]] == ["deposit", "withdrawal"]
+    assert out["unmatched"] == 0 and out["not_booked"] == []
+    assert again["imported"] == 0 and again["cash_transfers"] == []
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert accounts["5311"]["balance"] == "-300.00"
+    assert accounts["5121"]["balance"] == "300.00"
+    assert accounts["581"]["balance"] == "0.00"
+
+
+@needs_pg
 async def test_a_payment_in_a_closed_month_is_applied_but_not_booked(acme) -> None:
     from langclaw.accounting.journal import Journal
     from langclaw.accounting.tools import build_accounting_tools

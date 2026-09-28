@@ -149,6 +149,10 @@ exported from the bank) and call `bank_import(key)`:
    `"bank_accounts": {"RO49…": "5121.01"}`.
 5. An unmatched debit described as a bank fee ("comision", "taxa bancara"…) is
    booked D 627 / C bank.
+6. A movement described as a cash deposit ("depunere numerar") or withdrawal
+   ("retragere numerar", "ridicare numerar", ATM) goes through 581 (cash in
+   transit): a deposit is D 581 / C 5311 and D bank / C 581, a withdrawal the
+   reverse. It shows under `cash_transfers` and leaves the unmatched list.
 
 A payment dated in a **closed** month is still applied to the invoice, but it
 isn't booked. It's listed under `not_booked` with the reason, for the
