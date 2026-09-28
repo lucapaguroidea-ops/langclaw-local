@@ -66,9 +66,19 @@ so proposals get more consistent as the accountant approves them.
   payers (monthly, or at quarter end with `"vat_period": "quarterly"`). The
   balances of 4426 and 4427 up to the month's last day are cleared into
   4423 (payable) or 4424 (refundable):
-  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
-  collection, where the 4428 → 4427 transfer depends on payments and stays
-  with the accountant.
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426.
+  - **VAT on collection** (`"vat_on_collection": true`): invoices book their VAT
+    on 4428. Each payment booked from a bank statement or with
+    `cash_pay_invoice` moves the paid share of the invoice's VAT:
+    D 4428 / C 4427 for a sale, D 4426 / C 4428 for a purchase. The settlement
+    then clears only the VAT that became due, and unpaid VAT stays on 4428.
+  - The month report's `vat` (the D300 draft) then counts what became due in
+    the month, with `"basis": "payments"`: credits to 4427 and debits to 4426.
+    That includes paid invoices, Z reports and receipts. The invoice-date
+    totals stay under `by_invoice`. The per-rate rows still come from the
+    invoices.
+  - A partner offset (`partner_offset`) moves the offset share the same way,
+    invoice by invoice.
 
 - **depreciation** — the month's depreciation entry for the client's fixed
   assets, previewed here and posted at close: D 6811 / C the
@@ -84,6 +94,21 @@ so proposals get more consistent as the accountant approves them.
   121, which then holds the year's result (credit for a profit, debit for a loss).
   The preview already includes December's depreciation. `accounting_results`
   ignores this entry, so the P&L still shows the year after the close.
+
+The month report also has `anomalies`: accounts whose balance at month end
+(everything posted so far) is on the side it normally can't be on. Each comes
+with the likely reason:
+
+- 5311 or 512x in credit (cash paid without a receipt, or a bank overdraft);
+- 581 not zero;
+- 542 in credit (the company owes the employee);
+- 28x or 29x in debit;
+- 401 or 404 in debit (a supplier paid more than invoiced);
+- 4111 in credit (a customer paid more than invoiced);
+- stock or fixed-asset accounts in credit.
+
+They're for the accountant to check. They don't block the close, except
+negative cash, which the close refuses anyway.
 
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
@@ -409,6 +434,46 @@ Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
 
+## Correcting a posted entry (stornare)
+
+`journal_reverse(bucket_key, reason, day="")` undoes a wrong entry without
+deleting anything:
+
+- It posts the same lines with debit and credit swapped, dated `day`, under
+  `reverse/<n>/<key>`. That month must be open.
+- It moves the original to `<key>#reversed-<n>`. Both entries stay in the
+  journal and the registers.
+- The document goes back to status `reversed`, so it shows as a blocker until
+  the correct entry is posted with `journal_post`.
+- A reason is required, and it is written into the journal.
+
+## Balance confirmations (confirmări de sold)
+
+`partner_confirmations(day)` writes one letter per partner with an open balance
+on `day`, usually 31 December. Each letter, in Romanian, states what the partner
+owes the client and what the client owes them, and asks the partner to confirm
+or send the differences. Letters are filed as `confirmations/<day>/<cui>.txt`.
+
+With Gmail connected, it also creates an email draft to each partner, using the
+address from their invoices. Nothing is sent. Partners without an email are
+listed with `"draft": "no email address for this partner"`.
+
+## Offsetting a partner (compensare)
+
+When a partner both owes the client (41x) and is owed by them (40x),
+`partner_offset(partner_cui, day, amount="")` nets the two:
+
+- It posts D 401 / C 4111 for the smaller balance, or for `amount` if given
+  (no more than that), under `offset/<day>/<cui>`, once per partner and day.
+- It applies the same amount to the partner's open invoices on both sides,
+  oldest first. The invoices then read as paid, and reminders and payment
+  batches skip them.
+- If the partner has nothing to offset, it says so.
+
+The offset entry appears in the journal register's non-invoice file. The
+signed confirmation (proces-verbal de compensare) stays with the accountant.
+Only the first 200 invoices of each kind are searched.
+
 ## In the console
 
 The **Client overview** page shows the chosen client and month. It uses
@@ -418,7 +483,8 @@ The **Client overview** page shows the chosen client and month. It uses
   crossed, overdue receivables, unmatched bank movements, days with negative
   cash (the month can't close), days above `cash_limit`, and open employee
   advances.
-- **Close tab:** the VAT position, the expected documents and the trial balance.
+- **Close tab:** the VAT position, the expected documents, any balances on the
+  wrong side, and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
 - **Results tab:** the month's and the year-to-date profit and loss, plus the

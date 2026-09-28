@@ -154,6 +154,42 @@ def opening_entry(balances: dict[str, Any]) -> dict[str, Any]:
             "legal_basis": "OMFP 1802/2014"}  # fmt: skip
 
 
+#: (account prefix, the side its balance must not be on, why it's wrong there);
+#: the first matching prefix wins.
+_BALANCE_RULES: tuple[tuple[str, str, str], ...] = (
+    ("5311", "credit", "More cash paid out than the register held (missing receipt?)."),
+    ("512", "credit", "Bank account below zero: an overdraft, or a movement is missing."),
+    ("581", "any", "Cash in transit should be zero once deposits/withdrawals are booked."),
+    ("542", "credit", "An employee spent more than advanced: the company owes them."),
+    ("28", "debit", "Accumulated depreciation can't have a debit balance."),
+    ("29", "debit", "An impairment adjustment can't have a debit balance."),
+    ("401", "debit", "The supplier was paid more than invoiced (advance or double payment)."),
+    ("404", "debit", "The supplier was paid more than invoiced (advance or double payment)."),
+    ("4111", "credit", "The customer paid more than invoiced (advance or double payment)."),
+    ("3", "credit", "Stock can't have a credit balance: an exit without an entry."),
+    ("2", "credit", "A fixed asset can't have a credit balance."),
+)
+
+
+def balance_anomalies(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Accounts whose closing balance (``balance`` = debit − credit) is on the
+    side it can't normally be on, each with the likely reason."""
+    found = []
+    for row in accounts:
+        account, balance = str(row["account"]), _dec(row.get("balance"))
+        if not balance:
+            continue
+        for prefix, wrong, why in _BALANCE_RULES:
+            if not account.startswith(prefix):
+                continue
+            side = "debit" if balance > 0 else "credit"
+            if wrong in ("any", side):
+                found.append({"account": account, "balance": str(balance.quantize(_CENT)),
+                              "problem": why})  # fmt: skip
+            break
+    return found
+
+
 def _rate(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
@@ -205,6 +241,21 @@ def vat_summary(invoices: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def vat_due(lines: list[dict[str, Any]]) -> dict[str, Decimal]:
+    """VAT that became due in a period, from its journal *lines*: credits to 4427
+    (collected) and debits to 4426 (deductible). For VAT on collection, where the
+    invoices' VAT waits on 4428 until they're paid; settlement lines (debits to
+    4427, credits to 4426) don't count."""
+    collected = sum((_dec(x.get("credit")) for x in lines
+                     if str(x["account"]).split(".")[0] == "4427"), Decimal(0))  # fmt: skip
+    deductible = sum((_dec(x.get("debit")) for x in lines
+                      if str(x["account"]).split(".")[0] == "4426"), Decimal(0))  # fmt: skip
+    net = (collected - deductible).quantize(_CENT)
+    zero = Decimal(0).quantize(_CENT)
+    return {"collected": collected.quantize(_CENT), "deductible": deductible.quantize(_CENT),
+            "payable": max(net, zero), "refundable": max(-net, zero)}  # fmt: skip
+
+
 def blockers(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Invoices in the period that don't have a journal entry yet."""
     return [
@@ -248,9 +299,10 @@ def document_state(documents: list[dict[str, Any]], expected: list[Any] | None) 
 
 def settles_vat(period: str, profile: dict[str, Any]) -> bool:
     """Whether the month's close settles VAT: VAT payers, monthly or at quarter end
-    (``vat_period: quarterly``). Not for VAT on collection — the 4428 → 4427
-    transfer depends on payments and stays with the accountant."""
-    if not profile.get("vat_payer") or profile.get("vat_on_collection"):
+    (``vat_period: quarterly``). With VAT on collection the payments move the paid
+    share of 4428 into 4426/4427 as they're booked, so what's settled is only
+    the VAT that became due; what's unpaid stays on 4428."""
+    if not profile.get("vat_payer"):
         return False
     _, end = parse_period(period)
     return profile.get("vat_period") != "quarterly" or end.month % 3 == 0

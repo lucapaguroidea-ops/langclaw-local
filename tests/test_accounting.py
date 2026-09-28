@@ -1298,8 +1298,10 @@ async def test_the_month_report_shows_cash_and_close_refuses_negative_cash(acme)
         closed = await tools["accounting_period_close"].ainvoke({"period": "2027-01"})
     assert report["cash"]["closing"] == "-200.00" and report["cash"]["problems"]
     assert report["cash"]["open_advances"] == [{"employee": "Ana Pop", "open": "200.00"}]
+    assert [a["account"] for a in report["anomalies"]] == ["5311"]
     assert "negative" in refused["error"] and refused["problems"]
     assert fixed["cash"]["closing"] == "300.00" and fixed["cash"]["problems"] == []
+    assert fixed["anomalies"] == []
     assert "error" not in closed
 
 
@@ -1462,3 +1464,181 @@ async def test_closing_a_month_files_its_journal_register_and_trial_balance(acme
         "balanta.csv", "close.json", "registru-jurnal.csv"]  # fmt: skip
     assert all(f["url"] and f["key"].startswith("reports/2027-02/") for f in files["files"])
     assert empty["files"] == []
+
+
+@needs_pg
+async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    bill = next(r for r in rows if r["fields"]["direction"] == "in")
+    cui = sale["fields"]["customer_cui"]
+    copy = {k: v for k, v in bill.items() if k not in ("id", "bucket_key", "fields")}
+    await scoped.store.save("inbox/from-customer.xml", {**copy, "sender": sale["receiver"],
+        "fields": {**bill["fields"], "supplier_cui": cui, "invoice_number": "BACK-1"}})  # fmt: skip
+    bill2 = await scoped.store.get("inbox/from-customer.xml")
+    small = min(Decimal(str(sale["amount"])), Decimal(str(bill2["amount"])))
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        for row in (sale, bill2):
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        again = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        nobody = await tools["partner_offset"].ainvoke({"partner_cui": "RO1", "day": "2026-09-30"})
+        balances = await tools["partner_balances"].ainvoke({"day": "2026-09-30"})
+    assert out["amount"] == str(small.quantize(Decimal("0.01")))
+    assert [(x["account"], x["debit"] > 0) for x in out["posted"]["lines"]] == [
+        ("401", True), ("4111", False)]  # fmt: skip
+    assert "error" in again and "nothing to offset" in nobody["error"]
+    mine = next(p for p in balances["partners"] if p["cui"] == cui)
+    assert "0.00" in (mine["receivable"], mine["payable"])
+    for key in (sale["bucket_key"], "inbox/from-customer.xml"):
+        f = (await scoped.store.get(key))["fields"]
+        assert any(p["tx"] == f"offset:2026-09-30:{cui}" for p in f["payments"])
+
+
+@needs_pg
+async def test_balance_confirmations_are_filed_and_drafted_per_partner(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    drafts = []
+
+    async def mailer(to: str, subject: str, body: str) -> dict:
+        drafts.append((to, subject, body))
+        return {"draft_id": f"d{len(drafts)}"}
+
+    tools = {t.name: t for t in build_accounting_tools(services, mailer=mailer)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    gross = f"{float(sale['amount']):.2f}"
+    with tenant_scope(Tenant(id="acme", name="ACME SRL", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        out = await tools["partner_confirmations"].ainvoke({"day": "2026-12-31"})
+    [item] = out["filed"]
+    assert item["cui"] == sale["fields"]["customer_cui"] and item["receivable"] == gross
+    assert item["document"] == f"confirmations/2026-12-31/{item['cui']}.txt"
+    text = (await scoped.bucket.get(item["document"]))[0].decode("utf-8")
+    assert gross in text and "31.12.2026" in text and "ACME SRL" in text
+    assert drafts and drafts[0][0] == sale["fields"]["customer_email"]
+    assert item["draft"] == "d1" and "Confirmare" in drafts[0][1]
+
+
+@needs_pg
+async def test_a_posted_entry_can_be_reversed_and_posted_again(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    key, period = bill["bucket_key"], str(bill["document_date"])[:7]
+    wrong = _entry_for(bill)
+    wrong["lines"][0]["account"] = "6022"
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke({"bucket_key": key, "proposal": wrong})
+        no_reason = await tools["journal_reverse"].ainvoke({"bucket_key": key, "reason": ""})
+        out = await tools["journal_reverse"].ainvoke(
+            {"bucket_key": key, "day": f"{period}-28", "reason": "wrong expense account"}
+        )
+        report = await tools["accounting_period_report"].ainvoke({"period": period})
+        again = await tools["journal_post"].ainvoke(
+            {"bucket_key": key, "proposal": _entry_for(bill)}
+        )
+        missing = await tools["journal_reverse"].ainvoke({"bucket_key": "nope", "reason": "x"})
+    assert "reason" in no_reason["error"] and "error" in missing
+    assert out["reversal"]["bucket_key"] == f"reverse/1/{key}"
+    assert out["original"] == f"{key}#reversed-1"
+    assert key in [b["bucket_key"] for b in report["blockers"]]
+    assert "error" not in again
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert accounts["6022"]["balance"] == "0.00"
+    journal = Journal(scoped.store)
+    assert (await journal.get(key))["lines"][0]["account"] == "628"
+    assert (await scoped.store.get(key))["status"] == "posted"
+
+
+@needs_pg
+async def test_vat_on_collection_becomes_due_as_the_customer_pays(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    number, gross = sale["fields"]["invoice_number"], float(sale["amount"])
+    vat = Decimal(str(sale["fields"]["total_vat"]))
+    entry = _entry_for(sale)
+    entry["lines"][2]["account"] = "4428"
+    half = round(gross / 2, 2)
+    await scoped.bucket.put("bank/v1.sta", _mt940(("C", half, f"avans {number}")))
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                    profile={"vat_payer": True, "vat_on_collection": True})  # fmt: skip
+    with tenant_scope(client):
+        posted = await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": entry}
+        )
+        await tools["bank_import"].ainvoke({"key": "bank/v1.sta"})
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    assert "error" not in posted
+    share = (vat * Decimal(str(half)) / Decimal(str(gross))).quantize(Decimal("0.01"))
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert Decimal(accounts["4427"]["balance"]) == -share
+    assert Decimal(accounts["4428"]["balance"]) == -(vat - share)
+    assert report["vat_settlement"] is not None
+    assert report["vat"]["basis"] == "payments"
+    assert Decimal(report["vat"]["collected"]) == share
+    assert Decimal(report["vat"]["by_invoice"]["collected"]) == vat
+
+
+@needs_pg
+async def test_an_offset_moves_vat_on_collection_out_of_4428(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    bill = next(r for r in rows if r["fields"]["direction"] == "in")
+    cui = sale["fields"]["customer_cui"]
+    copy = {k: v for k, v in bill.items() if k not in ("id", "bucket_key", "fields")}
+    await scoped.store.save("inbox/from-customer.xml", {**copy, "sender": sale["receiver"],
+        "fields": {**bill["fields"], "supplier_cui": cui, "invoice_number": "BACK-1"}})  # fmt: skip
+    bill2 = await scoped.store.get("inbox/from-customer.xml")
+    with tenant_scope(
+        Tenant(
+            id="acme",
+            name="ACME",
+            tax_id="RO12345678",
+            profile={"vat_payer": True, "vat_on_collection": True},
+        )
+    ):
+        for row in (sale, bill2):
+            entry = _entry_for(row)
+            for line in entry["lines"]:
+                if line["account"] in ("4426", "4427"):
+                    line["account"] = "4428"
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": entry}
+            )
+        out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+    accounts = [x["account"] for x in out["posted"]["lines"]]
+    assert accounts[:2] == ["401", "4111"] and {"4427", "4426", "4428"} <= set(accounts)
+    moved = sum(x["debit"] for x in out["posted"]["lines"] if x["account"] == "4428")
+    assert moved > 0

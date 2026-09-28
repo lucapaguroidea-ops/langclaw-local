@@ -61,6 +61,7 @@ from langclaw.accounting.outlook import (
 )
 from langclaw.accounting.outlook import payables_due as plan_payables
 from langclaw.accounting.period import (
+    balance_anomalies,
     blockers,
     d394_rows,
     document_state,
@@ -70,6 +71,7 @@ from langclaw.accounting.period import (
     settles_vat,
     trial_balance,
     trial_balance_sheet,
+    vat_due,
     vat_settlement,
     vat_summary,
 )
@@ -235,6 +237,34 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"posted": posted}
 
+    async def journal_reverse(
+        bucket_key: str, reason: str, day: str = "", reversed_by: str = ""
+    ) -> dict:
+        """Reverse (stornare) a posted entry that was wrong: posts the same lines
+        with debit and credit swapped, dated *day* (the month must be open), and
+        frees the document so its correct entry can be posted with journal_post.
+        Both entries stay in the journal; the invoice is a blocker until reposted.
+
+        Args:
+            bucket_key: The key the entry was posted under (the document's key).
+            reason: Why it's reversed; required, it goes into the journal.
+            day: The reversal's date (YYYY-MM-DD); empty means today.
+            reversed_by: Who reversed it.
+        """
+        if not reason.strip():
+            return {"error": "Give the reason for the reversal; it goes into the journal."}
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            moved, entry = await Journal(svc.store).reverse(
+                bucket_key, on, reason=reason.strip(), approved_by=reversed_by
+            )
+            if await svc.store.get(bucket_key):
+                await svc.store.save(bucket_key, {"status": "reversed"})
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"reversal": entry, "original": moved}, default=str))
+
     async def accounting_defer(bucket_key: str, reason: str = "") -> dict:
         """Leave an invoice for manual booking (status needs_manual_entry).
 
@@ -396,10 +426,19 @@ def build_accounting_tools(
             "year_end": None,
             "invoices": len(docs),
         }
+        so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
+        report["anomalies"] = balance_anomalies(so_far["accounts"])
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],
                           "open_advances": await _open_advances(journal, end)}  # fmt: skip
+        if _profile().get("vat_on_collection"):  # VAT is due as invoices are paid
+            by_invoice = report["vat"]
+            month_lines = await journal.lines_between(start, end)
+            report["vat"] = {**by_invoice, **vat_due(month_lines), "basis": "payments",
+                             "by_invoice": {k: by_invoice[k] for k in
+                                            ("collected", "deductible", "payable",
+                                             "refundable")}}  # fmt: skip
         if start.month == 12:  # December: close classes 6 and 7 into 121
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)
@@ -626,7 +665,11 @@ def build_accounting_tools(
         doc = {**row, "bucket_key": f"bank/{tx['key']}/{bucket_key}",
                "document_date": str(tx["booked"])}  # fmt: skip
         entry = payment_entry(
-            row, str(amount), invoice_lines=(invoice_entry or {}).get("lines"), bank=bank
+            row,
+            str(amount),
+            invoice_lines=(invoice_entry or {}).get("lines"),
+            bank=bank,
+            vat_on_collection=bool(_profile().get("vat_on_collection")),
         )
         return await _book(svc, doc, entry)
 
@@ -918,6 +961,123 @@ def build_accounting_tools(
             for r in rows if r["rec"] or r["pay"]
         ]  # fmt: skip
         return {"day": on.isoformat(), "partners": partners}
+
+    async def partner_offset(partner_cui: str, day: str = "", amount: str = "") -> dict:
+        """Offset (compensare) what a partner owes the client against what the client
+        owes them: D 401 / C 4111 for the smaller of the two balances (or *amount*),
+        and apply it to their open invoices, oldest first, on both sides. Posted once
+        per partner and day.
+
+        Args:
+            partner_cui: The partner's tax ID, as on their invoices.
+            day: The offset's date (YYYY-MM-DD); empty means today.
+            amount: How much to offset; empty means as much as possible.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            journal = Journal(svc.store)
+            row = next((r for r in await journal.partner_balances(on)
+                        if r["partner_cui"] == partner_cui), None)  # fmt: skip
+            most = min(Decimal(row["rec"]), Decimal(row["pay"])) if row else Decimal(0)
+            most = most.quantize(Decimal("0.01"))
+            if most <= 0:
+                return {"error": f"{partner_cui} has nothing to offset on {on}: it needs both a "
+                        "receivable (41x) and a payable (40x) balance."}  # fmt: skip
+            value = Decimal(amount).quantize(Decimal("0.01")) if amount else most
+            if not 0 < value <= most:
+                return {"error": f"Amount {value} must be above 0 and at most {most}."}
+            note = f"Compensare {row['name'] or partner_cui}"
+            entry = {"lines": [
+                {"account": "401", "debit": str(value), "credit": "0", "explanation": note},
+                {"account": "4111", "debit": "0", "credit": str(value), "explanation": note}],
+                "reasoning": f"{note}.", "legal_basis": "OMFP 1802/2014"}  # fmt: skip
+            doc = {"bucket_key": f"offset/{on.isoformat()}/{partner_cui}",
+                   "document_date": on.isoformat(), "sender": row["name"],
+                   "fields": {"direction": "in", "supplier_cui": partner_cui}}  # fmt: skip
+            plan = []  # (invoice, part) per side, oldest first
+            for side, field in (("out", "customer_cui"), ("in", "supplier_cui")):
+                left = value
+                invoices = sorted((r for r in await _invoices(svc, date(1900, 1, 1), on)
+                                   if (r.get("fields") or {}).get("direction") == side
+                                   and r["fields"].get(field) == partner_cui
+                                   and outstanding(r) > 0),
+                                  key=lambda r: str(r.get("document_date")))  # fmt: skip
+                for invoice in invoices:
+                    if left <= 0:
+                        break
+                    part = min(left, outstanding(invoice))
+                    plan.append((invoice, part))
+                    left -= part
+            if _profile().get("vat_on_collection"):  # the offset share of VAT becomes due
+                for invoice, part in plan:
+                    extra = payment_entry(invoice, str(part), invoice_lines=None, bank="-",
+                                          vat_on_collection=True)["lines"][2:]  # fmt: skip
+                    entry["lines"] += extra
+            posted = await journal.post(doc, entry, approved_by="offset")
+            tx = {"key": f"offset:{on.isoformat()}:{partner_cui}", "booked": on,
+                  "reference": "compensare"}  # fmt: skip
+            applied = []
+            for invoice, part in plan:
+                await _apply_payment(svc, invoice["bucket_key"], part, tx)
+                applied.append({"bucket_key": invoice["bucket_key"], "amount": str(part)})
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "amount": str(value),
+                                      "applied": applied}, default=str))  # fmt: skip
+
+    async def partner_confirmations(day: str = "") -> dict:
+        """Balance confirmations (confirmări de sold), usually at year end: one letter
+        per partner with an open balance on *day* (what they owe the client and what
+        the client owes them), filed as confirmations/<day>/<cui>.txt. With Gmail
+        connected, an email draft to the partner is created too; nothing is sent.
+
+        Args:
+            day: The balances' date (YYYY-MM-DD), e.g. 2026-12-31; empty means today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            rows = await Journal(svc.store).partner_balances(on)
+            emails: dict[str, str] = {}
+            for inv in await _invoices(svc, date(1900, 1, 1), on):
+                f = inv.get("fields") or {}
+                out = f.get("direction") == "out"
+                cui = f.get("customer_cui" if out else "supplier_cui", "")
+                mail = f.get("customer_email" if out else "supplier_email", "")
+                if cui and mail:
+                    emails.setdefault(cui, mail)
+            client = current_tenant()
+            me = f"{client.name} (CUI {client.tax_id})" if client else "noi"
+            ro_day, cent = on.strftime("%d.%m.%Y"), Decimal("0.01")
+            filed = []
+            for r in rows:
+                rec = Decimal(r["rec"]).quantize(cent)
+                pay = Decimal(r["pay"]).quantize(cent)
+                if not rec and not pay:
+                    continue
+                cui, name = r["partner_cui"], r["name"] or r["partner_cui"]
+                text = (f"Confirmare de sold la {ro_day}\n\nCătre: {name} (CUI {cui})\n"
+                        f"De la: {me}\n\nConform evidențelor noastre, la {ro_day}:\n"
+                        f"- ne datorați: {rec} lei\n- vă datorăm: {pay} lei\n\n"
+                        "Vă rugăm să confirmați soldul sau să ne comunicați diferențele, "
+                        "cu documentele aferente.\n")  # fmt: skip
+                key = f"confirmations/{on.isoformat()}/{cui}.txt"
+                await svc.bucket.put(key, text.encode("utf-8"), content_type="text/plain")
+                item = {"cui": cui, "partner": name, "receivable": str(rec),
+                        "payable": str(pay), "document": key}  # fmt: skip
+                if mailer is not None:
+                    to = emails.get(cui, "")
+                    if not to:
+                        item["draft"] = "no email address for this partner"
+                    else:
+                        sent = await mailer(to, f"Confirmare de sold la {ro_day}", text)
+                        item["draft"] = sent.get("error") or sent.get("draft_id", "")
+                        item["to"] = to
+                filed.append(item)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"day": on.isoformat(), "filed": filed}
 
     async def receivables_overdue(day: str = "", min_days: int = 7) -> dict:
         """Customers with unpaid sales invoices past due, with the invoices, days
@@ -1358,6 +1518,7 @@ def build_accounting_tools(
                    "document_date": on.isoformat()}  # fmt: skip
             invoice_entry = await Journal(svc.store).get(bucket_key)
             entry = payment_entry(row, str(paid), bank=CASH_ACCOUNT,
+                                  vat_on_collection=bool(_profile().get("vat_on_collection")),
                                   invoice_lines=(invoice_entry or {}).get("lines"))  # fmt: skip
             entry["reasoning"] = entry["reasoning"].replace("extras de cont", "numerar")
             posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
@@ -1478,6 +1639,7 @@ def build_accounting_tools(
         accounting_context,
         accounting_check,
         journal_post,
+        journal_reverse,
         accounting_defer,
         accounting_export,
         accounting_period_report,
@@ -1491,6 +1653,8 @@ def build_accounting_tools(
         accounting_results,
         partner_statement,
         partner_balances,
+        partner_offset,
+        partner_confirmations,
         receivables_overdue,
         reminders_file,
         payables_due,

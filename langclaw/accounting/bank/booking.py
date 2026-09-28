@@ -13,6 +13,7 @@ profile maps the IBAN (``"bank_accounts": {"RO49...": "5121.01"}``).
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any
 
 from langclaw.accounting.checks import CUSTOMER_ACCOUNTS, SUPPLIER_ACCOUNTS
@@ -50,8 +51,11 @@ def payment_entry(
     *,
     invoice_lines: list[dict[str, Any]] | None,
     bank: str,
+    vat_on_collection: bool = False,
 ) -> dict[str, Any]:
-    """The entry for paying *amount* of *invoice* through *bank*."""
+    """The entry for paying *amount* of *invoice* through *bank*. With
+    *vat_on_collection* (TVA la încasare) the paid share of the invoice's VAT
+    also leaves 4428: D 4428 / C 4427 for a sale, D 4426 / C 4428 for a purchase."""
     f = invoice.get("fields") or {}
     direction = f.get("direction", "in")
     partner = _partner_account(direction, invoice_lines)
@@ -62,11 +66,22 @@ def payment_entry(
     else:
         note = f"Plată {number}".strip()
         debit, credit = partner, bank
+    lines = [
+        {"account": debit, "debit": amount, "credit": "0", "explanation": note},
+        {"account": credit, "debit": "0", "credit": amount, "explanation": note},
+    ]
+    gross = Decimal(str(invoice.get("amount") or 0))
+    vat = Decimal(str(f.get("total_vat") or 0))
+    if vat_on_collection and gross and vat:
+        share = (vat * Decimal(amount) / gross).quantize(Decimal("0.01"))
+        vat_note = f"TVA la încasare {number}".strip()
+        pair = ("4428", "4427") if direction == "out" else ("4426", "4428")
+        lines += [
+            {"account": pair[0], "debit": str(share), "credit": "0", "explanation": vat_note},
+            {"account": pair[1], "debit": "0", "credit": str(share), "explanation": vat_note},
+        ]
     return {
-        "lines": [
-            {"account": debit, "debit": amount, "credit": "0", "explanation": note},
-            {"account": credit, "debit": "0", "credit": amount, "explanation": note},
-        ],
+        "lines": lines,
         "reasoning": f"{note}: extras de cont.",
         "legal_basis": "OMFP 1802/2014",
     }

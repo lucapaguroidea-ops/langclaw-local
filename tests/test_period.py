@@ -134,7 +134,7 @@ def test_settlement_is_due_monthly_or_at_quarter_end_for_vat_payers() -> None:
     assert not settles_vat("2026-08", {"vat_payer": True, "vat_period": "quarterly"})
     assert settles_vat("2026-09", {"vat_payer": True, "vat_period": "quarterly"})
     assert not settles_vat("2026-09", {"vat_payer": False})
-    assert not settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})
+    assert settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})
 
 
 def test_d394_groups_by_partner_direction_and_rate() -> None:
@@ -210,3 +210,37 @@ def test_an_opening_entry_puts_each_balance_on_its_side() -> None:
         opening_entry({"cash": "10", "1012": "-10"})
     with pytest.raises(ValueError, match="No balances"):
         opening_entry({"4111": "0"})
+
+
+def test_balance_anomalies_flag_balances_on_the_wrong_side() -> None:
+    from langclaw.accounting.period import balance_anomalies
+
+    accounts = [
+        {"account": "5311", "balance": "-10.00"},
+        {"account": "5121.01", "balance": "-5.00"},
+        {"account": "581", "balance": "3.00"},
+        {"account": "401", "balance": "20.00"},
+        {"account": "4111", "balance": "-7.00"},
+        {"account": "2813", "balance": "4.00"},
+        {"account": "4111", "balance": "0.00"},
+        {"account": "6022", "balance": "100.00"},
+        {"account": "1012", "balance": "-100.00"},
+    ]
+    found = {a["account"]: a["problem"] for a in balance_anomalies(accounts)}
+    assert set(found) == {"5311", "5121.01", "581", "401", "4111", "2813"}
+    assert "cash" in found["5311"] and "overdraft" in found["5121.01"]
+    assert "transit" in found["581"] and "supplier" in found["401"]
+    assert "customer" in found["4111"] and "depreciation" in found["2813"]
+
+
+def test_vat_due_from_lines_counts_what_moved_into_4427_and_4426() -> None:
+    from decimal import Decimal as D
+
+    from langclaw.accounting.period import vat_due
+
+    lines = [{"account": "4427", "debit": 0, "credit": 105},
+             {"account": "4426", "debit": 21, "credit": 0},
+             {"account": "4427", "debit": 50, "credit": 0},
+             {"account": "4428", "debit": 105, "credit": 0}]  # fmt: skip
+    assert vat_due(lines) == {"collected": D("105.00"), "deductible": D("21.00"),
+                              "payable": D("84.00"), "refundable": D("0.00")}  # fmt: skip
