@@ -1,0 +1,54 @@
+{
+  "description": "File an invoice that didn't come through e-Factura (a scan, a PDF, a photo): read it, extract the accounting facts (parties' tax ids, net, VAT by rate), file it with the same fields as an e-Factura invoice and ask a person when it doesn't add up. Set documents.intake_workflow to invoice_intake for a client whose paper invoices arrive in chat.",
+  "input": {
+    "key": {"type": "string", "description": "The file's key in the bucket."},
+    "filename": {"type": "string", "description": "Original file name."},
+    "mime_type": {"type": "string", "description": "Content type, if known."},
+    "caption": {"type": "string", "description": "Any note sent with the file."}
+  },
+  "nodes": {
+    "fetch": {"type": "tool", "tool": "bucket_read", "args": {"key": "{{input.key}}"}},
+    "read": {
+      "type": "llm",
+      "system": "You read Romanian invoices for an accountant. Copy the facts exactly as printed; don't compute or guess. Leave a field empty when it isn't on the page. Tax ids (CUI/CIF) with their RO prefix if printed. Dates as YYYY-MM-DD. Amounts as printed numbers.",
+      "prompt": "File name: {{input.filename}}\nNote from the sender: {{input.caption}}\n\nDocument text:\n{{fetch.text}}",
+      "output": {
+        "invoice_number": {"type": "string", "description": "Series and number, e.g. ABC 0123."},
+        "kind": {"type": "string", "description": "invoice, or credit_note for a storno / credit note."},
+        "supplier_name": {"type": "string", "description": "Furnizor."},
+        "supplier_cui": {"type": "string", "description": "The supplier's CUI / CIF."},
+        "customer_name": {"type": "string", "description": "Cumpărător / client."},
+        "customer_cui": {"type": "string", "description": "The customer's CUI / CIF."},
+        "issue_date": {"type": "string", "description": "Data facturii, YYYY-MM-DD."},
+        "due_date": {"type": "string", "description": "Data scadenței, YYYY-MM-DD, or empty."},
+        "currency": {"type": "string", "description": "ISO code, e.g. RON."},
+        "total_net": {"type": "string", "description": "Total without VAT (baza impozabilă)."},
+        "total_vat": {"type": "string", "description": "Total VAT."},
+        "total_gross": {"type": "string", "description": "Total to pay, VAT included."},
+        "vat_breakdown": {"type": "array", "description": "One object per VAT rate printed: {rate, taxable, vat, category}; category AE for taxare inversă, Z for 0%, else S."}
+      }
+    },
+    "file": {"type": "tool", "tool": "accounting_invoice_file", "args": {"bucket_key": "{{input.key}}", "facts": "{{read}}"}},
+    "check": {
+      "type": "branch",
+      "rules": [{"if": {"path": "file.problems", "op": "truthy"}, "then": "review"}],
+      "else": "END"
+    },
+    "review": {
+      "type": "human_review",
+      "message": "This invoice doesn't add up as read. Correct the facts (or reject it).",
+      "show": ["read", "file"],
+      "editable": "read",
+      "on_reject": "END"
+    },
+    "refile": {"type": "tool", "tool": "accounting_invoice_file", "args": {"bucket_key": "{{input.key}}", "facts": "{{read}}"}}
+  },
+  "edges": [
+    {"from": "START", "to": "fetch"},
+    {"from": "fetch", "to": "read"},
+    {"from": "read", "to": "file"},
+    {"from": "file", "to": "check"},
+    {"from": "review", "to": "refile"}
+  ],
+  "output": "file"
+}

@@ -9,6 +9,23 @@ client's journal. The model never posts.
 LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true
 ```
 
+### Invoices that don't come through e-Factura
+
+A scanned, PDF or photographed invoice has no UBL to parse. The **Invoice
+intake** template (`ui/templates/invoice_intake.graph.json`) reads it instead:
+a model copies the printed facts (number, parties and their CUI, dates, net,
+VAT, the VAT lines by rate) and `accounting_invoice_file(bucket_key, facts)`
+files it with the same `fields` an e-Factura invoice has (`direction` from the
+client's tax id, `total_net`, `total_vat`, `vat_breakdown`, `source: "scan"`).
+Code never trusts the model's arithmetic: the VAT lines must add up to the
+totals, net + VAT to the total, each line's VAT must match its rate, and each
+rate must have been in force on the invoice date; the client must be the
+supplier or the customer. Anything that doesn't hold goes in `problems`, the
+invoice is filed as `needs_review`, and the workflow asks a person to correct
+the facts (then files it again). From there it's proposed and posted like any
+other invoice. Use it as a client's `documents.intake_workflow` when their
+paper invoices arrive in chat.
+
 Then save the **Accounting proposal** template from the console (as
 `accounting_proposal`) and, in a client's chat, ask the bot to queue the
 waiting invoices (`accounting_queue`) — or schedule that daily.
