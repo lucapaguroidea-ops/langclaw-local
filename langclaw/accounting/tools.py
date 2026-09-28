@@ -341,6 +341,19 @@ def build_accounting_tools(
             return {"exported": [], "skipped": batch.skipped}
         return {"key": key, "url": url, "exported": batch.exported, "skipped": batch.skipped}
 
+    async def _cash_book(journal: Journal, start: date, end: date) -> dict[str, Any]:
+        """The cash book (5311) for [*start*, *end*], limits from the profile."""
+        opening = await journal.balance_until(start - timedelta(days=1), CASH_ACCOUNT)
+        lines = await journal.account_lines(CASH_ACCOUNT, start, end)
+        limit = _profile().get("cash_limit")
+        return build_cash_book(opening, lines, limit=Decimal(str(limit)) if limit else None)
+
+    async def _open_advances(journal: Journal, day: date) -> list[dict[str, str]]:
+        """Employees' unsettled 542 advances as of *day*."""
+        rows = await journal.balances_by_name(ADVANCE_ACCOUNT, day)
+        return [{"employee": r["name"], "open": str(Decimal(r["balance"]).quantize(
+            Decimal("0.01")))} for r in rows if Decimal(r["balance"])]  # fmt: skip
+
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
         period = resolve_period(period)
         start, end = parse_period(period)
@@ -380,6 +393,10 @@ def build_accounting_tools(
             "year_end": None,
             "invoices": len(docs),
         }
+        book = await _cash_book(journal, start, end)
+        report["cash"] = {"opening": book["opening"], "closing": book["closing"],
+                          "problems": book["problems"],
+                          "open_advances": await _open_advances(journal, end)}  # fmt: skip
         if start.month == 12:  # December: close classes 6 and 7 into 121
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)
@@ -429,6 +446,11 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            negative = [p for p in report["cash"]["problems"] if "negative" in p["problem"]]
+            if negative:
+                return {"error": f"Cash went negative on {len(negative)} day(s) in {period}; "
+                        "book the missing receipts (e.g. cash_z_report) first.",
+                        "problems": negative}  # fmt: skip
             depreciation = report["depreciation"]
             if depreciation:
                 _, end = parse_period(period)
@@ -1120,11 +1142,7 @@ def build_accounting_tools(
         """
         try:
             start, end = parse_period(period)
-            journal = Journal(services.current().store)
-            opening = await journal.balance_until(start - timedelta(days=1), CASH_ACCOUNT)
-            lines = await journal.account_lines(CASH_ACCOUNT, start, end)
-            limit = _profile().get("cash_limit")
-            book = build_cash_book(opening, lines, limit=Decimal(str(limit)) if limit else None)
+            book = await _cash_book(Journal(services.current().store), start, end)
         except (*_ERRORS, InvalidOperation) as exc:
             return {"error": str(exc)}
         return {"period": period, **book}
@@ -1264,11 +1282,9 @@ def build_accounting_tools(
         """
         try:
             on = date.fromisoformat(day) if day else date.today()
-            rows = await Journal(services.current().store).balances_by_name(ADVANCE_ACCOUNT, on)
+            advances = await _open_advances(Journal(services.current().store), on)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        advances = [{"employee": r["name"], "open": str(Decimal(r["balance"]).quantize(
-            Decimal("0.01")))} for r in rows if Decimal(r["balance"])]  # fmt: skip
         total = sum((Decimal(a["open"]) for a in advances), Decimal(0))
         return {"day": on.isoformat(), "advances": advances, "total": str(total.quantize(
             Decimal("0.01")))}  # fmt: skip

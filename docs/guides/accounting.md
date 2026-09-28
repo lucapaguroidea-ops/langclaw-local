@@ -325,6 +325,16 @@ entries behind them, and finally the month's closing balance.
 - the cash was above the profile's `cash_limit`, if one is set. Nothing is
   checked by default.
 
+The month report (`accounting_period_report`) has a `cash` section with:
+
+- the opening and closing cash;
+- the same problems;
+- `open_advances`, the employees' unsettled 542 advances at month end.
+
+`accounting_period_close` refuses a month in which the cash went negative. Book
+the missing Z reports or receipts first. Days above `cash_limit` and open
+advances are reported but don't block the close.
+
 ## Paying suppliers
 
 `payables_due(day, days=7)` lists the supplier invoices to pay: unpaid, and due

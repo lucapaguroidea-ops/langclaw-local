@@ -1273,3 +1273,29 @@ async def test_employee_advances_are_settled_by_receipts_and_returned_cash(acme)
     assert open_end["advances"] == [{"employee": "Ion Ene", "open": "100.00"}]
     assert open_end["total"] == "100.00"
     assert book["closing"] == "-342.00"
+
+
+@needs_pg
+async def test_the_month_report_shows_cash_and_close_refuses_negative_cash(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": False})
+    with tenant_scope(client):
+        await tools["cash_advance"].ainvoke(
+            {"day": "2027-01-05", "amount": "200", "employee": "Ana Pop", "document": "DP 1"}
+        )
+        report = await tools["accounting_period_report"].ainvoke({"period": "2027-01"})
+        refused = await tools["accounting_period_close"].ainvoke({"period": "2027-01"})
+        await tools["cash_z_report"].ainvoke(
+            {"day": "2027-01-04", "lines": [{"rate": 0, "gross": 500}]}
+        )
+        fixed = await tools["accounting_period_report"].ainvoke({"period": "2027-01"})
+        closed = await tools["accounting_period_close"].ainvoke({"period": "2027-01"})
+    assert report["cash"]["closing"] == "-200.00" and report["cash"]["problems"]
+    assert report["cash"]["open_advances"] == [{"employee": "Ana Pop", "open": "200.00"}]
+    assert "negative" in refused["error"] and refused["problems"]
+    assert fixed["cash"]["closing"] == "300.00" and fixed["cash"]["problems"] == []
+    assert "error" not in closed
