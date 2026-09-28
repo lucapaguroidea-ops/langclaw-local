@@ -1531,16 +1531,16 @@ away from conversation state and lets you back up / restore it on its own.</p>
 <td>Insert <strong>or update</strong> the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra <code>fields</code> merge into a JSON column</td>
 </tr>
 <tr>
-<td><code>documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit)</code></td>
-<td>Filter filed documents (case-insensitive; <code>text</code> searches summary, file name, and extra fields). <code>fields</code> filters on type-specific details: <code>{"jurisdiction": "Delaware"}</code>, or <code>{"notice.days": "90"}</code> for a nested value</td>
+<td><code>documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit, offset)</code></td>
+<td>Filter filed documents, newest first (case-insensitive; <code>text</code> searches summary, file name, and extra fields). <code>fields</code> filters on type-specific details: <code>{"jurisdiction": "Delaware"}</code>, or <code>{"notice.days": "90"}</code> for a nested value. Returns one page (<code>limit</code>, at most 200) plus <code>total</code> (every match) and <code>amounts</code> (their amounts summed per currency); <code>next_offset</code> pages to the rest</td>
 </tr>
 <tr>
 <td><code>documents_get(bucket_key)</code></td>
 <td>One record</td>
 </tr>
 <tr>
-<td><code>documents_semantic_search(query, ...filters, limit)</code></td>
-<td><em>With <code>EMBEDDING_MODEL</code>:</em> records ranked by meaning ("power bills" finds electricity invoices), each with a <code>similarity</code> 0–1; the same filters as <code>documents_search</code> narrow them</td>
+<td><code>documents_semantic_search(query, ...filters, limit, offset)</code></td>
+<td><em>With <code>EMBEDDING_MODEL</code>:</em> records ranked by meaning ("power bills" finds electricity invoices), each with a <code>similarity</code> 0–1; the same filters as <code>documents_search</code> narrow them, and <code>next_offset</code> pages further down the ranking</td>
 </tr>
 <tr>
 <td><code>documents_reindex(limit)</code></td>
@@ -1665,6 +1665,7 @@ so scanned runs know where to report.</p>
   beyond that, a pgvector index is the next step. Changing <code>EMBEDDING_MODEL</code> means
   old vectors don't match new ones: clear the column and run <code>documents_reindex</code>.</li>
 </ul>
+<p>Chat and the API read documents a page at a time and never lose any: <code>DocumentStore.search(..., limit, offset)</code> returns one page (at most 200 rows) and <code>DocumentStore.totals(...)</code> counts every match and sums its amounts per currency, so "how many invoices from ACME this year, and for how much?" is one call however many there are. <code>documents_search</code>, <code>GET /v1/documents</code> and the console's Documents page all report <code>total</code> and page with <code>offset</code> / <code>next_offset</code>. Code that must hold every document at once (the accounting totals, aging, bank matching, reminders) uses <code>DocumentStore.search_all</code>, which has no row limit.</p>
 
 
 
