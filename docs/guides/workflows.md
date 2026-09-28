@@ -236,3 +236,16 @@ Postgres in production) with a run index in the same database:
 
 A step that was mid-flight when the process died runs again, so make side
 effects idempotent where it matters (e.g. upsert rather than insert).
+
+
+## Keeping workflows up to date with their templates
+
+A workflow made from a console template is a **copy**: when the template in
+`ui/templates/` is fixed or extended, the workflow keeps running the old
+version. The console notices when a file workflow shares its name with a
+template that has changed since it was saved (`editor.template_update`): the
+workflow page shows a warning, the diff from the saved workflow to the
+template, and **Update to the latest template**, which saves it through the
+usual versioned path, so the previous version stays in **Versions** and can be
+restored. Workflows saved under another name aren't linked to a template and
+aren't checked.

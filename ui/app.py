@@ -734,6 +734,20 @@ def page_workflow(lc: LangclawClient, name: str) -> None:
     st.caption(f"{badge} · tool `workflow_{name}`")
     if workflow.get("description"):
         st.markdown(workflow["description"])
+    if workflow.get("source") == "file" and (
+        update := editor.template_update(name, workflow.get("graph") or {})
+    ):
+        st.warning(
+            f"The **{name}** template has changed since this workflow was saved: "
+            "its fixes don't reach this copy until you apply them."
+        )
+        with st.expander("What would change"):
+            st.code(update["diff"], language="diff")
+            st.caption("Your current version stays in 🕘 Versions, so you can restore it.")
+            if st.button("⬆️ Update to the latest template", key=f"{name}:template"):
+                if _call(lc.save_workflow, name, update["graph"]) is not None:
+                    st.success("Updated.")
+                    st.rerun()
     reviews = len(_call(lc.reviews, name) or [])
     tabs = st.tabs(
         [

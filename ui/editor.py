@@ -247,6 +247,22 @@ def graph_diff(old: dict[str, Any], new: dict[str, Any]) -> str:
     )
 
 
+def template_update(name: str, graph: dict[str, Any]) -> dict[str, Any] | None:
+    """When workflow *name* was made from the template of the same name and that
+    template has changed since: ``{"graph": latest, "diff": ...}`` (the diff reads
+    from the saved workflow to the template). ``None`` when there's no such
+    template or nothing differs. Workflows are copies, so a template's fixes
+    only reach one when someone applies them."""
+    latest = _example(name)
+    if not latest:
+        return None
+    diff = graph_diff(graph, latest)
+    if not diff:
+        return None
+    return {"graph": latest, "diff": diff.replace("this version", "saved", 1).replace(
+        "current", "template", 1)}  # fmt: skip
+
+
 def mermaid_html(code: str, *, height: int = 480) -> str:
     """A self-contained HTML snippet that renders a Mermaid diagram."""
     escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
