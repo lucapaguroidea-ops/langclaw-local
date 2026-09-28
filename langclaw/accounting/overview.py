@@ -83,19 +83,26 @@ def firm_row(client: str, name: str, report: dict[str, Any], bank: dict[str, Any
 
 
 async def firm_overview(
-    services: DocumentServices, tenants: list[Tenant], period: str
+    services: DocumentServices, tenants: list[Tenant], period: str, *, parallel: int = 6
 ) -> dict[str, Any]:
     """``{"period", "clients": [firm_row, ...]}``: every client's month, from the
     same tools as :func:`accounting_overview` (the close report and unmatched bank
-    movements only, so it stays quick with many clients)."""
-    from langclaw.accounting.tools import build_accounting_tools
+    movements only). Up to *parallel* clients are checked at once, each in its
+    own scope, and the rows keep the order of *tenants*."""
+    import asyncio
 
-    tools = {t.name: t for t in build_accounting_tools(services)}
-    rows = []
-    for tenant in tenants:
-        with tenant_scope(tenant):
-            report = await tools["accounting_period_report"].ainvoke({"period": period})
-            bank = await tools["bank_movements"].ainvoke({"unmatched_only": True, "limit": 1})
-        rows.append(firm_row(tenant.id, tenant.name, report, bank))
+    from langclaw.accounting import tools as accounting_tools
+
+    tools = {t.name: t for t in accounting_tools.build_accounting_tools(services)}
+    gate = asyncio.Semaphore(max(1, parallel))
+
+    async def one(tenant: Tenant) -> dict[str, Any]:
+        async with gate:
+            with tenant_scope(tenant):
+                report = await tools["accounting_period_report"].ainvoke({"period": period})
+                bank = await tools["bank_movements"].ainvoke({"unmatched_only": True, "limit": 1})
+        return firm_row(tenant.id, tenant.name, report, bank)
+
+    rows = list(await asyncio.gather(*(one(t) for t in tenants)))
     resolved = next((r["period"] for r in rows if r["period"]), period)
     return {"period": resolved, "clients": rows}
