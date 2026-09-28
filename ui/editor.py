@@ -344,6 +344,9 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
         alerts.append("Missing documents: " + ", ".join(m["label"] for m in missing))
     if report.get("trial_balance") and not report["trial_balance"].get("balanced"):
         alerts.append("The trial balance doesn't balance")
+    if anomalies := report.get("anomalies"):
+        accounts = ", ".join(a["account"] for a in anomalies)
+        alerts.append(f"Balances on the wrong side: {accounts}")
     cash = report.get("cash") or {}
     problems = [p.get("problem", "") for p in cash.get("problems") or []]
     if negative := sum("negative" in p for p in problems):

@@ -154,6 +154,42 @@ def opening_entry(balances: dict[str, Any]) -> dict[str, Any]:
             "legal_basis": "OMFP 1802/2014"}  # fmt: skip
 
 
+#: (account prefix, the side its balance must not be on, why it's wrong there);
+#: the first matching prefix wins.
+_BALANCE_RULES: tuple[tuple[str, str, str], ...] = (
+    ("5311", "credit", "More cash paid out than the register held (missing receipt?)."),
+    ("512", "credit", "Bank account below zero: an overdraft, or a movement is missing."),
+    ("581", "any", "Cash in transit should be zero once deposits/withdrawals are booked."),
+    ("542", "credit", "An employee spent more than advanced: the company owes them."),
+    ("28", "debit", "Accumulated depreciation can't have a debit balance."),
+    ("29", "debit", "An impairment adjustment can't have a debit balance."),
+    ("401", "debit", "The supplier was paid more than invoiced (advance or double payment)."),
+    ("404", "debit", "The supplier was paid more than invoiced (advance or double payment)."),
+    ("4111", "credit", "The customer paid more than invoiced (advance or double payment)."),
+    ("3", "credit", "Stock can't have a credit balance: an exit without an entry."),
+    ("2", "credit", "A fixed asset can't have a credit balance."),
+)
+
+
+def balance_anomalies(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Accounts whose closing balance (``balance`` = debit − credit) is on the
+    side it can't normally be on, each with the likely reason."""
+    found = []
+    for row in accounts:
+        account, balance = str(row["account"]), _dec(row.get("balance"))
+        if not balance:
+            continue
+        for prefix, wrong, why in _BALANCE_RULES:
+            if not account.startswith(prefix):
+                continue
+            side = "debit" if balance > 0 else "credit"
+            if wrong in ("any", side):
+                found.append({"account": account, "balance": str(balance.quantize(_CENT)),
+                              "problem": why})  # fmt: skip
+            break
+    return found
+
+
 def _rate(value: Decimal) -> str:
     return format(value.normalize(), "f")
 

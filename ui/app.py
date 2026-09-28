@@ -916,6 +916,9 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
             )
             st.subheader("Expected documents")
             st.dataframe(report["documents"]["expected"], hide_index=True)
+            if report.get("anomalies"):
+                st.subheader("Balances on the wrong side")
+                st.dataframe(report["anomalies"], hide_index=True)
             st.subheader("Trial balance")
             st.dataframe(report["trial_balance"]["accounts"], hide_index=True)
     with outlook_tab:

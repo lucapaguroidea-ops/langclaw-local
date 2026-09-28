@@ -200,3 +200,9 @@ def test_overview_alerts_cover_cash_problems_and_open_advances() -> None:
     assert "Cash negative on 1 day(s): the month can't close" in alerts
     assert "Cash above the limit on 1 day(s)" in alerts
     assert "Open employee advances: 50.00 (2)" in alerts
+
+
+def test_overview_alerts_count_balance_anomalies() -> None:
+    report = {"anomalies": [{"account": "401", "balance": "20.00", "problem": "p"},
+                            {"account": "5311", "balance": "-1.00", "problem": "q"}]}  # fmt: skip
+    assert "Balances on the wrong side: 401, 5311" in editor.overview_alerts({"report": report})

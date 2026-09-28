@@ -85,6 +85,21 @@ so proposals get more consistent as the accountant approves them.
   The preview already includes December's depreciation. `accounting_results`
   ignores this entry, so the P&L still shows the year after the close.
 
+The month report also has `anomalies`: accounts whose balance at month end
+(everything posted so far) is on the side it normally can't be on. Each comes
+with the likely reason:
+
+- 5311 or 512x in credit (cash paid without a receipt, or a bank overdraft);
+- 581 not zero;
+- 542 in credit (the company owes the employee);
+- 28x or 29x in debit;
+- 401 or 404 in debit (a supplier paid more than invoiced);
+- 4111 in credit (a customer paid more than invoiced);
+- stock or fixed-asset accounts in credit.
+
+They're for the accountant to check. They don't block the close, except
+negative cash, which the close refuses anyway.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
 depreciation, the VAT settlement and, in December, the year-end entry, dated the
@@ -418,7 +433,8 @@ The **Client overview** page shows the chosen client and month. It uses
   crossed, overdue receivables, unmatched bank movements, days with negative
   cash (the month can't close), days above `cash_limit`, and open employee
   advances.
-- **Close tab:** the VAT position, the expected documents and the trial balance.
+- **Close tab:** the VAT position, the expected documents, any balances on the
+  wrong side, and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
 - **Results tab:** the month's and the year-to-date profit and loss, plus the

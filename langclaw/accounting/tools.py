@@ -61,6 +61,7 @@ from langclaw.accounting.outlook import (
 )
 from langclaw.accounting.outlook import payables_due as plan_payables
 from langclaw.accounting.period import (
+    balance_anomalies,
     blockers,
     d394_rows,
     document_state,
@@ -396,6 +397,8 @@ def build_accounting_tools(
             "year_end": None,
             "invoices": len(docs),
         }
+        so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
+        report["anomalies"] = balance_anomalies(so_far["accounts"])
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],

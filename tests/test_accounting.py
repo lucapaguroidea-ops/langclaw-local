@@ -1298,8 +1298,10 @@ async def test_the_month_report_shows_cash_and_close_refuses_negative_cash(acme)
         closed = await tools["accounting_period_close"].ainvoke({"period": "2027-01"})
     assert report["cash"]["closing"] == "-200.00" and report["cash"]["problems"]
     assert report["cash"]["open_advances"] == [{"employee": "Ana Pop", "open": "200.00"}]
+    assert [a["account"] for a in report["anomalies"]] == ["5311"]
     assert "negative" in refused["error"] and refused["problems"]
     assert fixed["cash"]["closing"] == "300.00" and fixed["cash"]["problems"] == []
+    assert fixed["anomalies"] == []
     assert "error" not in closed
 
 
