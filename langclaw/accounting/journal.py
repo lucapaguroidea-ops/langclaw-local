@@ -129,6 +129,48 @@ class Journal:
             )
         return await self.get(document["bucket_key"])  # type: ignore[return-value]
 
+    async def reverse(
+        self, bucket_key: str, day: date, *, reason: str, approved_by: str = ""
+    ) -> tuple[str, dict[str, Any]]:
+        """Reverse (stornare) the entry posted for *bucket_key*: post the same lines
+        with debit and credit swapped, dated *day*, as ``reverse/<n>/<bucket_key>``,
+        and move the original to ``<bucket_key>#reversed-<n>`` so the document can
+        be posted again, correctly. Both entries stay in the journal.
+
+        Returns:
+            The original's new key and the reversal entry.
+
+        Raises:
+            JournalError: nothing posted for *bucket_key*, or *day*'s month closed.
+        """
+        original = await self.get(bucket_key)
+        if original is None:
+            raise JournalError(f"Nothing is posted for {bucket_key!r}.")
+        pool = await self._db()
+        n = 1 + await pool.fetchval(
+            f"SELECT count(*) FROM {self._schema}.journal_entries WHERE bucket_key LIKE $1",
+            f"{bucket_key}#reversed-%",
+        )
+        moved = f"{bucket_key}#reversed-{n}"
+        rename = f"UPDATE {self._schema}.journal_entries SET bucket_key = $1 WHERE bucket_key = $2"
+        await pool.execute(rename, moved, bucket_key)
+        note = f"Stornare {bucket_key}: {reason}"
+        doc = {"bucket_key": f"reverse/{n}/{bucket_key}", "document_date": day.isoformat(),
+               "sender": original["partner_name"], "receiver": original["partner_name"],
+               "fields": {"direction": original["direction"],
+                          "supplier_cui": original["partner_cui"],
+                          "customer_cui": original["partner_cui"]}}  # fmt: skip
+        lines = [{"account": x["account"], "debit": x["credit"], "credit": x["debit"],
+                  "explanation": note} for x in original["lines"]]  # fmt: skip
+        try:
+            entry = await self.post(doc, {"lines": lines, "reasoning": note,
+                                          "legal_basis": original["legal_basis"]},
+                                    approved_by=approved_by)  # fmt: skip
+        except JournalError:
+            await pool.execute(rename, bucket_key, moved)
+            raise
+        return moved, entry
+
     async def get(self, bucket_key: str) -> dict[str, Any] | None:
         pool = await self._db()
         entry = await pool.fetchrow(
@@ -163,7 +205,8 @@ class Journal:
             f"JOIN {self._schema}.journal_lines l ON l.entry_id = e.id "
             "WHERE e.entry_date BETWEEN $1 AND $2 AND (NOT $3 OR e.bucket_key LIKE 'bank/%' "
             "OR e.bucket_key LIKE 'cash/%' OR e.bucket_key LIKE 'close/%' "
-            "OR e.bucket_key LIKE 'opening/%' OR e.bucket_key LIKE 'offset/%') "
+            "OR e.bucket_key LIKE 'opening/%' OR e.bucket_key LIKE 'offset/%' "
+            "OR e.bucket_key LIKE 'reverse/%') "
             "ORDER BY e.entry_date, e.id, l.id",
             date_from,
             date_to,

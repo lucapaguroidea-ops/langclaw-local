@@ -1532,3 +1532,39 @@ async def test_balance_confirmations_are_filed_and_drafted_per_partner(acme) -> 
     assert gross in text and "31.12.2026" in text and "ACME SRL" in text
     assert drafts and drafts[0][0] == sale["fields"]["customer_email"]
     assert item["draft"] == "d1" and "Confirmare" in drafts[0][1]
+
+
+@needs_pg
+async def test_a_posted_entry_can_be_reversed_and_posted_again(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    key, period = bill["bucket_key"], str(bill["document_date"])[:7]
+    wrong = _entry_for(bill)
+    wrong["lines"][0]["account"] = "6022"
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke({"bucket_key": key, "proposal": wrong})
+        no_reason = await tools["journal_reverse"].ainvoke({"bucket_key": key, "reason": ""})
+        out = await tools["journal_reverse"].ainvoke(
+            {"bucket_key": key, "day": f"{period}-28", "reason": "wrong expense account"}
+        )
+        report = await tools["accounting_period_report"].ainvoke({"period": period})
+        again = await tools["journal_post"].ainvoke(
+            {"bucket_key": key, "proposal": _entry_for(bill)}
+        )
+        missing = await tools["journal_reverse"].ainvoke({"bucket_key": "nope", "reason": "x"})
+    assert "reason" in no_reason["error"] and "error" in missing
+    assert out["reversal"]["bucket_key"] == f"reverse/1/{key}"
+    assert out["original"] == f"{key}#reversed-1"
+    assert key in [b["bucket_key"] for b in report["blockers"]]
+    assert "error" not in again
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert accounts["6022"]["balance"] == "0.00"
+    journal = Journal(scoped.store)
+    assert (await journal.get(key))["lines"][0]["account"] == "628"
+    assert (await scoped.store.get(key))["status"] == "posted"

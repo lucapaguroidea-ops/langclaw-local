@@ -424,6 +424,19 @@ Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
 
+## Correcting a posted entry (stornare)
+
+`journal_reverse(bucket_key, reason, day="")` undoes a wrong entry without
+deleting anything:
+
+- It posts the same lines with debit and credit swapped, dated `day`, under
+  `reverse/<n>/<key>`. That month must be open.
+- It moves the original to `<key>#reversed-<n>`. Both entries stay in the
+  journal and the registers.
+- The document goes back to status `reversed`, so it shows as a blocker until
+  the correct entry is posted with `journal_post`.
+- A reason is required, and it is written into the journal.
+
 ## Balance confirmations (confirmări de sold)
 
 `partner_confirmations(day)` writes one letter per partner with an open balance

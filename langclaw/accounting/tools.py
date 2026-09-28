@@ -236,6 +236,34 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"posted": posted}
 
+    async def journal_reverse(
+        bucket_key: str, reason: str, day: str = "", reversed_by: str = ""
+    ) -> dict:
+        """Reverse (stornare) a posted entry that was wrong: posts the same lines
+        with debit and credit swapped, dated *day* (the month must be open), and
+        frees the document so its correct entry can be posted with journal_post.
+        Both entries stay in the journal; the invoice is a blocker until reposted.
+
+        Args:
+            bucket_key: The key the entry was posted under (the document's key).
+            reason: Why it's reversed; required, it goes into the journal.
+            day: The reversal's date (YYYY-MM-DD); empty means today.
+            reversed_by: Who reversed it.
+        """
+        if not reason.strip():
+            return {"error": "Give the reason for the reversal; it goes into the journal."}
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            moved, entry = await Journal(svc.store).reverse(
+                bucket_key, on, reason=reason.strip(), approved_by=reversed_by
+            )
+            if await svc.store.get(bucket_key):
+                await svc.store.save(bucket_key, {"status": "reversed"})
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"reversal": entry, "original": moved}, default=str))
+
     async def accounting_defer(bucket_key: str, reason: str = "") -> dict:
         """Leave an invoice for manual booking (status needs_manual_entry).
 
@@ -1590,6 +1618,7 @@ def build_accounting_tools(
         accounting_context,
         accounting_check,
         journal_post,
+        journal_reverse,
         accounting_defer,
         accounting_export,
         accounting_period_report,
