@@ -896,6 +896,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#correcting-a-posted-entry-stornare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correcting a posted entry (stornare)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#balance-confirmations-confirmari-de-sold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Balance confirmations (confirmări de sold)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#offsetting-a-partner-compensare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offsetting a partner (compensare)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#in-the-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1672,6 +1705,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#correcting-a-posted-entry-stornare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correcting a posted entry (stornare)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#balance-confirmations-confirmari-de-sold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Balance confirmations (confirmări de sold)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#offsetting-a-partner-compensare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offsetting a partner (compensare)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#in-the-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1898,9 +1964,21 @@ so proposals get more consistent as the accountant approves them.</p>
   payers (monthly, or at quarter end with <code>"vat_period": "quarterly"</code>). The
   balances of 4426 and 4427 up to the month's last day are cleared into
   4423 (payable) or 4424 (refundable):
-  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
-  collection, where the 4428 → 4427 transfer depends on payments and stays
-  with the accountant.</p>
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426.</p>
+</li>
+<li><strong>VAT on collection</strong> (<code>"vat_on_collection": true</code>): invoices book their VAT
+    on 4428. Each payment booked from a bank statement or with
+    <code>cash_pay_invoice</code> moves the paid share of the invoice's VAT:
+    D 4428 / C 4427 for a sale, D 4426 / C 4428 for a purchase. The settlement
+    then clears only the VAT that became due, and unpaid VAT stays on 4428.</li>
+<li>The month report's <code>vat</code> (the D300 draft) then counts what became due in
+    the month, with <code>"basis": "payments"</code>: credits to 4427 and debits to 4426.
+    That includes paid invoices, Z reports and receipts. The invoice-date
+    totals stay under <code>by_invoice</code>. The per-rate rows still come from the
+    invoices.</li>
+<li>
+<p>A partner offset (<code>partner_offset</code>) moves the offset share the same way,
+    invoice by invoice.</p>
 </li>
 <li>
 <p><strong>depreciation</strong> — the month's depreciation entry for the client's fixed
@@ -1920,6 +1998,20 @@ so proposals get more consistent as the accountant approves them.</p>
   ignores this entry, so the P&amp;L still shows the year after the close.</p>
 </li>
 </ul>
+<p>The month report also has <code>anomalies</code>: accounts whose balance at month end
+(everything posted so far) is on the side it normally can't be on. Each comes
+with the likely reason:</p>
+<ul>
+<li>5311 or 512x in credit (cash paid without a receipt, or a bank overdraft);</li>
+<li>581 not zero;</li>
+<li>542 in credit (the company owes the employee);</li>
+<li>28x or 29x in debit;</li>
+<li>401 or 404 in debit (a supplier paid more than invoiced);</li>
+<li>4111 in credit (a customer paid more than invoiced);</li>
+<li>stock or fixed-asset accounts in credit.</li>
+</ul>
+<p>They're for the accountant to check. They don't block the close, except
+negative cash, which the close refuses anyway.</p>
 <p><code>accounting_period_close(period, closed_by=)</code> refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
 depreciation, the VAT settlement and, in December, the year-end entry, dated the
@@ -2205,6 +2297,40 @@ that chat.</p>
 <p>Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.</p>
+<h2 id="correcting-a-posted-entry-stornare">Correcting a posted entry (stornare)<a class="headerlink" href="#correcting-a-posted-entry-stornare" title="Permanent link">&para;</a></h2>
+<p><code>journal_reverse(bucket_key, reason, day="")</code> undoes a wrong entry without
+deleting anything:</p>
+<ul>
+<li>It posts the same lines with debit and credit swapped, dated <code>day</code>, under
+  <code>reverse/&lt;n&gt;/&lt;key&gt;</code>. That month must be open.</li>
+<li>It moves the original to <code>&lt;key&gt;#reversed-&lt;n&gt;</code>. Both entries stay in the
+  journal and the registers.</li>
+<li>The document goes back to status <code>reversed</code>, so it shows as a blocker until
+  the correct entry is posted with <code>journal_post</code>.</li>
+<li>A reason is required, and it is written into the journal.</li>
+</ul>
+<h2 id="balance-confirmations-confirmari-de-sold">Balance confirmations (confirmări de sold)<a class="headerlink" href="#balance-confirmations-confirmari-de-sold" title="Permanent link">&para;</a></h2>
+<p><code>partner_confirmations(day)</code> writes one letter per partner with an open balance
+on <code>day</code>, usually 31 December. Each letter, in Romanian, states what the partner
+owes the client and what the client owes them, and asks the partner to confirm
+or send the differences. Letters are filed as <code>confirmations/&lt;day&gt;/&lt;cui&gt;.txt</code>.</p>
+<p>With Gmail connected, it also creates an email draft to each partner, using the
+address from their invoices. Nothing is sent. Partners without an email are
+listed with <code>"draft": "no email address for this partner"</code>.</p>
+<h2 id="offsetting-a-partner-compensare">Offsetting a partner (compensare)<a class="headerlink" href="#offsetting-a-partner-compensare" title="Permanent link">&para;</a></h2>
+<p>When a partner both owes the client (41x) and is owed by them (40x),
+<code>partner_offset(partner_cui, day, amount="")</code> nets the two:</p>
+<ul>
+<li>It posts D 401 / C 4111 for the smaller balance, or for <code>amount</code> if given
+  (no more than that), under <code>offset/&lt;day&gt;/&lt;cui&gt;</code>, once per partner and day.</li>
+<li>It applies the same amount to the partner's open invoices on both sides,
+  oldest first. The invoices then read as paid, and reminders and payment
+  batches skip them.</li>
+<li>If the partner has nothing to offset, it says so.</li>
+</ul>
+<p>The offset entry appears in the journal register's non-invoice file. The
+signed confirmation (proces-verbal de compensare) stays with the accountant.
+Only the first 200 invoices of each kind are searched.</p>
 <h2 id="in-the-console">In the console<a class="headerlink" href="#in-the-console" title="Permanent link">&para;</a></h2>
 <p>The <strong>Client overview</strong> page shows the chosen client and month. It uses
 <code>GET /v1/accounting/overview</code>, which runs the same tools as the agent.</p>
@@ -2213,7 +2339,8 @@ again, or open the console's Client overview, once they're reviewed.</p>
   crossed, overdue receivables, unmatched bank movements, days with negative
   cash (the month can't close), days above <code>cash_limit</code>, and open employee
   advances.</li>
-<li><strong>Close tab:</strong> the VAT position, the expected documents and the trial balance.</li>
+<li><strong>Close tab:</strong> the VAT position, the expected documents, any balances on the
+  wrong side, and the trial balance.</li>
 <li><strong>Outlook tab:</strong> deadlines, limits, the bank balance, the 30-day projection
   and aging.</li>
 <li><strong>Results tab:</strong> the month's and the year-to-date profit and loss, plus the
