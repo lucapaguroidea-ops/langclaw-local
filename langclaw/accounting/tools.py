@@ -922,6 +922,62 @@ def build_accounting_tools(
         ]  # fmt: skip
         return {"day": on.isoformat(), "partners": partners}
 
+    async def partner_offset(partner_cui: str, day: str = "", amount: str = "") -> dict:
+        """Offset (compensare) what a partner owes the client against what the client
+        owes them: D 401 / C 4111 for the smaller of the two balances (or *amount*),
+        and apply it to their open invoices, oldest first, on both sides. Posted once
+        per partner and day.
+
+        Args:
+            partner_cui: The partner's tax ID, as on their invoices.
+            day: The offset's date (YYYY-MM-DD); empty means today.
+            amount: How much to offset; empty means as much as possible.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            journal = Journal(svc.store)
+            row = next((r for r in await journal.partner_balances(on)
+                        if r["partner_cui"] == partner_cui), None)  # fmt: skip
+            most = min(Decimal(row["rec"]), Decimal(row["pay"])) if row else Decimal(0)
+            most = most.quantize(Decimal("0.01"))
+            if most <= 0:
+                return {"error": f"{partner_cui} has nothing to offset on {on}: it needs both a "
+                        "receivable (41x) and a payable (40x) balance."}  # fmt: skip
+            value = Decimal(amount).quantize(Decimal("0.01")) if amount else most
+            if not 0 < value <= most:
+                return {"error": f"Amount {value} must be above 0 and at most {most}."}
+            note = f"Compensare {row['name'] or partner_cui}"
+            entry = {"lines": [
+                {"account": "401", "debit": str(value), "credit": "0", "explanation": note},
+                {"account": "4111", "debit": "0", "credit": str(value), "explanation": note}],
+                "reasoning": f"{note}.", "legal_basis": "OMFP 1802/2014"}  # fmt: skip
+            doc = {"bucket_key": f"offset/{on.isoformat()}/{partner_cui}",
+                   "document_date": on.isoformat(), "sender": row["name"],
+                   "fields": {"direction": "in", "supplier_cui": partner_cui}}  # fmt: skip
+            posted = await journal.post(doc, entry, approved_by="offset")
+            tx = {"key": f"offset:{on.isoformat()}:{partner_cui}", "booked": on,
+                  "reference": "compensare"}  # fmt: skip
+            applied = []
+            for side, field in (("out", "customer_cui"), ("in", "supplier_cui")):
+                left = value
+                invoices = sorted((r for r in await _invoices(svc, date(1900, 1, 1), on)
+                                   if (r.get("fields") or {}).get("direction") == side
+                                   and r["fields"].get(field) == partner_cui
+                                   and outstanding(r) > 0),
+                                  key=lambda r: str(r.get("document_date")))  # fmt: skip
+                for invoice in invoices:
+                    if left <= 0:
+                        break
+                    part = min(left, outstanding(invoice))
+                    await _apply_payment(svc, invoice["bucket_key"], part, tx)
+                    applied.append({"bucket_key": invoice["bucket_key"], "amount": str(part)})
+                    left -= part
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "amount": str(value),
+                                      "applied": applied}, default=str))  # fmt: skip
+
     async def receivables_overdue(day: str = "", min_days: int = 7) -> dict:
         """Customers with unpaid sales invoices past due, with the invoices, days
         overdue and what's left to pay — what payment reminders are drafted from.
@@ -1494,6 +1550,7 @@ def build_accounting_tools(
         accounting_results,
         partner_statement,
         partner_balances,
+        partner_offset,
         receivables_overdue,
         reminders_file,
         payables_due,

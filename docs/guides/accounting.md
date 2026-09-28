@@ -424,6 +424,22 @@ Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
 
+## Offsetting a partner (compensare)
+
+When a partner both owes the client (41x) and is owed by them (40x),
+`partner_offset(partner_cui, day, amount="")` nets the two:
+
+- It posts D 401 / C 4111 for the smaller balance, or for `amount` if given
+  (no more than that), under `offset/<day>/<cui>`, once per partner and day.
+- It applies the same amount to the partner's open invoices on both sides,
+  oldest first. The invoices then read as paid, and reminders and payment
+  batches skip them.
+- If the partner has nothing to offset, it says so.
+
+The offset entry appears in the journal register's non-invoice file. The
+signed confirmation (proces-verbal de compensare) stays with the accountant.
+Only the first 200 invoices of each kind are searched.
+
 ## In the console
 
 The **Client overview** page shows the chosen client and month. It uses

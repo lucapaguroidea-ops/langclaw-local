@@ -1464,3 +1464,41 @@ async def test_closing_a_month_files_its_journal_register_and_trial_balance(acme
         "balanta.csv", "close.json", "registru-jurnal.csv"]  # fmt: skip
     assert all(f["url"] and f["key"].startswith("reports/2027-02/") for f in files["files"])
     assert empty["files"] == []
+
+
+@needs_pg
+async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    bill = next(r for r in rows if r["fields"]["direction"] == "in")
+    cui = sale["fields"]["customer_cui"]
+    copy = {k: v for k, v in bill.items() if k not in ("id", "bucket_key", "fields")}
+    await scoped.store.save("inbox/from-customer.xml", {**copy, "sender": sale["receiver"],
+        "fields": {**bill["fields"], "supplier_cui": cui, "invoice_number": "BACK-1"}})  # fmt: skip
+    bill2 = await scoped.store.get("inbox/from-customer.xml")
+    small = min(Decimal(str(sale["amount"])), Decimal(str(bill2["amount"])))
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        for row in (sale, bill2):
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        again = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        nobody = await tools["partner_offset"].ainvoke({"partner_cui": "RO1", "day": "2026-09-30"})
+        balances = await tools["partner_balances"].ainvoke({"day": "2026-09-30"})
+    assert out["amount"] == str(small.quantize(Decimal("0.01")))
+    assert [(x["account"], x["debit"] > 0) for x in out["posted"]["lines"]] == [
+        ("401", True), ("4111", False)]  # fmt: skip
+    assert "error" in again and "nothing to offset" in nobody["error"]
+    mine = next(p for p in balances["partners"] if p["cui"] == cui)
+    assert "0.00" in (mine["receivable"], mine["payable"])
+    for key in (sale["bucket_key"], "inbox/from-customer.xml"):
+        f = (await scoped.store.get(key))["fields"]
+        assert any(p["tx"] == f"offset:2026-09-30:{cui}" for p in f["payments"])
