@@ -192,6 +192,28 @@ A payment dated in a **closed** month is still applied to the invoice, but it
 isn't booked. It's listed under `not_booked` with the reason, for the
 accountant.
 
+### Balances carried between statements, and the books
+
+Every balance in the books is carried forward by construction: an opening
+balance is the sum of every journal line before the period (March opens where
+February closed), and closed months can't change. Bank statements are checked
+against that in two ways, in the month report's `bank` section:
+
+- **`chain`** — per account, each statement must open with the previous one's
+  closing balance (`gap`: a statement is probably missing) and start after it
+  ends (`overlap`: the same days may be imported twice). `bank_import` also
+  returns the problems that involve the statement just imported.
+- **`accounts`** — per account, the latest statement's closing balance vs the
+  ledger (5121 / 5124 / the profile's `bank_accounts`) on its last day:
+  `difference`, the movements not booked yet (`unbooked_total`) and what they
+  don't explain (`unexplained`), with a `hint`. When the first statement
+  opens with a balance the books don't have, the hint says to post it with
+  `accounting_opening_balances`.
+
+`accounting_period_close` refuses while statements don't follow on or the bank
+and the books disagree; the monthly loop stops before closing, the console's
+Bank tab shows both tables and the overview raises an alert.
+
 `bank_movements(unmatched_only=True)` lists what's still open, newest first, one page at a time (`limit` up to 500). It also returns `total` (every movement), `money_in` / `money_out` (summed per currency over all of them) and `next_offset` for the next page, so nothing is hidden however many movements a client has. The console's Bank tab and the "not matched" alert use `total`. The outlook's bank balance reads every statement up to the month's end, so an account whose last statement is old still counts.
 
 ## Advice: what's coming

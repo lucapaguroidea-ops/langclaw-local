@@ -125,6 +125,21 @@ class BankBook:
             "money_out": {r["currency"]: f"{r['money_out']:.2f}" for r in rows if r["money_out"]},
         }
 
+    async def unbooked(self, account_iban: str, up_to: date) -> list[dict]:
+        """Movements of *account_iban* booked by the bank up to *up_to* that aren't in
+        the journal yet (unmatched or only probable) — the expected gap between the
+        bank's balance and the ledger's."""
+        pool = await self._db()
+        where = _where(True) + " AND account_iban = $1 AND booked <= $2"
+        rows = await pool.fetch(
+            f"SELECT key, booked, amount FROM {self._schema}.bank_transactions {where} "
+            "ORDER BY booked, key",
+            account_iban,
+            up_to,
+        )
+        return [{"key": r["key"], "booked": r["booked"].isoformat(), "amount": str(r["amount"])}
+                for r in rows]  # fmt: skip
+
     async def get(self, key: str) -> dict[str, Any] | None:
         pool = await self._db()
         row = await pool.fetchrow(

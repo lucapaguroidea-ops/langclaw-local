@@ -198,6 +198,11 @@ def test_recent_months_and_overview_alerts() -> None:
     assert "vat_registration at 85.0% of the limit" in alerts
     assert "Overdue receivables: 700.00" in alerts
     assert "1 bank movement(s) not matched" in alerts
+    checks = {"chain": [{"problem": "gap", "statement": "bank/10.sta"}],
+              "accounts": [{"iban": "RO1", "bank": "150.00", "ledger": "130.00",
+                            "account": "5121", "agrees": False}]}  # fmt: skip
+    got = editor.overview_alerts({"report": {"bank": checks}, "outlook": {}, "bank": {}})
+    assert got == ["Bank statement gap: bank/10.sta", "Bank RO1 says 150.00, books (5121) 130.00"]
     paged = {"report": {}, "outlook": {}, "bank": {"movements": [{"key": "k"}], "total": 75}}
     assert "75 bank movement(s) not matched" in editor.overview_alerts(paged)
     errored = editor.overview_alerts({"report": {"error": "boom"}, "outlook": {}, "bank": {}})

@@ -1921,3 +1921,51 @@ async def test_bank_movements_page_with_a_total_and_old_accounts_keep_their_bala
 
         facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
         assert Decimal(str(facts["cash"]["bank_balance"])) == Decimal(500 + 1059)
+
+
+@needs_pg
+async def test_bank_statements_carry_forward_and_reconcile_with_the_ledger(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    purchase = next(r for r in rows if r["fields"]["direction"] == "in")
+    await scoped.bucket.put("bank/09.sta", _mt940_paying(sale, purchase))
+    closing = 1000 + float(sale["amount"]) - float(purchase["amount"])
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["bank_import"].ainvoke({"key": "bank/09.sta"})
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+        (acct,) = report["bank"]["accounts"]
+        assert acct["account"] == "5121" and acct["agrees"] is False
+        assert "opening" in acct["hint"]  # nothing brought 5121 into the books yet
+
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-08-31", "balances": {"5121": 1000, "1012": -1000}}
+        )
+        (acct,) = (await tools["accounting_period_report"].ainvoke({"period": "2026-09"}))[
+            "bank"]["accounts"]  # fmt: skip
+        assert float(acct["difference"]) == -float(purchase["amount"])  # the unconfirmed payment
+        assert acct["unbooked"] == 1 and acct["unexplained"] == "0.00"
+
+        key = (await tools["bank_movements"].ainvoke({}))["movements"][0]["key"]
+        await tools["bank_confirm_match"].ainvoke(
+            {"movement_key": key, "bucket_key": purchase["bucket_key"]}
+        )
+        bank = (await tools["accounting_period_report"].ainvoke({"period": "2026-09"}))["bank"]
+        assert bank["agrees"] is True and bank["chain"] == []
+
+        # October's statement opens 50 higher than September closed: one is missing.
+        await scoped.bucket.put("bank/10.sta", (
+            ":20:ST2\n:25:RO49AAAA1B31007593840000\n:28C:2/1\n"
+            f":60F:C261001RON{closing + 50:.2f}\n:62F:C261031RON{closing + 50:.2f}\n"
+        ).replace(".", ",").encode())  # fmt: skip
+        out = await tools["bank_import"].ainvoke({"key": "bank/10.sta"})
+        assert [c["problem"] for c in out["chain"]] == ["gap"]
+        assert out["chain"][0]["difference"] == "50.00"
+        october = await tools["accounting_period_report"].ainvoke({"period": "2026-10"})
+        assert october["bank"]["agrees"] is False and october["bank"]["chain"]
+        closed = await tools["accounting_period_close"].ainvoke({"period": "2026-10"})
+        assert "follow on" in closed["error"]

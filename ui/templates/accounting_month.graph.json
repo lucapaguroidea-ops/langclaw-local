@@ -100,6 +100,13 @@
             "op": "truthy"
           },
           "then": "END"
+        },
+        {
+          "if": {
+            "path": "recheck.bank.agrees",
+            "op": "falsy"
+          },
+          "then": "END"
         }
       ],
       "else": "close"

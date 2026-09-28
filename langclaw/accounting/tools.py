@@ -39,6 +39,7 @@ from langclaw.accounting.bank.booking import (
 )
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
+from langclaw.accounting.bank.reconcile import reconcile_account, statement_chain
 from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.cash import (
     ADVANCE_ACCOUNT,
@@ -393,6 +394,43 @@ def build_accounting_tools(
                 for r in await journal.advance_balances(day)
                 if r["received"] or r["paid"]]  # fmt: skip
 
+    async def _opening(journal: Journal, account: str, f: dict[str, Any] | None) -> dict:
+        if not f:
+            return {}
+        before = date.fromisoformat(str(f["date_from"])[:10]) - timedelta(days=1)
+        return {"first_opening": Decimal(str(f["opening"])),
+                "ledger_at_first": await journal.balance_until(before, account)}  # fmt: skip
+
+    async def _bank_check(svc: DocumentServices, journal: Journal, end: date) -> dict[str, Any]:
+        """Statement continuity up to *end* and, per bank account, its latest
+        statement's closing balance vs the ledger on that day."""
+        statements = await svc.store.search_all(doc_type="bank_statement", date_to=end.isoformat())
+        latest: dict[str, dict[str, Any]] = {}
+        for st in statements:  # newest first
+            f = st.get("fields") or {}
+            if f.get("iban") and f.get("closing") is not None and f["iban"] not in latest:
+                latest[f["iban"]] = st
+        book, accounts = BankBook(svc.store), []
+        first: dict[str, dict[str, Any]] = {}
+        for st in statements:
+            f = st.get("fields") or {}
+            if f.get("iban") and f.get("date_from") and f.get("opening") is not None:
+                if f["iban"] not in first or f["date_from"] < first[f["iban"]]["date_from"]:
+                    first[f["iban"]] = f
+        for iban, st in sorted(latest.items()):
+            f = st["fields"]
+            day = date.fromisoformat(str(f.get("date_to") or st["document_date"])[:10])
+            account = bank_account(iban, f.get("currency") or st.get("currency") or "RON",
+                                   _profile())  # fmt: skip
+            accounts.append(reconcile_account(
+                iban=iban, account=account, day=day.isoformat(),
+                bank=Decimal(str(f["closing"])), ledger=await journal.balance_until(day, account),
+                unbooked=await book.unbooked(iban, day), **await _opening(journal, account,
+                                                                     first.get(iban))))  # fmt: skip
+        chain = statement_chain(statements)
+        return {"chain": chain, "accounts": accounts,
+                "agrees": not chain and all(a["agrees"] for a in accounts)}  # fmt: skip
+
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
         period = resolve_period(period)
         start, end = parse_period(period)
@@ -453,6 +491,7 @@ def build_accounting_tools(
                         {"bucket_key": inv["bucket_key"], "partner": adv["partner"],
                          "left_to_pay": str(outstanding(inv)), "available": str(available)}
                     )  # fmt: skip
+        report["bank"] = await _bank_check(svc, journal, end)
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],
@@ -516,6 +555,16 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            if report["bank"]["chain"]:
+                return {"error": f"Bank statements don't follow on from each other: "
+                        f"{report['bank']['chain'][0]['message']}",
+                        "problems": report["bank"]["chain"]}  # fmt: skip
+            off = [a for a in report["bank"]["accounts"] if not a["agrees"]]
+            if off:
+                a = off[0]
+                return {"error": f"The bank says {a['bank']} on {a['iban']} ({a['day']}), the "
+                        f"books say {a['ledger']} on {a['account']}. {a.get('hint', '')}".strip(),
+                        "accounts": off}  # fmt: skip
             negative = [p for p in report["cash"]["problems"] if "negative" in p["problem"]]
             if negative:
                 return {"error": f"Cash went negative on {len(negative)} day(s) in {period}; "
@@ -788,6 +837,11 @@ def build_accounting_tools(
                     continue
                 await book.set_match(t.key, "", "fee", "bank fee")
                 fees.append({"key": t.key, "amount": str(t.amount), "description": t.description})
+            same_account = [st for st in await svc.store.search_all(doc_type="bank_statement")
+                            if (st.get("fields") or {}).get("iban") == statement.iban]  # fmt: skip
+            chain = [
+                c for c in statement_chain(same_account) if key in (c["statement"], c["after"])
+            ]
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {
@@ -795,6 +849,7 @@ def build_accounting_tools(
             "iban": statement.iban,
             "period": [statement.date_from, statement.date_to],
             "problems": problems,
+            "chain": chain,
             "imported": len(new),
             "already_imported": len(statement.transactions) - len(new),
             "paid": [m for m in matches if m["kind"] == "certain"],

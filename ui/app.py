@@ -986,6 +986,14 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
                 "Movements without a certain match. Confirm them in chat with bank_confirm_match."
                 + (f" Showing the newest {shown} of {total}." if total > shown else "")
             )
+            checks = report.get("bank") or {}
+            for c in checks.get("chain") or []:
+                st.error(c["message"])
+            if checks.get("accounts"):
+                st.dataframe(checks["accounts"], hide_index=True,
+                             column_order=["iban", "account", "day", "bank", "ledger",
+                                           "difference", "unbooked_total", "unexplained",
+                                           "hint"])  # fmt: skip
             st.dataframe(bank["movements"], hide_index=True,
                          column_order=["booked", "amount", "counterparty", "description",
                                        "matched_key", "match_kind", "key"])  # fmt: skip
