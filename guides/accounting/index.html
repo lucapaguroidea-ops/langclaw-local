@@ -915,6 +915,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Export to SAGA / NextUp">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#journal-register-registrul-jurnal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Journal register (registrul-jurnal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trial-balance-balanta-de-verificare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trial balance (balanța de verificare)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-ledger-fisa-contului" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account ledger (fișa contului)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1652,6 +1691,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Export to SAGA / NextUp">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#journal-register-registrul-jurnal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Journal register (registrul-jurnal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trial-balance-balanta-de-verificare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trial balance (balanța de verificare)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-ledger-fisa-contului" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account ledger (fișa contului)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2156,6 +2234,54 @@ invoices get status <code>exported</code> and aren't exported again unless <code
   available, so the target fails with a clear error instead of guessing an API
   (<code>langclaw/accounting/export/nextup.py</code> is the place to wire it).</li>
 </ul>
+<h3 id="journal-register-registrul-jurnal">Journal register (registrul-jurnal)<a class="headerlink" href="#journal-register-registrul-jurnal" title="Permanent link">&para;</a></h3>
+<p><code>accounting_journal_register(period, without_invoices=False)</code> writes every
+posted entry of the month as a CSV to
+<code>reports/&lt;period&gt;/registru-jurnal.csv</code>, with a 24-hour link. There is one row
+per line: <code>nr;date;document;explanation;account;debit;credit</code>. The result gives
+the entry count, the debit and credit totals, and whether they balance.</p>
+<p>With <code>without_invoices=True</code>, the file is <code>registru-jurnal-other.csv</code> and holds
+only the entries langclaw made itself: bank (<code>bank/</code>), cash (<code>cash/</code>) and month
+close (<code>close/</code>). SAGA's invoice import doesn't carry these, so the accountant
+enters them in SAGA as <em>note contabile</em>. There is no direct SAGA import for them
+yet, because the note-contabile import format wasn't available.</p>
+<h3 id="trial-balance-balanta-de-verificare">Trial balance (balanța de verificare)<a class="headerlink" href="#trial-balance-balanta-de-verificare" title="Permanent link">&para;</a></h3>
+<p><code>accounting_trial_balance(period)</code> gives each account's five column pairs, each
+split into debit and credit:</p>
+<ul>
+<li>the opening balance at 1 January;</li>
+<li>turnover earlier in the year;</li>
+<li>the month's turnover;</li>
+<li>total sums;</li>
+<li>the closing balance.</li>
+</ul>
+<p>Balances go on their debit or credit side. <code>balanced</code> checks that every pair's
+debit and credit totals agree. The sheet is saved as a CSV at
+<code>reports/&lt;period&gt;/balanta.csv</code>, with a 24-hour link. The month report's
+<code>trial_balance</code> still gives only the month's turnover.</p>
+<p>The opening balance comes from everything posted before 1 January. For a
+client whose earlier years aren't in langclaw, post their balances once with
+<code>accounting_opening_balances(day, balances)</code>:</p>
+<ul>
+<li>Date it the day before the first month kept here, e.g. <code>2025-12-31</code>.</li>
+<li>Give the balances as debit minus credit, so credit balances are negative,
+  e.g. <code>{"5121": 1000, "1012": -800, "401": -200}</code>.</li>
+<li>The balances must sum to 0, and zero balances are skipped.</li>
+<li>It is posted once, as <code>opening/&lt;day&gt;</code>, and appears in the "other" journal
+  register next to the bank, cash and close entries.</li>
+</ul>
+<h3 id="account-ledger-fisa-contului">Account ledger (fișa contului)<a class="headerlink" href="#account-ledger-fisa-contului" title="Permanent link">&para;</a></h3>
+<p><code>accounting_account_ledger(account, period)</code> shows one account for the month.
+It covers the account's analytic sub-accounts too, so 5121 includes 5121.01.</p>
+<ul>
+<li>It gives the opening balance, then each posted line with its <code>counterpart</code>
+  (the entry's accounts on the other side, e.g. <code>704,4427</code> for a sale on
+  4111) and a running balance, then the totals and the closing balance.</li>
+<li>Balances are debit minus credit, so a negative figure is a credit balance,
+  as usual for 401 or 4427. <code>side</code> says which it is.</li>
+<li>The ledger is saved as a CSV at <code>reports/&lt;period&gt;/fisa-&lt;account&gt;.csv</code>, with a
+  24-hour link.</li>
+</ul>
 <p>Targets live in one registry (<code>langclaw/accounting/export/__init__.py:EXPORTERS</code>);
 a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt; ExportBatch</code>.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
@@ -2165,9 +2291,8 @@ a new one is a class with <code>name</code> and <code>build(rows, own_cif) -&gt;
   model and the reviewer.</li>
 <li>The VAT table is reference data to be reviewed by your accountant; update it
   when the law changes.</li>
-<li>Entries are single-currency (the invoice's); FX translation, fixed-asset
-  depreciation, and non-invoice documents (receipts, bank statements) aren't
-  covered yet.</li>
+<li>Entries are single-currency (the invoice's). FX translation isn't covered
+  yet.</li>
 <li>The SAGA file follows the published import layout but hasn't been imported
   into a real SAGA install yet — try one batch before relying on it.</li>
 <li>Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
