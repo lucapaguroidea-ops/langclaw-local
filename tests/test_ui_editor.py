@@ -206,3 +206,9 @@ def test_overview_alerts_count_balance_anomalies() -> None:
     report = {"anomalies": [{"account": "401", "balance": "20.00", "problem": "p"},
                             {"account": "5311", "balance": "-1.00", "problem": "q"}]}  # fmt: skip
     assert "Balances on the wrong side: 401, 5311" in editor.overview_alerts({"report": report})
+
+
+def test_overview_alerts_count_open_partner_advances() -> None:
+    report = {"partner_advances": [{"cui": "RO1", "partner": "A", "received": "10.00",
+                                    "paid": "0.00"}]}  # fmt: skip
+    assert "Partner advances not yet applied: 1" in editor.overview_alerts({"report": report})

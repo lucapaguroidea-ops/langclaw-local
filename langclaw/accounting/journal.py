@@ -206,7 +206,7 @@ class Journal:
             "WHERE e.entry_date BETWEEN $1 AND $2 AND (NOT $3 OR e.bucket_key LIKE 'bank/%' "
             "OR e.bucket_key LIKE 'cash/%' OR e.bucket_key LIKE 'close/%' "
             "OR e.bucket_key LIKE 'opening/%' OR e.bucket_key LIKE 'offset/%' "
-            "OR e.bucket_key LIKE 'reverse/%') "
+            "OR e.bucket_key LIKE 'reverse/%' OR e.bucket_key LIKE 'advance/%') "
             "ORDER BY e.entry_date, e.id, l.id",
             date_from,
             date_to,
@@ -343,6 +343,23 @@ class Journal:
             day,
         )
         return Decimal(value).quantize(_CENT)
+
+    async def advance_balances(self, day: date) -> list[dict]:
+        """Per partner up to *day*: advances received from them (419, credit −
+        debit) and paid to them (409, debit − credit), not yet applied."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.partner_cui, max(e.partner_name) AS name, "
+            "COALESCE(SUM(CASE WHEN l.account LIKE '419%' THEN l.credit - l.debit END), 0) "
+            "AS received, "
+            "COALESCE(SUM(CASE WHEN l.account LIKE '409%' THEN l.debit - l.credit END), 0) AS paid "
+            f"FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date <= $1 AND (l.account LIKE '419%' OR l.account LIKE '409%') "
+            "GROUP BY e.partner_cui ORDER BY e.partner_cui",
+            day,
+        )
+        return [dict(r) for r in rows]
 
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""

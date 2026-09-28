@@ -83,7 +83,7 @@ class BankBook:
         invoice (unmatched or only probable)."""
         pool = await self._db()
         where = (
-            "WHERE match_kind NOT IN ('certain', 'partial', 'fee', 'cash')"
+            "WHERE match_kind NOT IN ('certain', 'partial', 'fee', 'cash', 'advance')"
             if unmatched_only
             else ""
         )

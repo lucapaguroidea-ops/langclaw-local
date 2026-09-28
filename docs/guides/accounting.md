@@ -75,8 +75,10 @@ so proposals get more consistent as the accountant approves them.
   - The month report's `vat` (the D300 draft) then counts what became due in
     the month, with `"basis": "payments"`: credits to 4427 and debits to 4426.
     That includes paid invoices, Z reports and receipts. The invoice-date
-    totals stay under `by_invoice`. The per-rate rows still come from the
-    invoices.
+    totals stay under `by_invoice`. The per-rate rows (`sales`, `purchases`)
+    come from the share of each invoice paid in the month, taken from the
+    invoice's payments, plus the month's Z reports and receipts. They can
+    differ from the totals by rounding cents.
   - A partner offset (`partner_offset`) moves the offset share the same way,
     invoice by invoice.
 
@@ -433,6 +435,32 @@ that chat.
 Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
+
+## Advances (avansuri)
+
+When a customer pays before the invoice exists, or the client pays a supplier
+in advance, the bank movement stays unmatched after `bank_import`.
+
+- `bank_book_advance(movement_key, partner_cui, partner_name)` books it as an
+  advance:
+  - money in from a customer is D bank / C 419;
+  - money out to a supplier is D 409 / C bank.
+  The movement then leaves the unmatched list.
+- When the invoice arrives, `advance_apply(bucket_key, day, amount="")` uses
+  the advance: D 419 / C 4111 for a sale, D 401 / C 409 for a purchase.
+  - It applies the smaller of what's left of the advance and what's left to
+    pay on the invoice, or `amount` if given (no more than that).
+  - The invoice counts as paid by it.
+
+`advances_partners(day)` lists, per partner, the advances not applied yet:
+`received` on 419 and `paid` on 409. The month report shows them as
+`partner_advances`. The console raises an alert "Partner advances not yet
+applied: N" and lists them in the Close tab. The report's `advances_to_apply`
+lists the open invoices of those partners, with what's left to pay and the
+advance available. Those are the candidates for `advance_apply`.
+
+These are advances without VAT. Advance invoices (facturi de avans) with VAT
+stay with the accountant.
 
 ## Correcting a posted entry (stornare)
 

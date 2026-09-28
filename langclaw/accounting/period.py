@@ -241,6 +241,27 @@ def vat_summary(invoices: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def paid_share(invoices: list[dict[str, Any]], start: date, end: date) -> list[dict[str, Any]]:
+    """The invoices paid (partly) in [*start*, *end*], each with its VAT breakdown
+    scaled to the share paid then (``fields.payments`` by date) — what
+    :func:`vat_summary` needs to show VAT on collection by rate."""
+    out = []
+    for row in invoices:
+        f = row.get("fields") or {}
+        gross = _dec(row.get("amount"))
+        paid = sum((_dec(p.get("amount")) for p in f.get("payments") or []
+                    if start.isoformat() <= str(p.get("date", ""))[:10] <= end.isoformat()),
+                   Decimal(0))  # fmt: skip
+        if not gross or not paid:
+            continue
+        ratio = paid / gross
+        breakdown = [{**v, "taxable": str((_dec(v.get("taxable")) * ratio).quantize(_CENT)),
+                      "vat": str((_dec(v.get("vat")) * ratio).quantize(_CENT))}
+                     for v in f.get("vat_breakdown") or []]  # fmt: skip
+        out.append({**row, "fields": {**f, "vat_breakdown": breakdown}})
+    return out
+
+
 def vat_due(lines: list[dict[str, Any]]) -> dict[str, Decimal]:
     """VAT that became due in a period, from its journal *lines*: credits to 4427
     (collected) and debits to 4426 (deductible). For VAT on collection, where the
