@@ -223,6 +223,23 @@ reminder, addressed to the customer. A person still presses send. Customers
 without an email are filed and reported with `"draft": "no email address for
 this customer"`. Without Gmail, reminders are only filed.
 
+## Paying suppliers
+
+`payables_due(day, days=7)` lists the supplier invoices to pay: unpaid, and due
+within `days`. Overdue ones are included and flagged. The list is grouped by
+supplier and shows the IBAN from the invoice, what's left after partial
+payments, and the invoice numbers.
+
+`payables_batch(day, days)` writes those payments as a CSV in the client's bucket
+at `payments/<date>-batch.csv`, and files it as a `payment_batch` document. It
+returns a 24-hour download link. The columns are `beneficiary; tax_id; iban;
+amount; currency; details`, where the details read "Plata fact. …".
+
+Suppliers without an IBAN are left out and listed under `missing_iban`. Nothing
+is paid from langclaw. The accountant uploads the file to internet banking, or
+copies it into the bank's own import format, since each bank's format differs.
+The payments are booked when the next statement is imported.
+
 ## Results and income tax
 
 `accounting_results(period)` computes the profit and loss for the month and the

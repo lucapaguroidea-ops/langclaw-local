@@ -43,6 +43,7 @@ from langclaw.accounting.outlook import (
     thresholds,
     trend,
 )
+from langclaw.accounting.outlook import payables_due as plan_payables
 from langclaw.accounting.period import (
     blockers,
     document_state,
@@ -911,6 +912,77 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"filed": filed}  # fmt: skip
 
+    async def _payables(day: str, days: int) -> tuple[DocumentServices, date, list[dict]]:
+        on = date.fromisoformat(day) if day else date.today()
+        svc = services.current()
+        rows = await _invoices(svc, date(1900, 1, 1), on.replace(year=on.year + 1))
+        return svc, on, plan_payables(rows, on=on, days=max(0, int(days)))
+
+    async def payables_due(day: str = "", days: int = 7) -> dict:
+        """Supplier invoices to pay: unpaid, due within *days* (overdue included),
+        grouped by supplier with IBAN, amount left and the invoice numbers.
+
+        Args:
+            day: The date to plan from (YYYY-MM-DD); empty: today.
+            days: How many days ahead to include.
+        """
+        try:
+            _, on, due = await _payables(day, days)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        total = sum((d["amount"] for d in due), Decimal(0))
+        return json.loads(json.dumps({"day": on.isoformat(), "total": total, "suppliers": due},
+                                     default=str))  # fmt: skip
+
+    async def payables_batch(day: str = "", days: int = 7) -> dict:
+        """Write a payment batch (CSV: beneficiary, tax ID, IBAN, amount, currency,
+        payment details) for the supplier invoices due within *days*, into the
+        client's bucket under payments/, and return a download link. Suppliers
+        without an IBAN are left out and listed.
+
+        Args:
+            day: The date to plan from (YYYY-MM-DD); empty: today.
+            days: How many days ahead to include.
+        """
+        import csv
+        import io
+
+        try:
+            svc, on, due = await _payables(day, days)
+            payable = [d for d in due if d["iban"]]
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";")
+            writer.writerow(["beneficiary", "tax_id", "iban", "amount", "currency", "details"])
+            for d in payable:
+                details = "Plata fact. " + ", ".join(n for n in d["numbers"] if n)
+                writer.writerow([d["partner"], d["cui"], d["iban"], f"{d['amount']:.2f}",
+                                 d["currency"], details[:140]])  # fmt: skip
+            key = f"payments/{on.isoformat()}-batch.csv"
+            if payable:
+                await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+                total = sum((d["amount"] for d in payable), Decimal(0))
+                cited = [k for d in payable for k in d["invoices"]]
+                await svc.store.save(
+                    key,
+                    {
+                        "doc_type": "payment_batch",
+                        "document_date": on.isoformat(),
+                        "amount": total,
+                        "status": "filed",
+                        "summary": f"{len(payable)} supplier payment(s), {total:.2f}",
+                        "fields": {"invoices": cited},
+                    },
+                )
+                url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        missing = [{"partner": d["partner"], "amount": str(d["amount"])} for d in due
+                   if not d["iban"]]  # fmt: skip
+        if not payable:
+            return {"payments": 0, "missing_iban": missing}
+        return {"key": key, "url": url, "payments": len(payable), "total": f"{total:.2f}",
+                "missing_iban": missing}  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -930,6 +1002,8 @@ def build_accounting_tools(
         partner_balances,
         receivables_overdue,
         reminders_file,
+        payables_due,
+        payables_batch,
     ]
     if bus is not None:
         fns.append(accounting_queue)

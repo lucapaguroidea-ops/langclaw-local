@@ -982,3 +982,28 @@ async def test_filing_reminders_drafts_emails_when_a_mailer_is_given(acme) -> No
     assert {s[0] for s in sent} == {c["email"] for c in with_email}
     assert out["filed"][-1]["draft"] == "no email address for this customer"
     assert all(f["draft"].startswith("d") for f in out["filed"] if f.get("to"))
+
+
+@needs_pg
+async def test_payables_batch_writes_a_csv_for_suppliers_due(acme) -> None:
+    import csv
+    import io
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    buys = [r for r in await scoped.store.search(doc_type="invoice", limit=20)
+            if r["fields"]["direction"] == "in" and r["fields"].get("due_date")]  # fmt: skip
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        due = await tools["payables_due"].ainvoke({"day": "2027-12-31", "days": 0})
+        out = await tools["payables_batch"].ainvoke({"day": "2027-12-31", "days": 0})
+    listed = {k for s in due["suppliers"] for k in s["invoices"]}
+    assert listed == {r["bucket_key"] for r in buys}
+    data, _ = await scoped.bucket.get(out["key"])
+    rows = list(csv.reader(io.StringIO(data.decode()), delimiter=";"))
+    assert rows[0][:3] == ["beneficiary", "tax_id", "iban"] and len(rows) - 1 == out["payments"]
+    with_iban = [s for s in due["suppliers"] if s["iban"]]
+    assert out["payments"] == len(with_iban) and all(r[2] for r in rows[1:])
+    assert (await scoped.store.get(out["key"]))["doc_type"] == "payment_batch"
