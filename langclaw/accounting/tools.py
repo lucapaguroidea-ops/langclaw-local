@@ -66,6 +66,7 @@ from langclaw.accounting.period import (
     d394_rows,
     document_state,
     opening_entry,
+    paid_share,
     parse_period,
     resolve_period,
     settles_vat,
@@ -435,7 +436,12 @@ def build_accounting_tools(
         if _profile().get("vat_on_collection"):  # VAT is due as invoices are paid
             by_invoice = report["vat"]
             month_lines = await journal.lines_between(start, end)
-            report["vat"] = {**by_invoice, **vat_due(month_lines), "basis": "payments",
+            cash_docs = [d for d in booked if d.get("doc_type") in ("z_report", "cash_receipt")]
+            paid = paid_share(await _invoices(svc, date(1900, 1, 1), end), start, end)
+            by_rate = vat_summary([*paid, *cash_docs])
+            report["vat"] = {**by_invoice, **{k: by_rate[k] for k in
+                                              ("sales", "purchases", "reverse_charge")},
+                             **vat_due(month_lines), "basis": "payments",
                              "by_invoice": {k: by_invoice[k] for k in
                                             ("collected", "deductible", "payable",
                                              "refundable")}}  # fmt: skip

@@ -75,8 +75,10 @@ so proposals get more consistent as the accountant approves them.
   - The month report's `vat` (the D300 draft) then counts what became due in
     the month, with `"basis": "payments"`: credits to 4427 and debits to 4426.
     That includes paid invoices, Z reports and receipts. The invoice-date
-    totals stay under `by_invoice`. The per-rate rows still come from the
-    invoices.
+    totals stay under `by_invoice`. The per-rate rows (`sales`, `purchases`)
+    come from the share of each invoice paid in the month, taken from the
+    invoice's payments, plus the month's Z reports and receipts. They can
+    differ from the totals by rounding cents.
   - A partner offset (`partner_offset`) moves the offset share the same way,
     invoice by invoice.
 

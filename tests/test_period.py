@@ -244,3 +244,21 @@ def test_vat_due_from_lines_counts_what_moved_into_4427_and_4426() -> None:
              {"account": "4428", "debit": 105, "credit": 0}]  # fmt: skip
     assert vat_due(lines) == {"collected": D("105.00"), "deductible": D("21.00"),
                               "payable": D("84.00"), "refundable": D("0.00")}  # fmt: skip
+
+
+def test_paid_share_scales_each_invoice_to_what_was_paid_in_the_period() -> None:
+    from datetime import date
+    from decimal import Decimal as D
+
+    from langclaw.accounting.period import paid_share, vat_summary
+
+    sale = {"doc_type": "invoice", "amount": "1210.00", "fields": {
+        "direction": "out", "vat_breakdown": [{"rate": "21", "taxable": "1000", "vat": "210"}],
+        "payments": [{"date": "2026-08-30", "amount": "121.00"},
+                     {"date": "2026-09-10", "amount": "605.00"}]}}  # fmt: skip
+    unpaid = {"doc_type": "invoice", "amount": "100", "fields": {"direction": "out",
+              "vat_breakdown": [{"rate": "21", "taxable": "80", "vat": "20"}]}}  # fmt: skip
+    rows = paid_share([sale, unpaid], date(2026, 9, 1), date(2026, 9, 30))
+    assert len(rows) == 1
+    summary = vat_summary(rows)
+    assert summary["sales"] == [{"rate": "21", "taxable": D("500.00"), "vat": D("105.00")}]

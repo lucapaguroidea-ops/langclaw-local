@@ -1602,6 +1602,7 @@ async def test_vat_on_collection_becomes_due_as_the_customer_pays(acme) -> None:
     assert Decimal(accounts["4428"]["balance"]) == -(vat - share)
     assert report["vat_settlement"] is not None
     assert report["vat"]["basis"] == "payments"
+    assert sum(Decimal(r["vat"]) for r in report["vat"]["sales"]) == share
     assert Decimal(report["vat"]["collected"]) == share
     assert Decimal(report["vat"]["by_invoice"]["collected"]) == vat
 
