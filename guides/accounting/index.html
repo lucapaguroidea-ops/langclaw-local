@@ -2124,8 +2124,14 @@ last day of the month. It then saves three files in the client's bucket:</p>
 <code>registers</code>. If either register can't be written, the month stays open.
 Finally it <strong>locks</strong> the month:
 <code>journal_post</code> refuses any entry dated in it (<code>closed_periods</code> table in the
-client's schema). There's no reopen tool yet — reopening is a database change
-on purpose.</p>
+client's schema).</p>
+<p>To correct a closed month, <code>accounting_period_reopen(period, reason, reopened_by)</code>
+unlocks it. The reason is required. Later closed months must be reopened
+first, since their balances build on this one. The entries its close posted
+(<code>close/&lt;period&gt;/...</code>: depreciation, VAT settlement, year end) are removed, and
+the next <code>accounting_period_close</code> posts them afresh from the corrected month.
+Every close and reopen is kept in the month's <code>history</code> (<code>period_log</code> table),
+which the month report returns and the console's Close tab shows.</p>
 <p><code>accounting_d394(period)</code> gives the <strong>D394</strong> figures (the informative statement of
 domestic supplies and purchases). It covers the month's invoices with a partner
 tax ID. They are grouped by partner, direction (<code>out</code> supplies, <code>in</code> purchases),
