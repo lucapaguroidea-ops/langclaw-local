@@ -1502,3 +1502,33 @@ async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
     for key in (sale["bucket_key"], "inbox/from-customer.xml"):
         f = (await scoped.store.get(key))["fields"]
         assert any(p["tx"] == f"offset:2026-09-30:{cui}" for p in f["payments"])
+
+
+@needs_pg
+async def test_balance_confirmations_are_filed_and_drafted_per_partner(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    drafts = []
+
+    async def mailer(to: str, subject: str, body: str) -> dict:
+        drafts.append((to, subject, body))
+        return {"draft_id": f"d{len(drafts)}"}
+
+    tools = {t.name: t for t in build_accounting_tools(services, mailer=mailer)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    gross = f"{float(sale['amount']):.2f}"
+    with tenant_scope(Tenant(id="acme", name="ACME SRL", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        out = await tools["partner_confirmations"].ainvoke({"day": "2026-12-31"})
+    [item] = out["filed"]
+    assert item["cui"] == sale["fields"]["customer_cui"] and item["receivable"] == gross
+    assert item["document"] == f"confirmations/2026-12-31/{item['cui']}.txt"
+    text = (await scoped.bucket.get(item["document"]))[0].decode("utf-8")
+    assert gross in text and "31.12.2026" in text and "ACME SRL" in text
+    assert drafts and drafts[0][0] == sale["fields"]["customer_email"]
+    assert item["draft"] == "d1" and "Confirmare" in drafts[0][1]

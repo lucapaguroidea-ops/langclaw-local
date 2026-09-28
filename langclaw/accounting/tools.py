@@ -978,6 +978,59 @@ def build_accounting_tools(
         return json.loads(json.dumps({"posted": posted, "amount": str(value),
                                       "applied": applied}, default=str))  # fmt: skip
 
+    async def partner_confirmations(day: str = "") -> dict:
+        """Balance confirmations (confirmări de sold), usually at year end: one letter
+        per partner with an open balance on *day* (what they owe the client and what
+        the client owes them), filed as confirmations/<day>/<cui>.txt. With Gmail
+        connected, an email draft to the partner is created too; nothing is sent.
+
+        Args:
+            day: The balances' date (YYYY-MM-DD), e.g. 2026-12-31; empty means today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            rows = await Journal(svc.store).partner_balances(on)
+            emails: dict[str, str] = {}
+            for inv in await _invoices(svc, date(1900, 1, 1), on):
+                f = inv.get("fields") or {}
+                out = f.get("direction") == "out"
+                cui = f.get("customer_cui" if out else "supplier_cui", "")
+                mail = f.get("customer_email" if out else "supplier_email", "")
+                if cui and mail:
+                    emails.setdefault(cui, mail)
+            client = current_tenant()
+            me = f"{client.name} (CUI {client.tax_id})" if client else "noi"
+            ro_day, cent = on.strftime("%d.%m.%Y"), Decimal("0.01")
+            filed = []
+            for r in rows:
+                rec = Decimal(r["rec"]).quantize(cent)
+                pay = Decimal(r["pay"]).quantize(cent)
+                if not rec and not pay:
+                    continue
+                cui, name = r["partner_cui"], r["name"] or r["partner_cui"]
+                text = (f"Confirmare de sold la {ro_day}\n\nCătre: {name} (CUI {cui})\n"
+                        f"De la: {me}\n\nConform evidențelor noastre, la {ro_day}:\n"
+                        f"- ne datorați: {rec} lei\n- vă datorăm: {pay} lei\n\n"
+                        "Vă rugăm să confirmați soldul sau să ne comunicați diferențele, "
+                        "cu documentele aferente.\n")  # fmt: skip
+                key = f"confirmations/{on.isoformat()}/{cui}.txt"
+                await svc.bucket.put(key, text.encode("utf-8"), content_type="text/plain")
+                item = {"cui": cui, "partner": name, "receivable": str(rec),
+                        "payable": str(pay), "document": key}  # fmt: skip
+                if mailer is not None:
+                    to = emails.get(cui, "")
+                    if not to:
+                        item["draft"] = "no email address for this partner"
+                    else:
+                        sent = await mailer(to, f"Confirmare de sold la {ro_day}", text)
+                        item["draft"] = sent.get("error") or sent.get("draft_id", "")
+                        item["to"] = to
+                filed.append(item)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"day": on.isoformat(), "filed": filed}
+
     async def receivables_overdue(day: str = "", min_days: int = 7) -> dict:
         """Customers with unpaid sales invoices past due, with the invoices, days
         overdue and what's left to pay — what payment reminders are drafted from.
@@ -1551,6 +1604,7 @@ def build_accounting_tools(
         partner_statement,
         partner_balances,
         partner_offset,
+        partner_confirmations,
         receivables_overdue,
         reminders_file,
         payables_due,

@@ -424,6 +424,17 @@ Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
 
+## Balance confirmations (confirmări de sold)
+
+`partner_confirmations(day)` writes one letter per partner with an open balance
+on `day`, usually 31 December. Each letter, in Romanian, states what the partner
+owes the client and what the client owes them, and asks the partner to confirm
+or send the differences. Letters are filed as `confirmations/<day>/<cui>.txt`.
+
+With Gmail connected, it also creates an email draft to each partner, using the
+address from their invoices. Nothing is sent. Partners without an email are
+listed with `"draft": "no email address for this partner"`.
+
 ## Offsetting a partner (compensare)
 
 When a partner both owes the client (41x) and is owed by them (40x),
