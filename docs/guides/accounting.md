@@ -471,9 +471,16 @@ debit and credit totals agree. The sheet is saved as a CSV at
 `reports/<period>/balanta.csv`, with a 24-hour link. The month report's
 `trial_balance` still gives only the month's turnover.
 
-The opening balance comes from everything posted before 1 January. That is
-only complete if the client's earlier years, or an opening entry, are in the
-journal.
+The opening balance comes from everything posted before 1 January. For a
+client whose earlier years aren't in langclaw, post their balances once with
+`accounting_opening_balances(day, balances)`:
+
+- Date it the day before the first month kept here, e.g. `2025-12-31`.
+- Give the balances as debit minus credit, so credit balances are negative,
+  e.g. `{"5121": 1000, "1012": -800, "401": -200}`.
+- The balances must sum to 0, and zero balances are skipped.
+- It is posted once, as `opening/<day>`, and appears in the "other" journal
+  register next to the bank, cash and close entries.
 
 ### Account ledger (fișa contului)
 

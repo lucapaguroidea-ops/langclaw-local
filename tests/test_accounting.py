@@ -1405,3 +1405,32 @@ async def test_the_trial_balance_tool_splits_opening_previous_and_month(acme) ->
         "100.00", "40.00", "5.00")  # fmt: skip
     assert cash["closing_debit"] == "145.00" and sheet["balanced"]
     assert sheet["key"].endswith("reports/2026-03/balanta.csv")
+
+
+@needs_pg
+async def test_opening_balances_are_posted_once_and_open_the_trial_balance(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    balances = {"5121": "1000", "1012": "-1000"}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": balances}
+        )
+        twice = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": balances}
+        )
+        bad = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": {"5121": "5"}}
+        )
+        sheet = await tools["accounting_trial_balance"].ainvoke({"period": "2026-01"})
+        other = await tools["accounting_journal_register"].ainvoke(
+            {"period": "2025-12", "without_invoices": True}
+        )
+    assert out["posted"]["bucket_key"] == "opening/2025-12-31"
+    assert "already posted" in twice["error"] and "balance" in bad["error"]
+    bank = next(r for r in sheet["accounts"] if r["account"] == "5121")
+    assert bank["opening_debit"] == "1000.00" and sheet["balanced"]
+    assert other["entries"] == 1

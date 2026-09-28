@@ -64,6 +64,7 @@ from langclaw.accounting.period import (
     blockers,
     d394_rows,
     document_state,
+    opening_entry,
     parse_period,
     resolve_period,
     settles_vat,
@@ -1223,6 +1224,29 @@ def build_accounting_tools(
         return json.loads(json.dumps({"period": period, "key": key, "url": url, **sheet},
                                      default=str))  # fmt: skip
 
+    async def accounting_opening_balances(day: str, balances: dict[str, Any]) -> dict:
+        """Post a client's opening balances (sold inițial) when they start with
+        langclaw, usually dated the last day before the first month kept here.
+        One entry under opening/<day>, posted once; the balances must sum to 0.
+        Example balances: {"5121": 1000, "1012": -800, "401": -200}.
+
+        Args:
+            day: The balances' date (YYYY-MM-DD), e.g. 2025-12-31.
+            balances: Account to balance, as debit − credit (a credit balance is
+                below 0).
+        """
+        try:
+            on = date.fromisoformat(day)
+            if isinstance(balances, str):
+                balances = json.loads(balances)
+            entry = opening_entry(balances)
+            doc = {"bucket_key": f"opening/{on.isoformat()}", "document_date": on.isoformat(),
+                   "fields": {"direction": "in"}}  # fmt: skip
+            posted = await Journal(services.current().store).post(doc, entry, approved_by="opening")
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted}, default=str))
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1447,6 +1471,7 @@ def build_accounting_tools(
         accounting_journal_register,
         accounting_account_ledger,
         accounting_trial_balance,
+        accounting_opening_balances,
         cash_z_report,
         cash_book,
         cash_pay_invoice,

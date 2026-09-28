@@ -194,3 +194,19 @@ def test_the_trial_balance_sheet_has_the_five_column_pairs() -> None:
     assert totals["opening_debit"] == totals["opening_credit"] == D("100.00")
     assert totals["total_debit"] == totals["total_credit"] == D("180.00")
     assert totals["closing_debit"] == totals["closing_credit"] and sheet["balanced"]
+
+
+def test_an_opening_entry_puts_each_balance_on_its_side() -> None:
+    import pytest
+
+    from langclaw.accounting.period import opening_entry
+
+    entry = opening_entry({"5121": "1000", "1012": "-800", "401": "-200", "4111": 0})
+    assert [(x["account"], x["debit"], x["credit"]) for x in entry["lines"]] == [
+        ("1012", "0", "800.00"), ("401", "0", "200.00"), ("5121", "1000.00", "0")]  # fmt: skip
+    with pytest.raises(ValueError, match="balance"):
+        opening_entry({"5121": "1000", "1012": "-900"})
+    with pytest.raises(ValueError, match="account"):
+        opening_entry({"cash": "10", "1012": "-10"})
+    with pytest.raises(ValueError, match="No balances"):
+        opening_entry({"4111": "0"})

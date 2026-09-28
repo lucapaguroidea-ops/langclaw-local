@@ -118,6 +118,42 @@ def trial_balance_sheet(
     return {"accounts": accounts, "totals": totals, "balanced": balanced}
 
 
+_ACCOUNT_NO = re.compile(r"^\d{3,4}(\.\w+)?$")
+
+
+def opening_entry(balances: dict[str, Any]) -> dict[str, Any]:
+    """The entry that brings a client's balances into the journal when they
+    start with langclaw: ``{account: balance}`` with debit − credit balances
+    (negative = credit, e.g. 1012 capital, 401 suppliers). Zero balances are
+    skipped.
+
+    Raises:
+        ValueError: a bad account or amount, nothing to post, or balances that
+            don't sum to zero.
+    """
+    lines, total = [], Decimal(0)
+    for account, value in sorted(balances.items()):
+        account = str(account).strip()
+        if not _ACCOUNT_NO.match(account):
+            raise ValueError(f"{account!r} isn't an account number (e.g. 5121 or 401.01).")
+        try:
+            amount = Decimal(str(value)).quantize(_CENT)
+        except InvalidOperation as exc:
+            raise ValueError(f"Bad balance {value!r} for {account}.") from exc
+        if not amount:
+            continue
+        total += amount
+        debit, credit = (str(amount), "0") if amount > 0 else ("0", str(-amount))
+        lines.append({"account": account, "debit": debit, "credit": credit,
+                      "explanation": "Sold inițial"})  # fmt: skip
+    if not lines:
+        raise ValueError("No balances to post.")
+    if total:
+        raise ValueError(f"The balances don't balance: debit − credit is {total}, not 0.")
+    return {"lines": lines, "reasoning": "Solduri inițiale preluate.",
+            "legal_basis": "OMFP 1802/2014"}  # fmt: skip
+
+
 def _rate(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
