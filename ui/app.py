@@ -1032,6 +1032,34 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
                 )
 
 
+def page_firm(lc: LangclawClient) -> None:
+    st.header("🏢 All clients")
+    import datetime as dt
+
+    st.caption("Every client's month: what blocks the close, bank vs books, VAT to pay.")
+    period = st.selectbox("Month", editor.recent_months(dt.date.today(), 13), index=1,
+                          key="firm_period", help="Default: last month")  # fmt: skip
+    view = _call(lc.accounting_firm, period)
+    if not view:
+        return
+    rows = view["clients"]
+    ready = sum(1 for r in rows if r["ready_to_close"])
+    closed = sum(1 for r in rows if r["closed"])
+    cols = st.columns(3)
+    cols[0].metric("Clients", len(rows))
+    cols[1].metric("Closed", closed)
+    cols[2].metric("Ready to close", ready)
+    st.dataframe(
+        [{**r, "missing": ", ".join(r["missing"]),
+          "result_to_carry": (r["result_to_carry"] or {}).get("amount", "")} for r in rows],
+        hide_index=True,
+        column_order=["name", "closed", "ready_to_close", "blockers", "missing", "bank_agrees",
+                      "unmatched", "anomalies", "vat_to_pay", "vat_to_recover",
+                      "result_to_carry", "error"],
+    )  # fmt: skip
+    st.caption("Open a client in Client overview for the details.")
+
+
 def page_clients(lc: LangclawClient) -> None:
     st.header("🏢 Clients")
     st.caption(
@@ -1217,7 +1245,7 @@ def main(lc: LangclawClient) -> None:
             f"Review queue ({len(reviews)})",
             "Documents",
             "Client overview",
-            *(["Clients"] if tenants_on else []),
+            *(["All clients", "Clients"] if tenants_on else []),
             "Status",
         ],
         label_visibility="collapsed",
@@ -1230,6 +1258,8 @@ def main(lc: LangclawClient) -> None:
         page_documents(lc, tenants_on)
     elif page == "Client overview":
         page_overview(lc, tenants_on)
+    elif page == "All clients":
+        page_firm(lc)
     elif page == "Clients":
         page_clients(lc)
     elif page == "Status":

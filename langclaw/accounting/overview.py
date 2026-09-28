@@ -54,3 +54,48 @@ def _month_end(period: str) -> str:
         return parse_period(period)[1].isoformat()
     except ValueError:
         return ""
+
+
+def firm_row(client: str, name: str, report: dict[str, Any], bank: dict[str, Any]) -> dict:
+    """One client's line in the firm-wide view, from its month report and its
+    unmatched bank movements: what blocks the close, and the VAT to pay."""
+    if "error" in report:
+        return {"client": client, "name": name, "period": "", "closed": False, "blockers": 0,
+                "missing": [], "bank_agrees": False, "unmatched": 0, "vat_to_pay": "",
+                "vat_to_recover": "", "anomalies": 0, "result_to_carry": None,
+                "ready_to_close": False, "error": report["error"]}  # fmt: skip
+    vat = report.get("vat") or {}
+    missing = [m.get("label") or m.get("doc_type", "")
+               for m in (report.get("documents") or {}).get("missing") or []]  # fmt: skip
+    row = {
+        "client": client, "name": name, "period": report.get("period", ""),
+        "closed": bool(report.get("closed")), "blockers": len(report.get("blockers") or []),
+        "missing": missing, "bank_agrees": bool((report.get("bank") or {}).get("agrees", True)),
+        "unmatched": int(bank.get("total") or 0), "vat_to_pay": vat.get("to_pay", ""),
+        "vat_to_recover": vat.get("to_recover", ""),
+        "anomalies": len(report.get("anomalies") or []),
+        "result_to_carry": report.get("result_to_carry"), "error": "",
+    }  # fmt: skip
+    row["ready_to_close"] = not (row["closed"] or row["blockers"] or missing
+                                 or not row["bank_agrees"] or row["anomalies"])  # fmt: skip
+    row["error"] = row.pop("error")  # last, after ready_to_close
+    return row
+
+
+async def firm_overview(
+    services: DocumentServices, tenants: list[Tenant], period: str
+) -> dict[str, Any]:
+    """``{"period", "clients": [firm_row, ...]}``: every client's month, from the
+    same tools as :func:`accounting_overview` (the close report and unmatched bank
+    movements only, so it stays quick with many clients)."""
+    from langclaw.accounting.tools import build_accounting_tools
+
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = []
+    for tenant in tenants:
+        with tenant_scope(tenant):
+            report = await tools["accounting_period_report"].ainvoke({"period": period})
+            bank = await tools["bank_movements"].ainvoke({"unmatched_only": True, "limit": 1})
+        rows.append(firm_row(tenant.id, tenant.name, report, bank))
+    resolved = next((r["period"] for r in rows if r["period"]), period)
+    return {"period": resolved, "clients": rows}

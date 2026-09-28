@@ -343,6 +343,25 @@ class ControlPlane:
         client = await self._tenant_or_404(tenant) if self._tenants is not None else None
         return await accounting_overview(self.documents, client, period)
 
+    async def accounting_firm(self, *, period: str = "") -> dict[str, Any]:
+        """Every client's month on one line (``accounting.overview.firm_row``):
+        what blocks the close, bank vs books, unmatched movements, VAT to pay.
+
+        Raises:
+            FeatureDisabledError: accounting or clients are off.
+        """
+        if not self._config.documents.accounting.enabled:
+            raise FeatureDisabledError(
+                "Accounting is off: set LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true."
+            )
+        from langclaw.accounting.overview import firm_overview
+
+        tenants = await self._require_tenants().list()
+        if not tenants:
+            return {"period": period, "clients": []}
+        await self._documents(tenants[0].id)  # checks documents are on; opens the services
+        return await firm_overview(self.documents, tenants, period)
+
     # ------------------------------------------------------------------
     # Conversation history
     # ------------------------------------------------------------------
