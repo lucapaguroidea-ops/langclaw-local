@@ -1532,6 +1532,10 @@ so chat returns a <strong>turn</strong> you poll:</p>
 <td>One client's month (<code>tenant=&lt;id&gt;</code> with clients on): <code>{"period", "report", "outlook", "bank", "results", "partners"}</code> — the results of <code>accounting_period_report</code>, <code>accounting_outlook</code>, <code>bank_movements</code> (unmatched), <code>accounting_results</code> and <code>partner_balances</code> (at the month's end). A part that fails carries its own <code>error</code>. Needs <code>LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED=true</code></td>
 </tr>
 <tr>
+<td><code>GET /v1/accounting/firm?period=YYYY-MM</code></td>
+<td>Every client's month on one line (clients on): <code>{"period", "clients": [{"client", "name", "closed", "ready_to_close", "blockers", "missing", "bank_agrees", "unmatched", "anomalies", "vat_to_pay", "vat_to_recover", "result_to_carry", "error"}]}</code> from each client's <code>accounting_period_report</code> and unmatched <code>bank_movements</code>. The console's <strong>All clients</strong> page. Needs accounting on</td>
+</tr>
+<tr>
 <td><code>GET /v1/tenants</code> · <code>GET /v1/tenants/{id}</code></td>
 <td>Clients (with <code>LANGCLAW__TENANTS__ENABLED</code>)</td>
 </tr>
