@@ -1186,12 +1186,17 @@ def build_accounting_tools(
             return {"error": str(exc)}
         warnings = []
         limit = _profile().get("cash_payment_limit")
-        same_day = [p for p in (row.get("fields") or {}).get("payments") or []
-                    if str(p.get("tx", "")).startswith(f"cash:{on.isoformat()}:")]  # fmt: skip
-        total = paid + sum((Decimal(p["amount"]) for p in same_day), Decimal(0))
-        if limit and total > Decimal(str(limit)):
-            warnings.append(f"Cash paid on {on} for this invoice is {total}, above the "
-                            f"profile's cash_payment_limit of {limit}.")  # fmt: skip
+        if limit:
+            f = row.get("fields") or {}
+            cui = f.get("customer_cui" if f.get("direction") == "out" else "supplier_cui", "")
+            if cui:  # every cash payment with this partner on the day, all invoices
+                total = await Journal(services.current().store).cash_moved_with(cui, on)
+            else:
+                total = paid
+            if total > Decimal(str(limit)):
+                name = row.get("receiver" if f.get("direction") == "out" else "sender") or cui
+                warnings.append(f"Cash with {name} on {on} totals {total}, above the "
+                                f"profile's cash_payment_limit of {limit}.")  # fmt: skip
         return json.loads(json.dumps({"posted": posted, "paid": str(paid), "left": str(left - paid),
                                       "warnings": warnings}, default=str))  # fmt: skip
 

@@ -253,6 +253,20 @@ class Journal:
         )
         return [dict(r) for r in rows]
 
+    async def cash_moved_with(self, partner_cui: str, day: date) -> Decimal:
+        """Cash (5311) paid to or received from *partner_cui* on *day*, across all
+        of their invoices."""
+        pool = await self._db()
+        value = await pool.fetchval(
+            f"SELECT COALESCE(SUM(l.debit + l.credit), 0) FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.partner_cui = $1 AND e.entry_date = $2 "
+            "AND (l.account = '5311' OR l.account LIKE '5311.%')",
+            partner_cui,
+            day,
+        )
+        return Decimal(value).quantize(_CENT)
+
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""
         pool = await self._db()

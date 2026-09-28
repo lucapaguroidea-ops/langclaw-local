@@ -274,8 +274,9 @@ or collected in cash, with the chitanță or dispoziție de plată number:
   left;
 - the same document can't be booked twice.
 
-If the profile sets `cash_payment_limit`, a warning is returned when an
-invoice's cash payments on one day go above it. No legal limit is built in,
+If the profile sets `cash_payment_limit`, a warning is returned when the cash
+paid to or received from one partner on one day goes above it. The check adds up
+all of that partner's invoices, using their tax ID. No legal limit is built in,
 so set the one that applies to the client.
 
 ### Cash receipts without an invoice (bon fiscal)

@@ -1300,3 +1300,32 @@ async def test_the_month_report_shows_cash_and_close_refuses_negative_cash(acme)
     assert "negative" in refused["error"] and refused["problems"]
     assert fixed["cash"]["closing"] == "300.00" and fixed["cash"]["problems"] == []
     assert "error" not in closed
+
+
+@needs_pg
+async def test_the_cash_payment_limit_adds_up_a_partners_invoices_on_the_day(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    copy = {k: v for k, v in bill.items() if k not in ("id", "bucket_key", "fields")}
+    await scoped.store.save("inbox/second-bill.xml", {**copy, "fields": {
+        **bill["fields"], "invoice_number": "SECOND-1", "paid_amount": "0"}})  # fmt: skip
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                    profile={"cash_payment_limit": 100})  # fmt: skip
+    pay = {"amount": "60", "day": "2026-09-20"}
+    with tenant_scope(client):
+        first = await tools["cash_pay_invoice"].ainvoke(
+            {**pay, "bucket_key": bill["bucket_key"], "document": "DP 1"}
+        )
+        second = await tools["cash_pay_invoice"].ainvoke(
+            {**pay, "bucket_key": "inbox/second-bill.xml", "document": "DP 2"}
+        )
+        next_day = await tools["cash_pay_invoice"].ainvoke(
+            {**pay, "day": "2026-09-21", "bucket_key": "inbox/second-bill.xml", "document": "DP 3"}
+        )
+    assert first["warnings"] == [] and next_day["warnings"] == []
+    assert "120.00" in second["warnings"][0] and bill["sender"] in second["warnings"][0]
