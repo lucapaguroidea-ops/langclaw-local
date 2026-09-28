@@ -33,9 +33,9 @@ Railway the bucket needs no extra settings.
 | `bucket_link(key, expires_minutes)` | A temporary download link |
 | `bucket_new_files(prefix, limit)` | Files not yet in the `documents` table (for a scheduled scan) |
 | `documents_save(bucket_key, sender, receiver, document_date, doc_type, amount, currency, summary, status, fields)` | Insert **or update** the record for a file — saving the same key twice never duplicates, so a re-run workflow step is safe. Extra `fields` merge into a JSON column |
-| `documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit)` | Filter filed documents (case-insensitive; `text` searches summary, file name, and extra fields). `fields` filters on type-specific details: `{"jurisdiction": "Delaware"}`, or `{"notice.days": "90"}` for a nested value |
+| `documents_search(text, sender, receiver, doc_type, date_from, date_to, status, fields, limit, offset)` | Filter filed documents, newest first (case-insensitive; `text` searches summary, file name, and extra fields). `fields` filters on type-specific details: `{"jurisdiction": "Delaware"}`, or `{"notice.days": "90"}` for a nested value. Returns one page (`limit`, at most 200) plus `total` (every match) and `amounts` (their amounts summed per currency); `next_offset` pages to the rest |
 | `documents_get(bucket_key)` | One record |
-| `documents_semantic_search(query, ...filters, limit)` | *With `EMBEDDING_MODEL`:* records ranked by meaning ("power bills" finds electricity invoices), each with a `similarity` 0–1; the same filters as `documents_search` narrow them |
+| `documents_semantic_search(query, ...filters, limit, offset)` | *With `EMBEDDING_MODEL`:* records ranked by meaning ("power bills" finds electricity invoices), each with a `similarity` 0–1; the same filters as `documents_search` narrow them, and `next_offset` pages further down the ranking |
 | `documents_reindex(limit)` | *With `EMBEDDING_MODEL`:* embed records saved before it was on (or whose embedding failed); repeat while `remaining` > 0 |
 | `documents_start_intake(prefix, limit, channel, chat_id)` | Start `INTAKE_WORKFLOW` for every new file. Each gets a `processing` record first, so a second scan never queues it twice. Reports to the given chat, else to `workflows.review_channel` / `review_chat_id` |
 
@@ -161,4 +161,4 @@ so scanned runs know where to report.
   old vectors don't match new ones: clear the column and run `documents_reindex`.
 
 
-`DocumentStore.search` returns at most 200 rows, for chat and the API. Code that must see every document (the accounting totals, aging, bank matching, reminders) uses `DocumentStore.search_all`, which has no row limit.
+Chat and the API read documents a page at a time and never lose any: `DocumentStore.search(..., limit, offset)` returns one page (at most 200 rows) and `DocumentStore.totals(...)` counts every match and sums its amounts per currency, so "how many invoices from ACME this year, and for how much?" is one call however many there are. `documents_search`, `GET /v1/documents` and the console's Documents page all report `total` and page with `offset` / `next_offset`. Code that must hold every document at once (the accounting totals, aging, bank matching, reminders) uses `DocumentStore.search_all`, which has no row limit.

@@ -198,11 +198,15 @@ class DocumentStore:
         status: str = "",
         fields: dict[str, str] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Filter documents; text filters are case-insensitive substring matches.
+        """One page of matching documents, newest first; text filters are
+        case-insensitive substring matches.
 
         *fields* filters on extracted extras: ``{"jurisdiction": "delaware"}``
-        (a dotted key reaches nested values, e.g. ``"notice.days"``).
+        (a dotted key reaches nested values, e.g. ``"notice.days"``). A page holds
+        at most 200 rows; *offset* skips that many matches, so every document is
+        reachable page by page, and :meth:`totals` counts them all.
         """
         where, args = _filters(
             text=text,
@@ -214,13 +218,48 @@ class DocumentStore:
             status=status,
             fields=fields,
         )
-        args.append(max(1, min(int(limit), 200)))
+        args += [_page_size(limit), max(0, int(offset))]
         sql = f"SELECT * FROM {self._table}"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += f" ORDER BY document_date DESC NULLS LAST, id DESC LIMIT ${len(args)}"
+        sql += (
+            " ORDER BY document_date DESC NULLS LAST, id DESC"
+            f" LIMIT ${len(args) - 1} OFFSET ${len(args)}"
+        )
         pool = await self._db()
         return [_row(r) for r in await pool.fetch(sql, *args)]
+
+    async def totals(
+        self,
+        *,
+        text: str = "",
+        sender: str = "",
+        receiver: str = "",
+        doc_type: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        status: str = "",
+        fields: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """How many documents match (the same filters as :meth:`search`) and their
+        ``amount`` summed per currency, over every match, not one page.
+
+        Returns ``{"total": 312, "amounts": {"RON": 12345.5, "EUR": 10.0}}``.
+        """
+        where, args = _filters(
+            text=text, sender=sender, receiver=receiver, doc_type=doc_type,
+            date_from=date_from, date_to=date_to, status=status, fields=fields,
+        )  # fmt: skip
+        sql = f"SELECT currency, count(*) AS n, sum(amount) AS amount FROM {self._table}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " GROUP BY currency ORDER BY count(*) DESC, currency"
+        pool = await self._db()
+        rows = await pool.fetch(sql, *args)
+        return {
+            "total": sum(r["n"] for r in rows),
+            "amounts": {r["currency"]: float(r["amount"]) for r in rows if r["amount"] is not None},
+        }
 
     async def search_all(
         self,
@@ -232,8 +271,8 @@ class DocumentStore:
         fields: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Every matching document, newest first, with no row limit — for code that
-        must see all of a client's documents (accounting totals, aging, matching),
-        unlike :meth:`search`, which is capped for chat and API use."""
+        must see all of a client's documents at once (accounting totals, aging,
+        matching), where :meth:`search` returns one page for chat and the API."""
         where, args = _filters(
             text="", sender="", receiver="", doc_type=doc_type, date_from=date_from,
             date_to=date_to, status=status, fields=fields,
@@ -254,19 +293,21 @@ class DocumentStore:
         )
 
     async def similar(
-        self, vector: list[float], *, limit: int = 10, **filters: Any
+        self, vector: list[float], *, limit: int = 10, offset: int = 0, **filters: Any
     ) -> list[dict[str, Any]]:
         """Rows ranked by cosine similarity to *vector* (``similarity`` in each row).
 
-        *filters* are the same as :meth:`search`'s (``status``, ``sender``, ...).
+        *filters* are the same as :meth:`search`'s (``status``, ``sender``, ...);
+        *limit* / *offset* page through the ranking the same way.
         """
         where, args = _filters(**filters, first_param=2)
         where.append("embedding IS NOT NULL")
-        args = [list(vector), *args, max(1, min(int(limit), 200))]
+        args = [list(vector), *args, _page_size(limit), max(0, int(offset))]
         sql = (
             f"SELECT *, {_COSINE} AS similarity FROM {self._table} "
             f"WHERE {' AND '.join(where)} "
-            f"ORDER BY similarity DESC NULLS LAST, id DESC LIMIT ${len(args)}"
+            f"ORDER BY similarity DESC NULLS LAST, id DESC "
+            f"LIMIT ${len(args) - 1} OFFSET ${len(args)}"
         )
         pool = await self._db()
         rows = []
@@ -304,6 +345,14 @@ class DocumentStore:
 def _lock() -> asyncio.Lock:
     """The pool-registry lock for the running event loop."""
     return _LOCKS.setdefault(id(asyncio.get_running_loop()), asyncio.Lock())
+
+
+#: The most rows one :meth:`DocumentStore.search` / ``similar`` page returns.
+MAX_PAGE = 200
+
+
+def _page_size(limit: Any) -> int:
+    return max(1, min(int(limit), MAX_PAGE))
 
 
 def _filters(

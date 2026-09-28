@@ -134,6 +134,24 @@ def test_parse_field_filters() -> None:
     )
 
 
+def test_documents_page_caption_counts_every_match() -> None:
+    page = {"count": 50, "offset": 50, "total": 312, "amounts": {"RON": 12345.5, "EUR": 10}}
+    assert editor.documents_caption(page) == (
+        "Showing **51–100** of **312** · total 12,345.50 RON, 10.00 EUR"
+    )
+    assert editor.documents_caption({"count": 3, "offset": 0, "total": 3, "amounts": {}}) == (
+        "Showing **1–3** of **3**"
+    )
+    ranked = {"count": 50, "offset": 0, "total": None, "mode": "semantic"}
+    assert editor.documents_caption(ranked) == "Showing **1–50**, ranked by meaning"
+    assert editor.documents_caption({"count": 0, "offset": 0, "total": 0}) == (
+        "No documents match."
+    )
+    assert editor.documents_caption({"count": 0, "offset": 50, "total": None}) == (
+        "No more documents."
+    )
+
+
 def test_tenant_payload_from_the_clients_form() -> None:
     payload = editor.tenant_payload(
         name=" ACME SRL ",

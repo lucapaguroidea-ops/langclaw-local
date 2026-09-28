@@ -277,6 +277,22 @@ def parse_field_filters(text: str) -> tuple[dict[str, str], list[str]]:
     return filters, problems
 
 
+def documents_caption(page: dict[str, Any]) -> str:
+    """The Documents page's line above the table: which rows these are, out of
+    how many matches, and what they add up to (``GET /v1/documents`` result)."""
+    count, start = page.get("count") or 0, page.get("offset") or 0
+    if not count:
+        return "No more documents." if start else "No documents match."
+    shown = f"Showing **{start + 1}–{start + count}**"
+    if page.get("total") is None:
+        return shown + (", ranked by meaning" if page.get("mode") == "semantic" else "")
+    amounts = ", ".join(
+        f"{value:,.2f} {currency}".strip()
+        for currency, value in (page.get("amounts") or {}).items()
+    )
+    return f"{shown} of **{page['total']}**" + (f" · total {amounts}" if amounts else "")
+
+
 #: Company-profile fields the Clients form edits directly (the rest go in JSON).
 PROFILE_FIELDS = ("vat_payer", "vat_on_collection", "tax_regime", "caen")
 

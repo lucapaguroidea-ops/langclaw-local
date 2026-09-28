@@ -770,7 +770,7 @@ def page_documents(lc: LangclawClient, tenants_on: bool = False) -> None:
         doc_type = cols[1].text_input("Type", placeholder="invoice")
         status = cols[2].selectbox("Status", STATUSES, format_func=lambda s: s or "any")
         by_meaning = cols[3].toggle("By meaning", value=True, help="Semantic search")
-        dates = st.columns(3)
+        dates = st.columns([2, 2, 3, 1])
         date_from = dates[0].date_input("From", value=None)
         date_to = dates[1].date_input("To", value=None)
         field_text = dates[2].text_input(
@@ -778,22 +778,28 @@ def page_documents(lc: LangclawClient, tenants_on: bool = False) -> None:
             placeholder="jurisdiction=Delaware, tax_id=IT0123",
             help="Match type-specific details the intake extracted (name=value, comma-separated).",
         )
+        size = dates[3].selectbox("Per page", [50, 100, 200])
         st.form_submit_button("Search")
     fields, problems = editor.parse_field_filters(field_text)
     for problem in problems:
         st.warning(f"Ignored field filter {problem}")
-    result = _call(
-        lc.documents,
-        q,
-        tenant=_tenant(),
-        semantic=by_meaning,
-        sender=sender,
-        doc_type=doc_type,
-        status=status,
-        date_from=date_from.isoformat() if date_from else "",
-        date_to=date_to.isoformat() if date_to else "",
-        fields=fields,
-    )
+    query = {
+        "tenant": _tenant(),
+        "semantic": by_meaning,
+        "sender": sender,
+        "doc_type": doc_type,
+        "status": status,
+        "date_from": date_from.isoformat() if date_from else "",
+        "date_to": date_to.isoformat() if date_to else "",
+        "fields": fields,
+        "limit": size,
+    }
+    # A new search starts at the first page; the pager below moves the offset.
+    signature = json.dumps([q, query], sort_keys=True)
+    if st.session_state.get("doc_query") != signature:
+        st.session_state.update(doc_query=signature, doc_offset=0)
+    offset = st.session_state["doc_offset"]
+    result = _call(lc.documents, q, offset=offset, **query)
     if not result:
         return
     if q and by_meaning and not result["semantic"]:
@@ -802,10 +808,14 @@ def page_documents(lc: LangclawClient, tenants_on: bool = False) -> None:
             "showing text matches."
         )
     docs = result["documents"]
-    st.write(
-        f"**{result['count']}** document(s)"
-        + (" · ranked by meaning" if result["mode"] == "semantic" else "")
-    )
+    st.write(editor.documents_caption(result))
+    pager = st.columns([1, 1, 6])
+    if pager[0].button("← Previous", disabled=offset == 0):
+        st.session_state["doc_offset"] = max(0, offset - size)
+        st.rerun()
+    if pager[1].button("Next →", disabled=result.get("next_offset") is None):
+        st.session_state["doc_offset"] = result["next_offset"]
+        st.rerun()
     if not docs:
         return
     rows = [

@@ -413,6 +413,9 @@ async def test_document_queries_need_a_client_when_clients_are_on() -> None:
         async def search(self, **_: Any) -> list[dict]:
             return list(self.rows.values())
 
+        async def totals(self, **_: Any) -> dict:
+            return {"total": len(self.rows), "amounts": {}}
+
     store = SearchableStore()
     await store.for_schema("tenant_acme").save("inbox/a.pdf", {"summary": "acme"})
     services = DocumentServices(DocumentsConfig(), store=store, require_tenant=True)

@@ -522,6 +522,7 @@ class ApiChannel(BaseChannel):
                     k.removeprefix("field."): v for k, v in query.items() if k.startswith("field.")
                 },
                 limit=_parse_int(query.get("limit"), default=50, name="limit"),
+                offset=_parse_int(query.get("offset"), default=0, name="offset", minimum=0),
                 tenant=query.get("tenant", ""),
             )
         )
@@ -629,13 +630,17 @@ def _parse_wait(raw: str | None) -> float:
     return max(0.0, min(value, _MAX_WAIT_SECONDS))
 
 
-def _parse_int(raw: str | None, *, default: int, name: str) -> int:
+def _parse_int(raw: str | None, *, default: int, name: str, minimum: int = 1) -> int:
     if raw is None or raw == "":
         return default
     try:
         value = int(raw)
     except ValueError as exc:
         raise ValueError(f"'{name}' must be an integer.") from exc
-    if value <= 0:
-        raise ValueError(f"'{name}' must be positive.")
+    if value < minimum:
+        raise ValueError(
+            f"'{name}' must be positive."
+            if minimum == 1
+            else f"'{name}' must be at least {minimum}."
+        )
     return value

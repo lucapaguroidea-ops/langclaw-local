@@ -82,9 +82,11 @@ class LangclawClient:
         tenant: str = "",
         **filters: Any,
     ) -> dict:
-        """``{"documents", "count", "mode", "semantic"}`` — see ``GET /v1/documents``.
+        """One page: ``{"documents", "count", "offset", "next_offset", "total",
+        "amounts", "mode", "semantic"}`` — see ``GET /v1/documents``.
 
-        *fields* filters on extracted extras (sent as ``field.<name>=<value>``).
+        *fields* filters on extracted extras (sent as ``field.<name>=<value>``);
+        pass ``limit`` / ``offset`` (in *filters*) to page.
         """
         params = {k: v for k, v in filters.items() if v}
         params.update({f"field.{k}": v for k, v in (fields or {}).items()})

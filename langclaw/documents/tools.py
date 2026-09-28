@@ -18,7 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from langclaw.documents.bucket import Bucket, BucketError
-from langclaw.documents.store import DocumentStore, DocumentStoreError
+from langclaw.documents.store import MAX_PAGE, DocumentStore, DocumentStoreError
 from langclaw.documents.text import extract_text
 from langclaw.naming import check_tenant_id, tenant_bucket_prefix, tenant_schema
 from langclaw.tenants import current_tenant
@@ -337,8 +337,13 @@ def build_document_tools(
         status: str = "",
         fields: dict[str, str] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> dict:
-        """Search filed documents. All filters are optional and combined.
+        """Search filed documents, newest first. All filters are optional and combined.
+
+        "total" counts every match and "amounts" sums their amounts per currency, so
+        use those for how-many and how-much questions instead of paging. To list
+        more, call again with offset set to "next_offset" (null on the last page).
 
         Args:
             text: Words in the summary, file name, or extracted fields.
@@ -351,23 +356,37 @@ def build_document_tools(
             fields: Filters on type-specific extracted fields, field name to text,
                 e.g. jurisdiction=Delaware or tax_id=IT0123 (substring match; a
                 dotted name like notice.days reaches nested values).
-            limit: Maximum results (1-200).
+            limit: Documents in this page (1-200).
+            offset: Matches to skip, e.g. the previous page's next_offset.
         """
+        filters = {
+            "text": text,
+            "sender": sender,
+            "receiver": receiver,
+            "doc_type": doc_type,
+            "date_from": date_from,
+            "date_to": date_to,
+            "status": status,
+            "fields": fields,
+        }
         try:
-            rows = await services.current().store.search(
-                text=text,
-                sender=sender,
-                receiver=receiver,
-                doc_type=doc_type,
-                date_from=date_from,
-                date_to=date_to,
-                status=status,
-                fields=fields,
-                limit=limit,
-            )
+            store = services.current().store
+            rows = await store.search(**filters, limit=limit, offset=offset)
+            totals = await store.totals(**filters)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"documents": rows, "count": len(rows)}
+        out = {"documents": rows, "count": len(rows), **totals}
+        start = max(0, offset)
+        out["next_offset"] = (
+            start + len(rows) if rows and start + len(rows) < totals["total"] else None
+        )
+        if out["next_offset"] is not None:
+            out["note"] = (
+                f"Showing {start + 1}-{start + len(rows)} of {totals['total']}, newest first. "
+                f"Call again with offset={out['next_offset']} for more; total and amounts "
+                "already cover every match."
+            )
+        return out
 
     async def documents_semantic_search(
         query: str,
@@ -379,10 +398,12 @@ def build_document_tools(
         status: str = "",
         fields: dict[str, str] | None = None,
         limit: int = 10,
+        offset: int = 0,
     ) -> dict:
         """Find filed documents by meaning, e.g. "power bills" finds electricity invoices.
 
         Results are ranked by similarity (0-1); the optional filters narrow them.
+        For the next page, call again with offset set to "next_offset".
 
         Args:
             query: What you're looking for, in plain words.
@@ -393,13 +414,15 @@ def build_document_tools(
             date_to: Latest document date, YYYY-MM-DD.
             status: e.g. filed, needs_review.
             fields: Filters on type-specific extracted fields, field name to text.
-            limit: Maximum results (1-200).
+            limit: Documents in this page (1-200).
+            offset: Ranked results to skip, e.g. the previous page's next_offset.
         """
         try:
             vector = await services.embeddings.aembed_query(query)
             rows = await services.current().store.similar(
                 vector,
                 limit=limit,
+                offset=offset,
                 sender=sender,
                 receiver=receiver,
                 doc_type=doc_type,
@@ -410,7 +433,12 @@ def build_document_tools(
             )
         except Exception as exc:  # noqa: BLE001 — embeddings or database, as text
             return {"error": str(exc)}
-        return {"documents": rows, "count": len(rows)}
+        full = len(rows) == max(1, min(limit, MAX_PAGE))
+        return {
+            "documents": rows,
+            "count": len(rows),
+            "next_offset": max(0, offset) + len(rows) if full else None,
+        }
 
     async def documents_reindex(limit: int = 100) -> dict:
         """Index records saved before semantic search was turned on (or whose indexing failed).
