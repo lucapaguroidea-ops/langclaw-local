@@ -15,7 +15,7 @@ D = Decimal
 def test_the_ledger_runs_a_balance_line_by_line() -> None:
     lines = [
         {"entry_date": date(2026, 9, 2), "bucket_key": "a", "debit": D("100"),
-         "credit": D("0"), "explanation": "Factura 1"},
+         "credit": D("0"), "explanation": "Factura 1", "counterparts": "704,4427"},
         {"entry_date": date(2026, 9, 5), "bucket_key": "b", "debit": D("0"),
          "credit": D("30"), "explanation": ""},
     ]  # fmt: skip
@@ -27,6 +27,7 @@ def test_the_ledger_runs_a_balance_line_by_line() -> None:
     assert ledger["opening"] == "50.00" and ledger["closing"] == "120.00"
     assert ledger["debit"] == "100.00" and ledger["credit"] == "30.00"
     assert ledger["side"] == "debit"
+    assert [r["counterpart"] for r in ledger["lines"]] == ["704,4427", ""]
 
 
 def test_a_credit_balance_is_reported_as_such() -> None:

@@ -18,7 +18,8 @@ _ACCOUNT = re.compile(r"^\d{3,4}(\.\w+)?$")
 
 def account_ledger(account: str, opening: Decimal, lines: list[dict[str, Any]]) -> dict[str, Any]:
     """*account*'s ledger from *opening* and its journal *lines* (``entry_date``,
-    ``bucket_key``, ``debit``, ``credit``, ``explanation``), in date order.
+    ``bucket_key``, ``debit``, ``credit``, ``explanation``, optional
+    ``counterparts``), in date order.
 
     Raises:
         ValueError: *account* isn't an account number (``4111``, ``5121.01``).
@@ -33,7 +34,8 @@ def account_ledger(account: str, opening: Decimal, lines: list[dict[str, Any]]) 
         debit, credit = debit + d, credit + c
         balance = (balance + d - c).quantize(_CENT)
         rows.append({"date": line["entry_date"].isoformat(), "document": line["bucket_key"],
-                     "explanation": line.get("explanation") or "", "debit": f"{d:.2f}",
+                     "explanation": line.get("explanation") or "",
+                     "counterpart": line.get("counterparts") or "", "debit": f"{d:.2f}",
                      "credit": f"{c:.2f}", "balance": str(balance)})  # fmt: skip
     return {
         "account": account,

@@ -1383,4 +1383,5 @@ async def test_the_account_ledger_reads_one_account_with_its_opening_balance(acm
         )
     assert ledger["opening"] == "-21.00" and ledger["closing"] == "-63.00"
     assert [r["document"] for r in ledger["lines"]] == ["cash/z/2026-09-03"]
+    assert ledger["lines"][0]["counterpart"] == "5311"
     assert ledger["key"].endswith("reports/2026-09/fisa-4427.csv") and "error" in bad

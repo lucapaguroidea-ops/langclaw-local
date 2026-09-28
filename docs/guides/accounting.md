@@ -460,8 +460,9 @@ yet, because the note-contabile import format wasn't available.
 `accounting_account_ledger(account, period)` shows one account for the month.
 It covers the account's analytic sub-accounts too, so 5121 includes 5121.01.
 
-- It gives the opening balance, then each posted line with a running balance,
-  then the totals and the closing balance.
+- It gives the opening balance, then each posted line with its `counterpart`
+  (the entry's accounts on the other side, e.g. `704,4427` for a sale on
+  4111) and a running balance, then the totals and the closing balance.
 - Balances are debit minus credit, so a negative figure is a credit balance,
   as usual for 401 or 4427. `side` says which it is.
 - The ledger is saved as a CSV at `reports/<period>/fisa-<account>.csv`, with a

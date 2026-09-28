@@ -1141,8 +1141,9 @@ def build_accounting_tools(
 
     async def accounting_account_ledger(account: str, period: str = "") -> dict:
         """One account's ledger for a month (fișa contului): opening balance, each
-        posted line with a running balance, totals and closing balance (debit −
-        credit, so negative is a credit balance). Includes its analytics
+        posted line with its counterpart accounts and a running balance, totals
+        and closing balance (debit − credit, so negative is a credit balance).
+        Includes its analytics
         (5121 → 5121.01). Saved as reports/<period>/fisa-<account>.csv.
 
         Args:
@@ -1165,12 +1166,13 @@ def build_accounting_tools(
             )
             buf = io.StringIO()
             writer = csv.writer(buf, delimiter=";", lineterminator="\n")
-            writer.writerow(["date", "document", "explanation", "debit", "credit", "balance"])
-            writer.writerow(["", "", "Sold inițial", "", "", ledger["opening"]])
+            writer.writerow(["date", "document", "explanation", "counterpart", "debit", "credit",
+                             "balance"])  # fmt: skip
+            writer.writerow(["", "", "Sold inițial", "", "", "", ledger["opening"]])
             for r in ledger["lines"]:
-                writer.writerow([r["date"], r["document"], r["explanation"], r["debit"],
-                                 r["credit"], r["balance"]])  # fmt: skip
-            writer.writerow(["", "", "Total / sold final", ledger["debit"], ledger["credit"],
+                writer.writerow([r["date"], r["document"], r["explanation"], r["counterpart"],
+                                 r["debit"], r["credit"], r["balance"]])  # fmt: skip
+            writer.writerow(["", "", "Total / sold final", "", ledger["debit"], ledger["credit"],
                              ledger["closing"]])  # fmt: skip
             key = f"reports/{period}/fisa-{account}.csv"
             await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")

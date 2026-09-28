@@ -207,10 +207,14 @@ class Journal:
 
     async def account_lines(self, account: str, date_from: date, date_to: date) -> list[dict]:
         """Lines on *account* (and its analytics) of entries dated in
-        [*date_from*, *date_to*], in date order."""
+        [*date_from*, *date_to*], in date order, each with ``counterparts``: the
+        entry's accounts on the other side (comma-separated)."""
         pool = await self._db()
         rows = await pool.fetch(
-            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation "
+            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation, "
+            f"(SELECT string_agg(DISTINCT o.account, ',') FROM {self._schema}.journal_lines o "
+            "WHERE o.entry_id = l.entry_id AND o.id <> l.id AND "
+            "((l.debit > 0 AND o.credit > 0) OR (l.credit > 0 AND o.debit > 0))) AS counterparts "
             f"FROM {self._schema}.journal_lines l "
             f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
             "WHERE e.entry_date BETWEEN $1 AND $2 "
