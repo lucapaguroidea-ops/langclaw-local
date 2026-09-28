@@ -6,6 +6,11 @@ D 5311 (cash) for the total / C the revenue account for the net (``707`` sale
 of goods by default, or the client profile's ``cash_revenue_account``) /
 C 4427 for the VAT, worked out per rate from the gross amounts. Rates must be
 valid on the day (:mod:`langclaw.accounting.vat`).
+
+:func:`cash_book` is the cash register book (registru de casă) read back from
+5311: opening balance, each day's receipts and payments, and the closing
+balance, with the days the cash went negative (money paid out that the register
+never had — usually a missing receipt) or above the client's ``cash_limit``.
 """
 
 from __future__ import annotations
@@ -60,3 +65,37 @@ def z_report_entry(
         "reasoning": f"{note}: vânzări cu numerar.",
         "legal_basis": "OMFP 1802/2014; Codul fiscal art. 291",
     }
+
+
+def cash_book(
+    opening: Decimal, lines: list[dict[str, Any]], *, limit: Decimal | None = None
+) -> dict[str, Any]:
+    """Day-by-day cash book from *opening* and 5311 journal *lines*
+    (``entry_date``, ``bucket_key``, ``debit``, ``credit``, ``explanation``)."""
+    balance = Decimal(opening).quantize(_CENT)
+    days: dict[date, dict[str, Any]] = {}
+    for line in sorted(lines, key=lambda x: x["entry_date"]):
+        empty = {"receipts": Decimal(0), "payments": Decimal(0), "entries": []}
+        day = days.setdefault(line["entry_date"], empty)
+        debit, credit = Decimal(line["debit"]), Decimal(line["credit"])
+        day["receipts"] += debit
+        day["payments"] += credit
+        day["entries"].append({"bucket_key": line["bucket_key"], "in": str(debit.quantize(_CENT)),
+                               "out": str(credit.quantize(_CENT)),
+                               "explanation": line.get("explanation") or ""})  # fmt: skip
+    out, problems = [], []
+    for on, day in sorted(days.items()):
+        start = balance
+        balance = (balance + day["receipts"] - day["payments"]).quantize(_CENT)
+        out.append({"day": on.isoformat(), "opening": str(start),
+                    "receipts": str(day["receipts"].quantize(_CENT)),
+                    "payments": str(day["payments"].quantize(_CENT)),
+                    "closing": str(balance), "entries": day["entries"]})  # fmt: skip
+        if balance < 0:
+            problems.append({"day": on.isoformat(), "problem": f"Cash negative: {balance}; "
+                             "a receipt is probably missing or booked late."})  # fmt: skip
+        if limit is not None and balance > limit:
+            problems.append({"day": on.isoformat(), "problem": f"Cash above the "
+                             f"{Decimal(limit).quantize(_CENT)} limit: {balance}."})  # fmt: skip
+    return {"opening": str(Decimal(opening).quantize(_CENT)), "closing": str(balance),
+            "days": out, "problems": problems}  # fmt: skip

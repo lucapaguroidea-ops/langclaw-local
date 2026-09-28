@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
@@ -40,7 +40,8 @@ from langclaw.accounting.bank.booking import (
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
-from langclaw.accounting.cash import z_report_entry
+from langclaw.accounting.cash import CASH_ACCOUNT, z_report_entry
+from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
@@ -1102,6 +1103,25 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
 
+    async def cash_book(period: str) -> dict:
+        """The cash register book (registru de casă) for a month, read from 5311:
+        opening balance, each day's receipts and payments, closing balance, and
+        the days the cash went negative or above the profile's cash_limit.
+
+        Args:
+            period: The month as YYYY-MM.
+        """
+        try:
+            start, end = parse_period(period)
+            journal = Journal(services.current().store)
+            opening = await journal.balance_until(start - timedelta(days=1), CASH_ACCOUNT)
+            lines = await journal.account_lines(CASH_ACCOUNT, start, end)
+            limit = _profile().get("cash_limit")
+            book = build_cash_book(opening, lines, limit=Decimal(str(limit)) if limit else None)
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        return {"period": period, **book}
+
     fns = [
         accounting_context,
         accounting_check,
@@ -1125,6 +1145,7 @@ def build_accounting_tools(
         payables_batch,
         accounting_d394,
         cash_z_report,
+        cash_book,
     ]
     if bus is not None:
         fns.append(accounting_queue)

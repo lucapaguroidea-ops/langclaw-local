@@ -1122,3 +1122,26 @@ async def test_z_reports_are_booked_once_and_count_in_the_vat(acme) -> None:
     assert Decimal(after["vat"]["collected"]) - Decimal(before["vat"]["collected"]) == Decimal(
         "210.00"
     )
+
+
+@needs_pg
+async def test_the_cash_book_reads_5311_from_the_journal(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    await scoped.bucket.put("bank/c2.sta", _mt940(("C", 1500.0, "Depunere numerar")))
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"cash_limit": 1000})
+    with tenant_scope(client):
+        await tools["cash_z_report"].ainvoke(
+            {"day": "2026-09-10", "lines": [{"rate": 21, "gross": 1210}]}
+        )
+        await tools["bank_import"].ainvoke({"key": "bank/c2.sta"})
+        book = await tools["cash_book"].ainvoke({"period": "2026-09"})
+        bad = await tools["cash_book"].ainvoke({"period": "2026-13"})
+    assert book["opening"] == "0.00" and book["closing"] == "-290.00"
+    assert [d["day"] for d in book["days"]] == ["2026-09-10", "2026-09-15"]
+    kinds = sorted(p["problem"].split(":")[0] for p in book["problems"])
+    assert kinds == ["Cash above the 1000.00 limit", "Cash negative"]
+    assert "error" in bad

@@ -258,8 +258,21 @@ month refuses it.
 The report is filed as a `z_report` document. It counts towards
 `expected_documents`, e.g. `["z_report"]`, and its VAT goes into the month's
 VAT summary (the D300 draft). It doesn't go into D394, which lists invoices
-with a partner tax ID. Cash takings deposited at the bank (581) stay with the
-accountant for now.
+with a partner tax ID. Cash deposited at or withdrawn from the bank is booked
+through 581 by `bank_import` (see the bank section).
+
+### Cash book (registru de casă)
+
+`cash_book(period)` reads 5311 back from the journal. It gives the opening
+balance, then for each day the receipts, payments, closing balance and the
+entries behind them, and finally the month's closing balance.
+
+`problems` lists each day where:
+
+- the cash went **negative**, which usually means a receipt is missing or was
+  booked late;
+- the cash was above the profile's `cash_limit`, if one is set. Nothing is
+  checked by default.
 
 ## Paying suppliers
 

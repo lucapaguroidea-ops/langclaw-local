@@ -177,6 +177,22 @@ class Journal:
         )
         return [dict(r) for r in rows]
 
+    async def account_lines(self, account: str, date_from: date, date_to: date) -> list[dict]:
+        """Lines on *account* (and its analytics) of entries dated in
+        [*date_from*, *date_to*], in date order."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation "
+            f"FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date BETWEEN $1 AND $2 "
+            "AND (l.account = $3 OR l.account LIKE $3 || '.%') ORDER BY e.entry_date, l.id",
+            date_from,
+            date_to,
+            account,
+        )
+        return [dict(r) for r in rows]
+
     async def balance_until(self, day: date, account: str) -> Decimal:
         """Debit − credit on *account* (and its analytics, e.g. ``4426.01``) for
         entries dated up to *day*."""
