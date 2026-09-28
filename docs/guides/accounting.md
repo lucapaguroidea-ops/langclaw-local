@@ -427,6 +427,10 @@ The **Client overview** page shows the chosen client and month. It uses
 - **Bank tab:** the open movements.
 - **Cash tab:** opening and closing cash, the problem days, the cash book day
   by day and the open employee advances.
+- **Files tab:** what's saved under `reports/<period>/`, with 24-hour download
+  links. That's the close report, the journal register and the trial balance
+  from the close, plus any ledgers or D394 draft made that month. The same list
+  comes from the `accounting_reports(period)` tool.
 
 The page is read-only. Posting, closing a month and confirming a match happen
 in chat or in workflows.

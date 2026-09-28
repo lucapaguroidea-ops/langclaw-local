@@ -1256,6 +1256,25 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted}, default=str))
 
+    async def accounting_reports(period: str = "") -> dict:
+        """The files saved for a month under reports/<period>/ (close report,
+        journal register, trial balance, ledgers, D394 draft), each with a
+        24-hour download link.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        try:
+            period = resolve_period(period)
+            bucket = services.current().bucket
+            prefix = f"reports/{period}/"
+            files = [{"name": o.key[len(prefix):], "key": o.key, "size": o.size,
+                      "modified": o.modified, "url": await bucket.link(o.key, expires_s=86400)}
+                     for o in await bucket.list(prefix, limit=100)]  # fmt: skip
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"period": period, "files": sorted(files, key=lambda f: f["name"])}
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1481,6 +1500,7 @@ def build_accounting_tools(
         accounting_account_ledger,
         accounting_trial_balance,
         accounting_opening_balances,
+        accounting_reports,
         cash_z_report,
         cash_book,
         cash_pay_invoice,

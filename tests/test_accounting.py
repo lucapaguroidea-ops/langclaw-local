@@ -581,6 +581,7 @@ async def test_the_overview_gathers_a_clients_month(acme) -> None:
     assert "cash" in view["outlook"] and view["bank"]["movements"] == []
     assert "year_to_date" in view["results"] and view["partners"]["partners"] == []
     assert view["cash"]["period"] == period and "days" in view["cash"]
+    assert view["reports"]["period"] == period and "files" in view["reports"]
     bad = await accounting_overview(services, client, "sept")
     assert "YYYY-MM" in bad["report"]["error"]
 
@@ -1454,3 +1455,10 @@ async def test_closing_a_month_files_its_journal_register_and_trial_balance(acme
     for key in closed["registers"].values():
         data, _ = await scoped.bucket.get(key)
         assert b"5311" in data
+    with tenant_scope(client):
+        files = await tools["accounting_reports"].ainvoke({"period": "2027-02"})
+        empty = await tools["accounting_reports"].ainvoke({"period": "2027-03"})
+    assert sorted(f["name"] for f in files["files"]) == [
+        "balanta.csv", "close.json", "registru-jurnal.csv"]  # fmt: skip
+    assert all(f["url"] and f["key"].startswith("reports/2027-02/") for f in files["files"])
+    assert empty["files"] == []

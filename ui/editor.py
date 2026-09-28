@@ -331,7 +331,8 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
     """What needs attention in an ``accounting_overview`` result, as short lines."""
     alerts: list[str] = []
     parts = {"Close report": "report", "Outlook": "outlook", "Bank": "bank",
-             "Results": "results", "Partners": "partners", "Cash": "cash"}  # fmt: skip
+             "Results": "results", "Partners": "partners", "Cash": "cash",
+             "Reports": "reports"}  # fmt: skip
     for label, part in parts.items():
         if error := (view.get(part) or {}).get("error"):
             alerts.append(f"{label}: {error}")

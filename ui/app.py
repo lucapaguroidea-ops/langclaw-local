@@ -900,9 +900,8 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
     if not alerts:
         st.success("Nothing needs attention for this month.")
     report, outlook, bank = view["report"], view["outlook"], view["bank"]
-    close_tab, outlook_tab, results_tab, partners_tab, bank_tab, cash_tab = st.tabs(
-        ["Close", "Outlook", "Results", "Partners", "Bank", "Cash"]
-    )
+    tabs = st.tabs(["Close", "Outlook", "Results", "Partners", "Bank", "Cash", "Files"])
+    close_tab, outlook_tab, results_tab, partners_tab, bank_tab, cash_tab, files_tab = tabs
     with close_tab:
         if "error" not in report:
             if report.get("closed"):
@@ -987,6 +986,18 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
             if cash.get("open_advances"):
                 st.subheader("Open employee advances (542)")
                 st.dataframe(cash["open_advances"], hide_index=True)
+    files = view.get("reports") or {}
+    with files_tab:
+        if "error" not in files:
+            if files.get("files"):
+                st.caption("Saved for this month (links last 24 hours).")
+                for f in files["files"]:
+                    st.markdown(f"- [{f['name']}]({f['url']}) · {f['size']} bytes")
+            else:
+                st.caption(
+                    "Nothing saved yet: closing the month files the close report, the "
+                    "journal register and the trial balance here."
+                )
 
 
 def page_clients(lc: LangclawClient) -> None:
