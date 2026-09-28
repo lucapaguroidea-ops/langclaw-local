@@ -2310,6 +2310,14 @@ does a client's month in one run:</p>
 <li><code>accounting_outlook</code> produces the outlook: deadlines, limits and cash.</li>
 <li>The model drafts a status for the accountant and advice for the client.</li>
 <li>The run pauses for a person to approve or edit.</li>
+<li>Once approved, <code>accounting_period_close</code> closes the month. That only
+   happens if the report shows nothing blocking: no invoices without an entry,
+   no missing documents, a balanced trial balance and no balances on the wrong
+   side. Closing files the journal register and the trial balance.</li>
+<li>Otherwise the run ends and the month stays open.</li>
+<li>A rejection also leaves the month open.</li>
+<li>Because the report is taken before the queued proposals are posted, a
+     month with fresh invoices usually closes on a later run.</li>
 </ol>
 <p>With an empty <code>period</code> it works on <strong>last month</strong>. The period tools take <code>""</code>
 too (<code>resolve_period</code>), so a schedule never needs updating.</p>
