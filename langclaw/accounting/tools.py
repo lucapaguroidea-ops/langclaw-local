@@ -439,6 +439,19 @@ def build_accounting_tools(
         so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
         report["anomalies"] = balance_anomalies(so_far["accounts"])
         report["partner_advances"] = await _partner_advances(journal, end)
+        report["advances_to_apply"] = []  # open invoices of partners holding an advance
+        if report["partner_advances"]:
+            held = {a["cui"]: a for a in report["partner_advances"]}
+            for inv in await _invoices(svc, date(1900, 1, 1), end):
+                f = inv.get("fields") or {}
+                sale = f.get("direction") == "out"
+                adv = held.get(f.get("customer_cui" if sale else "supplier_cui", ""))
+                available = Decimal(adv["received" if sale else "paid"]) if adv else Decimal(0)
+                if available > 0 and outstanding(inv) > 0:
+                    report["advances_to_apply"].append(
+                        {"bucket_key": inv["bucket_key"], "partner": adv["partner"],
+                         "left_to_pay": str(outstanding(inv)), "available": str(available)}
+                    )  # fmt: skip
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],

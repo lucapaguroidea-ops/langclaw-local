@@ -1689,3 +1689,5 @@ async def test_a_customer_advance_is_booked_on_419_and_applied_to_the_invoice(ac
                                     "paid": "0.00"}]  # fmt: skip
     assert report["partner_advances"] == waiting["advances"]
     assert done["advances"] == []
+    assert [(x["bucket_key"], x["available"]) for x in report["advances_to_apply"]] == [
+        (sale["bucket_key"], "333.33")]  # fmt: skip

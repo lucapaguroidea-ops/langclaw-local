@@ -455,7 +455,9 @@ in advance, the bank movement stays unmatched after `bank_import`.
 `advances_partners(day)` lists, per partner, the advances not applied yet:
 `received` on 419 and `paid` on 409. The month report shows them as
 `partner_advances`. The console raises an alert "Partner advances not yet
-applied: N" and lists them in the Close tab.
+applied: N" and lists them in the Close tab. The report's `advances_to_apply`
+lists the open invoices of those partners, with what's left to pay and the
+advance available. Those are the candidates for `advance_apply`.
 
 These are advances without VAT. Advance invoices (facturi de avans) with VAT
 stay with the accountant.
