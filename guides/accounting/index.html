@@ -714,6 +714,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#invoices-that-dont-come-through-e-factura" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invoices that don't come through e-Factura
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1568,6 +1579,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#invoices-that-dont-come-through-e-factura" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invoices that don't come through e-Factura
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1974,6 +1996,21 @@ a model <strong>proposes</strong> the journal entry, <strong>code decides</stron
 client's journal. The model never posts.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">LANGCLAW__DOCUMENTS__ACCOUNTING__ENABLED</span><span class="o">=</span><span class="nb">true</span>
 </span></code></pre></div>
+<h3 id="invoices-that-dont-come-through-e-factura">Invoices that don't come through e-Factura<a class="headerlink" href="#invoices-that-dont-come-through-e-factura" title="Permanent link">&para;</a></h3>
+<p>A scanned, PDF or photographed invoice has no UBL to parse. The <strong>Invoice
+intake</strong> template (<code>ui/templates/invoice_intake.graph.json</code>) reads it instead:
+a model copies the printed facts (number, parties and their CUI, dates, net,
+VAT, the VAT lines by rate) and <code>accounting_invoice_file(bucket_key, facts)</code>
+files it with the same <code>fields</code> an e-Factura invoice has (<code>direction</code> from the
+client's tax id, <code>total_net</code>, <code>total_vat</code>, <code>vat_breakdown</code>, <code>source: "scan"</code>).
+Code never trusts the model's arithmetic: the VAT lines must add up to the
+totals, net + VAT to the total, each line's VAT must match its rate, and each
+rate must have been in force on the invoice date; the client must be the
+supplier or the customer. Anything that doesn't hold goes in <code>problems</code>, the
+invoice is filed as <code>needs_review</code>, and the workflow asks a person to correct
+the facts (then files it again). From there it's proposed and posted like any
+other invoice. Use it as a client's <code>documents.intake_workflow</code> when their
+paper invoices arrive in chat.</p>
 <p>Then save the <strong>Accounting proposal</strong> template from the console (as
 <code>accounting_proposal</code>) and, in a client's chat, ask the bot to queue the
 waiting invoices (<code>accounting_queue</code>) — or schedule that daily.</p>
