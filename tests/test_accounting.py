@@ -341,10 +341,16 @@ async def test_the_workflow_end_to_end(acme, confidence, fix, posts_without_revi
         assert (await scoped.store.get(row["bucket_key"]))["status"] != "posted"
         edited = _entry_for(row)
         done = await runner.resume(
-            spec, "acc:1", {"action": "edit", "data": {"propose": edited}, "by": "luca"}
-        )
+            spec, "acc:1", {"action": "edit", "data": {"propose": edited}, "by": "luca",
+                            "actor": "telegram:42"},
+        )  # fmt: skip
         assert done.status == "completed"
     assert (await scoped.store.get(row["bucket_key"]))["status"] == "posted"
+    from langclaw.accounting.journal import Journal
+
+    entry = await Journal(scoped.store).get(row["bucket_key"])
+    # Posted after a review: recorded as the reviewer, as their channel identified them.
+    assert entry["recorded_by"] == ("" if posts_without_review else "telegram:42")
 
 
 @needs_pg
@@ -2192,3 +2198,38 @@ async def test_the_firm_overview_checks_clients_in_parallel_in_order(monkeypatch
     out = await firm_overview(None, clients, "2026-09", parallel=4)
     assert [r["client"] for r in out["clients"]] == [c.id for c in clients]
     assert 1 < peak <= 4
+
+
+@needs_pg
+async def test_entries_and_closes_record_who_acted_not_what_the_model_typed(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.actors import actor_scope
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    journal = Journal(scoped.store)
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        with actor_scope("telegram:4242"):
+            out = await tools["accounting_opening_balances"].ainvoke(
+                {"day": "2026-01-31", "balances": {"5121": 100, "1012": -100}}
+            )
+            assert out["posted"]["recorded_by"] == "telegram:4242"
+            await tools["accounting_period_close"].ainvoke(
+                {"period": "2026-01", "closed_by": "the boss"}  # typed by the model
+            )
+        with actor_scope("api:ana"):
+            await tools["accounting_period_reopen"].ainvoke(
+                {"period": "2026-01", "reason": "fix", "reopened_by": "someone else"}
+            )
+        history = await journal.period_history("2026-01")
+        assert [(h["action"], h["by"], h["recorded_by"]) for h in history] == [
+            ("closed", "the boss", "telegram:4242"),
+            ("reopened", "someone else", "api:ana"),
+        ]
+        # Outside any scope (e.g. a script), nothing is claimed.
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-02-01", "balances": {"5121": 1, "1012": -1}}
+        )
+        assert (await journal.get("opening/2026-02-01"))["recorded_by"] == ""

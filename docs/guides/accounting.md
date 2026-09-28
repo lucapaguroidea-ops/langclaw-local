@@ -171,6 +171,22 @@ generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
 ANAF schemas and is a later slice.
 
 
+### Who did it: `recorded_by`
+
+`approved_by`, `closed_by` and `reopened_by` are what someone typed — often
+the model. Next to them, every journal entry and every close / reopen in the
+month's `history` carries **`recorded_by`**, which langclaw sets from the
+channel, never from the model (`langclaw/actors.py`):
+
+- a chat turn acts for its sender: `"telegram:12345"` (the channel and the
+  sender's id as the channel reports it);
+- the steps after a workflow review act for whoever answered it: a Telegram
+  button records `"telegram:<their id>"`, `/workflows approve` the chat
+  sender, and the HTTP API `"api:<name>"`: the console's shared key doesn't
+  identify a person, so that name is **self-declared**;
+- code outside a turn or a review (a script, a scheduled run nobody
+  answered) records `""` rather than guessing.
+
 ### Last year's result (repartizarea profitului)
 
 When December closes, classes 6 and 7 are closed into 121. That result stays on

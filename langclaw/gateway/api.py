@@ -489,6 +489,8 @@ class ApiChannel(BaseChannel):
             {"action": action, "data": data, "comment": str(body.get("comment") or "")},
             by=str(body.get("by") or self._config.user_id),
             via=str(body.get("via") or self.name),
+            # The shared API key doesn't identify a person: the name is self-declared.
+            actor=f"api:{body.get('by') or self._config.user_id}",
             interrupt_id=str(body.get("interrupt_id") or ""),
             fallback_target={
                 "channel": self.name,

@@ -194,4 +194,5 @@ def normalize_decision(raw: Any) -> dict[str, Any]:
         "comment": str(raw.get("comment", "")),
         "by": str(raw.get("by", "")),
         "via": str(raw.get("via", "")),
+        "actor": str(raw.get("actor", "")),
     }
