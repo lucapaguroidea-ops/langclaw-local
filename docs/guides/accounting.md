@@ -429,6 +429,9 @@ does a client's month in one run:
    side. Closing files the journal register and the trial balance.
    - Otherwise the run ends and the month stays open.
    - A rejection also leaves the month open.
+   - When the month closed is December, the run also files the balance
+     confirmations at 31 December with `partner_confirmations` (plus Gmail
+     drafts if Gmail is connected).
    - The fresh report is taken after approval, so proposals approved while
      the review waited count. The month closes in the same run once every
      invoice has its entry.

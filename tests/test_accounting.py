@@ -1790,3 +1790,47 @@ async def test_the_monthly_loop_rechecks_after_approval_so_entries_booked_meanwh
     assert run["state"]["data"]["report"]["blockers"]  # blocked when first reported
     assert waiting.status == "waiting" and done.status == "completed"
     assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == [period]
+
+
+@needs_pg
+async def test_closing_december_in_the_monthly_loop_files_balance_confirmations(acme) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import build_document_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    services, scoped = acme
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                               profile={"vat_payer": False}))  # fmt: skip
+    tools = build_accounting_tools(services) + build_document_tools(services)
+    real = build_toolset_executor(tools)
+
+    async def executor(request):
+        if request.kind == "llm":
+            return request.schema(status="clean", summary="ok", items=[])
+        return await real(request)
+
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    spec_json = json.loads(path.read_text())
+    spec_json["nodes"]["queue"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    parsed = parse_graph_spec("accounting_month", spec_json)
+    spec = WorkflowSpec(name="accounting_month", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    with tenant_scope(await registry.get("acme")):
+        z = {t.name: t for t in tools}["cash_z_report"]
+        await z.ainvoke({"day": "2027-12-05", "lines": [{"rate": 0, "gross": 100}]})
+        await runner.start(spec, {"period": "2027-12"}, run_id="month:12", tenant="acme")
+        done = await runner.resume(spec, "month:12", {"action": "approve", "by": "luca"})
+    assert done.status == "completed"
+    assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == ["2027-12"]
+    run = await runner.get_run(spec, "month:12")
+    assert run["state"]["data"]["confirmations"]["day"] == "2027-12-31"

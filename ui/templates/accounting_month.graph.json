@@ -1,5 +1,5 @@
 {
-  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve; once approved, close the month, but only when a fresh report, taken after approval, shows nothing blocking (no invoices without an entry, no missing documents, a balanced trial balance, no balances on the wrong side); a rejection leaves it open. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
+  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve; once approved, close the month, but only when a fresh report, taken after approval, shows nothing blocking (no invoices without an entry, no missing documents, a balanced trial balance, no balances on the wrong side); a rejection leaves it open. Closing December also files the balance confirmations (confirmări de sold) at 31 December. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
   "input": {
     "period": {
       "type": "string",
@@ -110,6 +110,27 @@
       "args": {
         "period": "{{input.period}}"
       }
+    },
+    "year_end": {
+      "type": "branch",
+      "rules": [
+        {
+          "if": {
+            "path": "recheck.period",
+            "op": "contains",
+            "value": "-12"
+          },
+          "then": "confirmations"
+        }
+      ],
+      "else": "END"
+    },
+    "confirmations": {
+      "type": "tool",
+      "tool": "partner_confirmations",
+      "args": {
+        "day": "{{recheck.period}}-31"
+      }
     }
   },
   "edges": [
@@ -144,6 +165,10 @@
     {
       "from": "recheck",
       "to": "can_close"
+    },
+    {
+      "from": "close",
+      "to": "year_end"
     }
   ],
   "output": "advise"

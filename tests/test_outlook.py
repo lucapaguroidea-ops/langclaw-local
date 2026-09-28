@@ -111,7 +111,7 @@ def test_the_monthly_loop_template_is_valid_against_the_real_tools() -> None:
     tools = [n["tool"] for n in spec["nodes"].values() if n["type"] == "tool"]
     assert tools == ["efactura_sync", "accounting_queue", "accounting_period_report",
                      "accounting_outlook", "accounting_period_close",
-                     "accounting_period_report"]  # fmt: skip
+                     "accounting_period_report", "partner_confirmations"]  # fmt: skip
 
 
 def test_aging_counts_what_is_left_after_partial_payments() -> None:
