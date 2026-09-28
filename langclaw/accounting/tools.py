@@ -425,9 +425,9 @@ def build_accounting_tools(
         """Close a month: refused while invoices lack an entry or expected documents
         are missing. Posts the month's depreciation (6811 / 28xx) and, for VAT
         payers, the VAT settlement (4426/4427 → 4423 or 4424) and, in December,
-        the year-end closing of classes 6 and 7 into 121; saves the report in
-        the client's bucket; then locks the month so nothing can be posted with a
-        date in it.
+        the year-end closing of classes 6 and 7 into 121; saves the report, the
+        journal register and the trial balance in the client's bucket; then locks
+        the month so nothing can be posted with a date in it.
 
         Args:
             period: The month, as YYYY-MM (empty: last month).
@@ -492,12 +492,21 @@ def build_accounting_tools(
             await svc.bucket.put(
                 key, json.dumps(report, indent=2).encode(), content_type="application/json"
             )
+            registers = {}  # the month's statutory registers, with every closing entry in
+            for name, tool, args in (
+                ("journal", accounting_journal_register, {"period": period}),
+                ("trial_balance", accounting_trial_balance, {"period": period}),
+            ):
+                out = await tool(**args)
+                if "error" in out:
+                    return {"error": f"Couldn't file the {name} register: {out['error']}"}
+                registers[name] = out["key"]
             await Journal(svc.store).close_period(period, closed_by=closed_by)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"closed": period, "report_key": key, "vat": report["vat"],
-                "vat_settlement": settled, "depreciation": depreciation,
-                "year_end": year_end}  # fmt: skip
+        return {"closed": period, "report_key": key, "registers": registers,
+                "vat": report["vat"], "vat_settlement": settled,
+                "depreciation": depreciation, "year_end": year_end}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
