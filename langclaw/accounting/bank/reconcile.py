@@ -39,15 +39,22 @@ def statement_chain(statements: list[dict[str, Any]]) -> list[dict[str, Any]]:
             p, c = prev["fields"], cur["fields"]
             base = {"iban": iban, "after": prev["bucket_key"], "statement": cur["bucket_key"]}
             if c["date_from"] <= (p.get("date_to") or ""):
-                problems.append({**base, "problem": "overlap", "message": (
-                    f"{cur['bucket_key']} starts {c['date_from']}, before {prev['bucket_key']} "
-                    f"ends ({p.get('date_to')}): the same days may be imported twice.")})  # fmt: skip
+                message = (
+                    f"{cur['bucket_key']} starts {c['date_from']}, before "
+                    f"{prev['bucket_key']} ends ({p.get('date_to')}): the same days may "
+                    "be imported twice."
+                )
+                problems.append({**base, "problem": "overlap", "message": message})
             elif _dec(c["opening"]) != _dec(p.get("closing")):
                 diff = _dec(c["opening"]) - _dec(p.get("closing"))
-                problems.append({**base, "problem": "gap", "difference": str(diff), "message": (
-                    f"{cur['bucket_key']} opens at {_dec(c['opening'])}, but {prev['bucket_key']} "
-                    f"closed at {_dec(p.get('closing'))}: a statement between them is "
-                    "probably missing.")})  # fmt: skip
+                message = (
+                    f"{cur['bucket_key']} opens at {_dec(c['opening'])}, but "
+                    f"{prev['bucket_key']} closed at {_dec(p.get('closing'))}: a statement "
+                    "between them is probably missing."
+                )
+                problems.append(
+                    {**base, "problem": "gap", "difference": str(diff), "message": message}
+                )
     return problems
 
 
@@ -76,8 +83,11 @@ def reconcile_account(
         "unbooked": len(unbooked), "unbooked_total": str(pending),
         "unexplained": str(unexplained), "agrees": not difference,
     }  # fmt: skip
-    start_gap = (_dec(first_opening) - _dec(ledger_at_first)
-                 if first_opening is not None and ledger_at_first is not None else Decimal(0))
+    start_gap = (
+        _dec(first_opening) - _dec(ledger_at_first)
+        if first_opening is not None and ledger_at_first is not None
+        else Decimal(0)
+    )
     if start_gap:
         out["opening_gap"] = str(start_gap)
     if unexplained and (start_gap or not ledger):
@@ -85,8 +95,10 @@ def reconcile_account(
                        f"had {_dec(ledger_at_first or 0)} in the books then: post its opening "
                        "balance with accounting_opening_balances.")  # fmt: skip
     elif unexplained:
-        out["hint"] = (f"{unexplained} isn't explained by unbooked movements: look for "
-                       f"entries on {account} without a bank movement, or a missing statement.")
+        out["hint"] = (
+            f"{unexplained} isn't explained by unbooked movements: look for "
+            f"entries on {account} without a bank movement, or a missing statement."
+        )
     elif difference:
         out["hint"] = f"Book or confirm the {len(unbooked)} open movement(s) (bank_movements)."
     return out
