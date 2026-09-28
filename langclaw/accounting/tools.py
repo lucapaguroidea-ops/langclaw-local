@@ -51,6 +51,7 @@ from langclaw.accounting.cash import (
 from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
+from langclaw.accounting.invoice_facts import invoice_fields
 from langclaw.accounting.journal import Journal, JournalError
 from langclaw.accounting.ledger import account_ledger
 from langclaw.accounting.outlook import (
@@ -672,6 +673,42 @@ def build_accounting_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"reopened": period, "removed_entries": removed, "reason": reason.strip()}
+
+    async def accounting_invoice_file(bucket_key: str, facts: dict[str, Any]) -> dict:
+        """File an invoice that didn't come from e-Factura (a scan, a PDF, a photo)
+        from the facts read on it, with the same fields e-Factura invoices carry,
+        so it can be proposed, checked and posted like one. Totals are re-added
+        and rates checked against the invoice date: anything that doesn't hold is
+        listed in "problems" and the invoice is filed as needs_review.
+
+        Args:
+            bucket_key: The file's key in the bucket.
+            facts: invoice_number, kind (invoice or credit_note), supplier_name,
+                supplier_cui, customer_name, customer_cui, issue_date, due_date,
+                currency, total_net, total_vat, total_gross, and vat_breakdown
+                rows with rate, taxable and vat.
+        """
+        tenant = current_tenant()
+        own = (tenant.tax_id if tenant else "") or str(_profile().get("tax_id") or "")
+        try:
+            if isinstance(facts, str):
+                facts = json.loads(facts)
+            out = invoice_fields(facts, own_cif=own)
+            status = "needs_review" if out["problems"] else "filed"
+            number = out["fields"]["invoice_number"] or "?"
+            saved = await services.current().store.save(bucket_key, {
+                "doc_type": out["doc_type"], "sender": out["sender"],
+                "receiver": out["receiver"], "document_date": out["document_date"],
+                "amount": out["amount"], "currency": out["currency"], "status": status,
+                "summary": (f"Invoice {number} from {out['sender']} to {out['receiver']}: "
+                            f"{out['fields']['total_net']} + VAT {out['fields']['total_vat']} "
+                            f"{out['currency']} (read from the document)."),
+                "fields": out["fields"],
+            })  # fmt: skip
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return {"saved": saved["bucket_key"], "status": status, "problems": out["problems"],
+                "direction": out["fields"]["direction"]}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -1978,6 +2015,7 @@ def build_accounting_tools(
         accounting_opening_balances,
         accounting_result_carry,
         accounting_period_reopen,
+        accounting_invoice_file,
         accounting_reports,
         cash_z_report,
         cash_book,

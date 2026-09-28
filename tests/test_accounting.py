@@ -2065,3 +2065,47 @@ async def test_a_closed_month_can_be_reopened_latest_first_with_a_reason(acme) -
             {"period": "2026-03", "reason": "x"}
         )
         assert "isn't closed" in not_closed["error"]
+
+
+def test_the_invoice_intake_template_is_valid_against_the_real_tools() -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.config.schema import DocumentsConfig
+    from langclaw.documents import DocumentServices, build_document_tools
+    from langclaw.workflows.graph import parse_graph_spec
+
+    services = DocumentServices(DocumentsConfig())
+    names = {t.name for t in [*build_accounting_tools(services), *build_document_tools(services)]}
+    path = Path(__file__).resolve().parent.parent / "ui" / "templates" / "invoice_intake.graph.json"
+    parse_graph_spec("invoice_intake", json.loads(path.read_text()), available_tools=names)
+
+
+@needs_pg
+async def test_a_scanned_invoice_is_filed_like_an_efactura_one(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    facts = {"invoice_number": "EN 77", "supplier_name": "Enel", "supplier_cui": "RO111",
+             "customer_name": "ACME", "customer_cui": "RO12345678",
+             "issue_date": "2026-09-05", "total_net": "100,00", "total_vat": "21,00",
+             "total_gross": "121,00", "currency": "RON",
+             "vat_breakdown": [{"rate": "21", "taxable": "100", "vat": "21"}]}  # fmt: skip
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["accounting_invoice_file"].ainvoke(
+            {"bucket_key": "inbox/enel.pdf", "facts": facts}
+        )
+        assert out == {"saved": "inbox/enel.pdf", "status": "filed", "problems": [],
+                       "direction": "in"}  # fmt: skip
+        ctx = await tools["accounting_context"].ainvoke({"bucket_key": "inbox/enel.pdf"})
+        assert ctx["invoice"]["direction"] == "in" and ctx["invoice"]["total_vat"] == "21.00"
+        assert ctx["invoice"]["supplier"]["cui"] == "RO111"
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+        assert "inbox/enel.pdf" in [b["bucket_key"] for b in report["blockers"]]  # awaits an entry
+
+        bad = await tools["accounting_invoice_file"].ainvoke(
+            {"bucket_key": "inbox/odd.pdf", "facts": {**facts, "total_gross": "130"}}
+        )
+        assert bad["status"] == "needs_review" and bad["problems"]
+        row = await scoped.store.get("inbox/odd.pdf")
+        assert row["status"] == "needs_review" and row["fields"]["problems"] == bad["problems"]
