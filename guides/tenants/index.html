@@ -718,6 +718,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#roles-the-accountant-and-the-clients-staff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles: the accountant and the client's staff
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1301,6 +1312,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#roles-the-accountant-and-the-clients-staff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles: the accountant and the client's staff
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1452,6 +1474,22 @@ the global review chat (<code>workflows.review_chat_id</code>), and they name th
 <li><strong>Existing data isn't moved.</strong> Documents filed before tenancy was turned on
   stay in the old, shared location and aren't visible under any client.</li>
 </ul>
+<h2 id="roles-the-accountant-and-the-clients-staff">Roles: the accountant and the client's staff<a class="headerlink" href="#roles-the-accountant-and-the-clients-staff" title="Permanent link">&para;</a></h2>
+<p>With permissions on, a client's own staff writing in their chat can get a
+narrower role than the accountant. Anyone <strong>not</strong> listed in the channel's
+<code>user_roles</code> who writes in a <em>client's</em> chat gets <code>permissions.client_role</code>
+(instead of <code>default_role</code>); the accountant, listed in <code>user_roles</code>, keeps
+theirs. <code>langclaw.accounting.roles.accounting_roles()</code> gives both roles:
+<code>accountant</code> (every tool and workflow) and <code>client</code> (read-only reports about
+their own company — no posting, closing, reopening, reversing, filing or
+emailing; files they send are still filed by the intake, which needs no tool).</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">LANGCLAW__PERMISSIONS__ENABLED</span><span class="o">=</span><span class="nb">true</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nv">LANGCLAW__PERMISSIONS__CLIENT_ROLE</span><span class="o">=</span>client
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nv">LANGCLAW__CHANNELS__TELEGRAM__USER_ROLES</span><span class="o">=</span><span class="m">123456</span>:accountant
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nv">LANGCLAW__PERMISSIONS__ROLES</span><span class="o">=</span><span class="s1">&#39;{&quot;accountant&quot;: {&quot;tools&quot;: [&quot;*&quot;], &quot;workflows&quot;: [&quot;*&quot;], &quot;subagents&quot;: [&quot;*&quot;]}, &quot;client&quot;: {&quot;tools&quot;: [&quot;accounting_outlook&quot;, &quot;accounting_period_report&quot;, &quot;accounting_reports&quot;, &quot;accounting_results&quot;, &quot;advances_open&quot;, &quot;advances_partners&quot;, &quot;assets_list&quot;, &quot;bank_movements&quot;, &quot;bucket_link&quot;, &quot;cash_book&quot;, &quot;documents_get&quot;, &quot;documents_search&quot;, &quot;partner_balances&quot;, &quot;partner_statement&quot;, &quot;payables_due&quot;, &quot;receivables_overdue&quot;], &quot;workflows&quot;: [], &quot;subagents&quot;: []}}&#39;</span>
+</span></code></pre></div>
+<p>The <code>client</code> tool list is checked against the real tools in the test suite,
+so it can't name a tool that doesn't exist.</p>
 
 
 

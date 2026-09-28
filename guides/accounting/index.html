@@ -770,6 +770,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#archiving-a-clients-books" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archiving a client's books
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-did-it-recorded_by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who did it: recorded_by
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#last-years-result-repartizarea-profitului" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1635,6 +1657,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#archiving-a-clients-books" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archiving a client's books
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-did-it-recorded_by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who did it: recorded_by
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#last-years-result-repartizarea-profitului" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2178,6 +2222,44 @@ saved as <code>reports/&lt;period&gt;/d394.csv</code> in the client's bucket.</p
 <p>These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
 ANAF schemas and is a later slice.</p>
+<h3 id="archiving-a-clients-books">Archiving a client's books<a class="headerlink" href="#archiving-a-clients-books" title="Permanent link">&para;</a></h3>
+<p><code>accounting_archive()</code> writes the client's books into one zip in their bucket,
+<code>archives/&lt;time&gt;.zip</code>, and returns a 24-hour link: journal entries and lines,
+closed periods and their history, bank movements, fixed assets and document
+records, one JSON-lines file per table, plus <code>manifest.json</code> with each table's
+row count and SHA-256. It's a copy that doesn't need the database, to keep or
+to hand over when a client leaves. Schedule it (e.g. monthly with the <code>cron</code>
+tool) for a regular copy.</p>
+<p><code>accounting_archive_restore(key)</code> reads one back, e.g. after the database was
+lost: first every file must match the manifest's checksum and row count (a
+damaged archive restores nothing), then it loads all tables in one
+transaction — all or nothing — into <strong>empty books only</strong> (a client with journal
+entries or documents is refused; a restore never merges). New entries after a
+restore continue after the restored ids.</p>
+<p>Honest limits: the archive lands in the <strong>same bucket</strong> as the client's files,
+so copy it elsewhere if the bucket is what you're protecting against; it holds
+the books, not the files themselves (those stay in the bucket) nor workflow
+runs or chat history; and it isn't a database backup — take those at the
+Postgres service too.</p>
+<h3 id="who-did-it-recorded_by">Who did it: <code>recorded_by</code><a class="headerlink" href="#who-did-it-recorded_by" title="Permanent link">&para;</a></h3>
+<p><code>approved_by</code>, <code>closed_by</code> and <code>reopened_by</code> are what someone typed — often
+the model. Next to them, every journal entry and every close / reopen in the
+month's <code>history</code> carries <strong><code>recorded_by</code></strong>, which langclaw sets from the
+channel, never from the model (<code>langclaw/actors.py</code>):</p>
+<ul>
+<li>a chat turn acts for its sender: <code>"telegram:12345"</code> (the channel and the
+  sender's id as the channel reports it);</li>
+<li>the steps after a workflow review act for whoever answered it: a Telegram
+  button records <code>"telegram:&lt;their id&gt;"</code>, <code>/workflows approve</code> the chat
+  sender. Over the HTTP API it depends on the token: a <strong>personal token</strong>
+  (<code>LANGCLAW__CHANNELS__API__PEOPLE=ana:tok1,ion:tok2</code>) is that person, recorded
+  as <code>"api:ana"</code>; with the shared key the name a request gives is only claimed,
+  recorded as <code>"api-claimed:&lt;name&gt;"</code>. Set <code>UI_PERSONAL_LOGIN=true</code> on the
+  console so each person signs in with their own token and their reviews are
+  recorded as theirs;</li>
+<li>code outside a turn or a review (a script, a scheduled run nobody
+  answered) records <code>""</code> rather than guessing.</li>
+</ul>
 <h3 id="last-years-result-repartizarea-profitului">Last year's result (repartizarea profitului)<a class="headerlink" href="#last-years-result-repartizarea-profitului" title="Permanent link">&para;</a></h3>
 <p>When December closes, classes 6 and 7 are closed into 121. That result stays on
 121 until the shareholders decide what to do with it, and every month report of

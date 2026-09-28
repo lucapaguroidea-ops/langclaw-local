@@ -728,6 +728,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#keeping-workflows-up-to-date-with-their-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping workflows up to date with their templates
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1433,6 +1444,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#keeping-workflows-up-to-date-with-their-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping workflows up to date with their templates
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1784,6 +1806,16 @@ Postgres in production) with a run index in the same database:</p>
 </ul>
 <p>A step that was mid-flight when the process died runs again, so make side
 effects idempotent where it matters (e.g. upsert rather than insert).</p>
+<h2 id="keeping-workflows-up-to-date-with-their-templates">Keeping workflows up to date with their templates<a class="headerlink" href="#keeping-workflows-up-to-date-with-their-templates" title="Permanent link">&para;</a></h2>
+<p>A workflow made from a console template is a <strong>copy</strong>: when the template in
+<code>ui/templates/</code> is fixed or extended, the workflow keeps running the old
+version. The console notices when a file workflow shares its name with a
+template that has changed since it was saved (<code>editor.template_update</code>): the
+workflow page shows a warning, the diff from the saved workflow to the
+template, and <strong>Update to the latest template</strong>, which saves it through the
+usual versioned path, so the previous version stays in <strong>Versions</strong> and can be
+restored. Workflows saved under another name aren't linked to a template and
+aren't checked.</p>
 
 
 
