@@ -839,6 +839,60 @@ def build_accounting_tools(
             {"day": on.isoformat(), "client": tenant.name if tenant else "",
              "customers": customers}, default=str))  # fmt: skip
 
+    async def reminders_file(reminders: list[dict[str, Any]], day: str = "") -> dict:
+        """File approved payment reminders: each is saved in the client's bucket as
+        a ``payment_reminder`` document, and every invoice it cites gets the date
+        added to its reminder history (so the next reminder can escalate).
+
+        Args:
+            reminders: [{"partner", "cui", "subject", "body", "invoices": [bucket_key, ...]}].
+                Without "invoices", the customer's currently overdue invoices are used.
+            day: The date sent (YYYY-MM-DD); empty: today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            overdue = overdue_receivables(
+                await _invoices(svc, date(1900, 1, 1), on), on=on, min_days=1
+            )
+            by_cui = {c["cui"]: [i["bucket_key"] for i in c["invoices"]] for c in overdue}
+            filed = []
+            for n, r in enumerate(reminders or [], 1):
+                if isinstance(r, str):
+                    r = json.loads(r)
+                cui = str(r.get("cui") or "")
+                keys = list(r.get("invoices") or by_cui.get(cui, []))
+                key = f"reminders/{on.isoformat()}/{cui or 'partner'}-{n}.txt"
+                text = f"{r.get('subject', '')}\n\n{r.get('body', '')}".strip()
+                await svc.bucket.put(key, text.encode(), content_type="text/plain")
+                await svc.store.save(
+                    key,
+                    {
+                        "doc_type": "payment_reminder",
+                        "document_date": on.isoformat(),
+                        "receiver": r.get("partner", ""),
+                        "summary": r.get("subject", ""),
+                        "status": "filed",
+                        "fields": {"customer_cui": cui, "invoices": keys},
+                    },
+                )
+                for inv_key in keys:
+                    row = await svc.store.get(inv_key) or {}
+                    history = list((row.get("fields") or {}).get("reminders") or [])
+                    await svc.store.save(
+                        inv_key,
+                        {
+                            "fields": {
+                                "reminders": [*history, on.isoformat()],
+                                "reminded_on": on.isoformat(),
+                            }
+                        },
+                    )
+                filed.append({"document": key, "partner": r.get("partner", ""), "invoices": keys})
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return {"filed": filed}  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -857,6 +911,7 @@ def build_accounting_tools(
         partner_statement,
         partner_balances,
         receivables_overdue,
+        reminders_file,
     ]
     if bus is not None:
         fns.append(accounting_queue)

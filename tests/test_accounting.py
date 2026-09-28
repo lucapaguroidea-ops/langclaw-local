@@ -883,3 +883,76 @@ async def test_receivables_overdue_lists_unpaid_sales(acme) -> None:
         out = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31", "min_days": 1})
     listed = {i["bucket_key"] for c in out["customers"] for i in c["invoices"]}
     assert listed == {r["bucket_key"] for r in sales} and out["client"] == "ACME"
+
+
+@needs_pg
+async def test_filed_reminders_are_documents_and_invoice_history(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        overdue = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31"})
+        customer = overdue["customers"][0]
+        reminder = {"partner": customer["partner"], "cui": customer["cui"],
+                    "subject": "Reamintire plată", "body": "Vă rugăm..."}  # fmt: skip
+        out = await tools["reminders_file"].ainvoke({"reminders": [reminder], "day": "2027-12-31"})
+        again = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31"})
+    filed = out["filed"][0]
+    assert filed["invoices"] == [i["bucket_key"] for i in customer["invoices"]]
+    doc = await scoped.store.get(filed["document"])
+    assert (
+        doc["doc_type"] == "payment_reminder" and doc["fields"]["customer_cui"] == customer["cui"]
+    )
+    data, _ = await scoped.bucket.get(filed["document"])
+    assert data.decode().startswith("Reamintire plată")
+    inv = next(c for c in again["customers"] if c["cui"] == customer["cui"])["invoices"][0]
+    assert inv["reminders_sent"] == 1 and inv["last_reminder"] == "2027-12-31"
+
+
+@needs_pg
+async def test_the_reminders_workflow_files_what_was_approved(acme) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    services, scoped = acme
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(Tenant(id="acme", name="ACME", tax_id="RO12345678"))
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    await scoped.store.save(sale["bucket_key"], {"fields": {"due_date": "2026-01-01"}})
+    real = build_toolset_executor(build_accounting_tools(services))
+    seen: list[int] = []
+
+    async def executor(request):
+        if request.kind == "llm":  # the only fake: the model
+            facts = json.loads(request.payload["prompt"].split("\n", 1)[1])
+            seen.append(len(facts["customers"]))
+            reminders = [{"partner": c["partner"], "cui": c["cui"], "subject": "Reamintire",
+                          "body": "...", "total": c["outstanding"],
+                          "invoices": [i["bucket_key"] for i in c["invoices"]]}
+                         for c in facts["customers"]]  # fmt: skip
+            return request.schema(reminders=reminders)
+        return await real(request)
+
+    path = Path(__file__).resolve().parent.parent / "ui/templates/payment_reminders.graph.json"
+    parsed = parse_graph_spec("payment_reminders", json.loads(path.read_text()))
+    spec = WorkflowSpec(
+        name="payment_reminders", graph=build_state_graph(parsed), graph_spec=parsed
+    )
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    with tenant_scope(await registry.get("acme")):
+        started = await runner.start(spec, {"min_days": 0}, run_id="rem:1", tenant="acme")
+        assert started.status == "waiting"
+        done = await runner.resume(spec, "rem:1", {"action": "approve", "by": "luca"})
+    assert done.status == "completed"
+    reminders = await scoped.store.search(doc_type="payment_reminder", limit=20)
+    assert seen[0] > 0 and len(reminders) == seen[0]
+    assert (await scoped.store.get(sale["bucket_key"]))["fields"]["reminders"]

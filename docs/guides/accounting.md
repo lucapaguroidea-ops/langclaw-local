@@ -202,9 +202,19 @@ works like this:
    exactly those invoices, and the tone gets firmer with the delay.
 3. The run pauses for a person to approve or edit the drafts.
 
-The approved drafts are the output. Nothing is sent automatically, because
-there's no email channel yet. Send them from the chat, or copy them into your
-mail client.
+After approval, `reminders_file` files each reminder:
+
+- The text goes into the client's bucket under `reminders/<date>/`, as a
+  `payment_reminder` document.
+- Every invoice it cites gets the date added to its `reminders` history
+  (`reminded_on` holds the latest).
+
+On the next run, `receivables_overdue` shows `reminders_sent` and
+`last_reminder` per invoice, and the model escalates: first notice, second
+reminder, final notice.
+
+Nothing is emailed automatically, because customer email addresses aren't
+captured yet. Send the filed text from the chat or your mail client.
 
 ## Results and income tax
 
