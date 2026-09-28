@@ -1065,3 +1065,35 @@ async def test_closing_december_posts_the_year_end_entry(acme) -> None:
         Decimal(results["year_to_date"]["result"])
     )  # a profit sits on the credit side of 121
     assert Decimal(results["month"]["revenue"]) == Decimal("1000.00")  # P&L ignores the close
+
+
+@needs_pg
+async def test_z_reports_are_booked_once_and_count_in_the_vat(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                    profile={"vat_payer": True, "expected_documents": ["z_report"]})  # fmt: skip
+    with tenant_scope(client):
+        before = await tools["accounting_period_report"].ainvoke({"period": "2026-10"})
+        out = await tools["cash_z_report"].ainvoke(
+            {"day": "2026-10-05", "lines": [{"rate": 21, "gross": 1210}]}
+        )
+        twice = await tools["cash_z_report"].ainvoke(
+            {"day": "2026-10-05", "lines": [{"rate": 21, "gross": 1210}]}
+        )
+        bad = await tools["cash_z_report"].ainvoke(
+            {"day": "2026-10-06", "lines": [{"rate": 19, "gross": 119}]}
+        )
+        after = await tools["accounting_period_report"].ainvoke({"period": "2026-10"})
+    assert [(x["account"], x["debit"], x["credit"]) for x in out["posted"]["lines"]] == [
+        ("5311", 1210.0, 0.0), ("707", 0.0, 1000.0), ("4427", 0.0, 210.0)]  # fmt: skip
+    assert "already posted" in twice["error"] and "19" in bad["error"]
+    assert before["documents"]["missing"] and not after["documents"]["missing"]
+    assert Decimal(after["vat"]["collected"]) - Decimal(before["vat"]["collected"]) == Decimal(
+        "210.00"
+    )

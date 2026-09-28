@@ -238,6 +238,25 @@ reminder, addressed to the customer. A person still presses send. Customers
 without an email are filed and reported with `"draft": "no email address for
 this customer"`. Without Gmail, reminders are only filed.
 
+## Cash register (raport Z)
+
+`cash_z_report(day, lines)` books a day's Z report from its gross sales per VAT
+rate, e.g. `[{"rate": 21, "gross": 1210}]`. The entry is:
+
+- D 5311 for the total;
+- C the revenue account for the net, i.e. the profile's `cash_revenue_account`
+  (707 by default, 704 for services);
+- C 4427 for the VAT, worked out per rate from the gross.
+
+Rates must be valid on the day, and a day can be booked only once. A closed
+month refuses it.
+
+The report is filed as a `z_report` document. It counts towards
+`expected_documents`, e.g. `["z_report"]`, and its VAT goes into the month's
+VAT summary (the D300 draft). It doesn't go into D394, which lists invoices
+with a partner tax ID. Cash takings deposited at the bank (581) stay with the
+accountant for now.
+
 ## Paying suppliers
 
 `payables_due(day, days=7)` lists the supplier invoices to pay: unpaid, and due

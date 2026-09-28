@@ -33,6 +33,7 @@ from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fe
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
+from langclaw.accounting.cash import z_report_entry
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
@@ -342,6 +343,9 @@ def build_accounting_tools(
             date_from=start.isoformat(), date_to=end.isoformat(), limit=200
         )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
+        booked += await svc.store.search(  # cash sales (Z reports) carry VAT too
+            doc_type="z_report", date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+        )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
         if settles_vat(period, _profile()):
@@ -1037,6 +1041,43 @@ def build_accounting_tools(
             {"period": period, "key": key, "url": url, "rows": rows,
              "note": "Draft figures, not the ANAF D394 file."}, default=str))  # fmt: skip
 
+    async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
+        """Book a day's cash register report (raport Z): D 5311 cash / C revenue
+        (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
+        it as a z_report document; a day can be booked once.
+
+        Args:
+            day: The report's date (YYYY-MM-DD).
+            lines: Gross sales per VAT rate: [{"rate": 21, "gross": 1210.00}, ...].
+        """
+        try:
+            on = date.fromisoformat(day)
+            if isinstance(lines, str):
+                lines = json.loads(lines)
+            entry = z_report_entry(
+                on, lines, revenue_account=_profile().get("cash_revenue_account") or "707"
+            )
+            svc = services.current()
+            key = f"cash/z/{on.isoformat()}"
+            breakdown = []
+            for line in lines:
+                rate = Decimal(str(line["rate"]))
+                gross = Decimal(str(line["gross"])).quantize(Decimal("0.01"))
+                vat = (gross * rate / (100 + rate)).quantize(Decimal("0.01"))
+                breakdown.append({"rate": str(rate), "taxable": str(gross - vat), "vat": str(vat)})
+            doc = {"bucket_key": key, "document_date": on.isoformat(),
+                   "fields": {"direction": "out"}}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="z_report")
+            totals = entry["totals"]
+            await svc.store.save(key, {
+                "doc_type": "z_report", "document_date": on.isoformat(),
+                "amount": totals["gross"], "status": "posted",
+                "summary": f"Raport Z {on.isoformat()}: {totals['gross']} (TVA {totals['vat']})",
+                "fields": {"direction": "out", "vat_breakdown": breakdown}})  # fmt: skip
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
+
     fns = [
         accounting_context,
         accounting_check,
@@ -1059,6 +1100,7 @@ def build_accounting_tools(
         payables_due,
         payables_batch,
         accounting_d394,
+        cash_z_report,
     ]
     if bus is not None:
         fns.append(accounting_queue)
