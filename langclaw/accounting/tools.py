@@ -1095,6 +1095,49 @@ def build_accounting_tools(
             {"period": period, "key": key, "url": url, "rows": rows,
              "note": "Draft figures, not the ANAF D394 file."}, default=str))  # fmt: skip
 
+    async def accounting_journal_register(period: str = "", without_invoices: bool = False) -> dict:
+        """The month's journal register (registrul-jurnal) as a CSV in the client's
+        bucket: every posted entry, one row per line (nr, date, document,
+        explanation, account, debit, credit). With without_invoices, only the
+        entries langclaw made itself (bank, cash, month close), i.e. what SAGA
+        doesn't get from its invoice import, to enter there as note contabile.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+            without_invoices: Leave out the invoices' own entries.
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            svc = services.current()
+            entries = await Journal(svc.store).entries_between(
+                start, end, without_invoices=without_invoices
+            )
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["nr", "date", "document", "explanation", "account", "debit",
+                             "credit"])  # fmt: skip
+            debit = credit = Decimal(0)
+            for nr, entry in enumerate(entries, 1):
+                for line in entry["lines"]:
+                    d, c = Decimal(line["debit"]), Decimal(line["credit"])
+                    debit, credit = debit + d, credit + c
+                    writer.writerow([nr, entry["entry_date"].isoformat(), entry["bucket_key"],
+                                     line["explanation"] or entry["explanation"], line["account"],
+                                     f"{d:.2f}", f"{c:.2f}"])  # fmt: skip
+            name = "registru-jurnal-other" if without_invoices else "registru-jurnal"
+            key = f"reports/{period}/{name}.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"period": period, "key": key, "url": url, "entries": len(entries),
+                "debit": f"{debit:.2f}", "credit": f"{credit:.2f}",
+                "balanced": debit == credit}  # fmt: skip
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1316,6 +1359,7 @@ def build_accounting_tools(
         payables_due,
         payables_batch,
         accounting_d394,
+        accounting_journal_register,
         cash_z_report,
         cash_book,
         cash_pay_invoice,

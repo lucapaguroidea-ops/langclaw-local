@@ -1329,3 +1329,35 @@ async def test_the_cash_payment_limit_adds_up_a_partners_invoices_on_the_day(acm
         )
     assert first["warnings"] == [] and next_day["warnings"] == []
     assert "120.00" in second["warnings"][0] and bill["sender"] in second["warnings"][0]
+
+
+@needs_pg
+async def test_the_journal_register_lists_every_entry_or_only_non_invoice_ones(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    period = str(bill["document_date"])[:7]
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": bill["bucket_key"], "proposal": _entry_for(bill)}
+        )
+        await tools["cash_z_report"].ainvoke(
+            {"day": f"{period}-28", "lines": [{"rate": 21, "gross": 121}]}
+        )
+        full = await tools["accounting_journal_register"].ainvoke({"period": period})
+        other = await tools["accounting_journal_register"].ainvoke(
+            {"period": period, "without_invoices": True}
+        )
+        bad = await tools["accounting_journal_register"].ainvoke({"period": "2026-13"})
+    assert full["entries"] == 2 and other["entries"] == 1
+    assert full["balanced"] and full["debit"] == full["credit"]
+    csv_text = (await scoped.bucket.get(other["key"]))[0].decode("utf-8")
+    header, *rows = [r.split(";") for r in csv_text.strip().splitlines()]
+    assert header == ["nr", "date", "document", "explanation", "account", "debit", "credit"]
+    assert [r[4] for r in rows] == ["5311", "707", "4427"]
+    assert rows[0][2] == f"cash/z/{period}-28" and rows[0][5] == "121.00"
+    assert other["key"].endswith("registru-jurnal-other.csv") and "error" in bad

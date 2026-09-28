@@ -441,6 +441,20 @@ invoices get status `exported` and aren't exported again unless `again=True`.
   available, so the target fails with a clear error instead of guessing an API
   (`langclaw/accounting/export/nextup.py` is the place to wire it).
 
+### Journal register (registrul-jurnal)
+
+`accounting_journal_register(period, without_invoices=False)` writes every
+posted entry of the month as a CSV to
+`reports/<period>/registru-jurnal.csv`, with a 24-hour link. There is one row
+per line: `nr;date;document;explanation;account;debit;credit`. The result gives
+the entry count, the debit and credit totals, and whether they balance.
+
+With `without_invoices=True`, the file is `registru-jurnal-other.csv` and holds
+only the entries langclaw made itself: bank (`bank/`), cash (`cash/`) and month
+close (`close/`). SAGA's invoice import doesn't carry these, so the accountant
+enters them in SAGA as *note contabile*. There is no direct SAGA import for them
+yet, because the note-contabile import format wasn't available.
+
 Targets live in one registry (`langclaw/accounting/export/__init__.py:EXPORTERS`);
 a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 
@@ -451,9 +465,8 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   model and the reviewer.
 - The VAT table is reference data to be reviewed by your accountant; update it
   when the law changes.
-- Entries are single-currency (the invoice's); FX translation, fixed-asset
-  depreciation, and non-invoice documents (receipts, bank statements) aren't
-  covered yet.
+- Entries are single-currency (the invoice's). FX translation isn't covered
+  yet.
 - The SAGA file follows the published import layout but hasn't been imported
   into a real SAGA install yet — try one batch before relying on it.
 - Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge
