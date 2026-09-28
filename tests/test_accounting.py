@@ -2157,3 +2157,38 @@ async def test_the_firm_overview_has_one_row_per_client(acme) -> None:
     acme_row, beta_row = out["clients"]
     assert acme_row["blockers"] > 0 and acme_row["ready_to_close"] is False
     assert beta_row["blockers"] == 0 and beta_row["error"] == ""
+
+
+async def test_the_firm_overview_checks_clients_in_parallel_in_order(monkeypatch) -> None:
+    import asyncio
+
+    import langclaw.accounting.tools as accounting_tools
+    from langclaw.accounting.overview import firm_overview
+    from langclaw.tenants import Tenant, current_tenant
+
+    running, peak = 0, 0
+
+    class Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def ainvoke(self, args: dict) -> dict:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+            me = current_tenant().id  # each client runs in its own scope
+            if self.name == "bank_movements":
+                return {"total": 0}
+            return {"period": "2026-09", "blockers": [], "documents": {"missing": []},
+                    "bank": {"agrees": True}, "vat": {}, "anomalies": [],
+                    "closed": None, "who": me}  # fmt: skip
+
+    monkeypatch.setattr(accounting_tools, "build_accounting_tools",
+                        lambda services: [Tool("accounting_period_report"),
+                                          Tool("bank_movements")])  # fmt: skip
+    clients = [Tenant(id=f"c{i:02d}", name=f"C{i}") for i in range(20)]
+    out = await firm_overview(None, clients, "2026-09", parallel=4)
+    assert [r["client"] for r in out["clients"]] == [c.id for c in clients]
+    assert 1 < peak <= 4
