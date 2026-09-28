@@ -580,6 +580,7 @@ async def test_the_overview_gathers_a_clients_month(acme) -> None:
     assert view["report"]["blockers"] and view["report"]["documents"]["missing"]
     assert "cash" in view["outlook"] and view["bank"]["movements"] == []
     assert "year_to_date" in view["results"] and view["partners"]["partners"] == []
+    assert view["cash"]["period"] == period and "days" in view["cash"]
     bad = await accounting_overview(services, client, "sept")
     assert "YYYY-MM" in bad["report"]["error"]
 

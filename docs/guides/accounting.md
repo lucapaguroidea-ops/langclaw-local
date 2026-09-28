@@ -407,7 +407,9 @@ The **Client overview** page shows the chosen client and month. It uses
 `GET /v1/accounting/overview`, which runs the same tools as the agent.
 
 - **Alerts:** invoices without an entry, missing documents, limits close to being
-  crossed, overdue receivables, and unmatched bank movements.
+  crossed, overdue receivables, unmatched bank movements, days with negative
+  cash (the month can't close), days above `cash_limit`, and open employee
+  advances.
 - **Close tab:** the VAT position, the expected documents and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
@@ -415,6 +417,8 @@ The **Client overview** page shows the chosen client and month. It uses
   income-tax estimate.
 - **Partners tab:** open partner balances on the month's last day.
 - **Bank tab:** the open movements.
+- **Cash tab:** opening and closing cash, the problem days, the cash book day
+  by day and the open employee advances.
 
 The page is read-only. Posting, closing a month and confirming a match happen
 in chat or in workflows.

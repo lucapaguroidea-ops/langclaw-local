@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -330,7 +331,7 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
     """What needs attention in an ``accounting_overview`` result, as short lines."""
     alerts: list[str] = []
     parts = {"Close report": "report", "Outlook": "outlook", "Bank": "bank",
-             "Results": "results", "Partners": "partners"}  # fmt: skip
+             "Results": "results", "Partners": "partners", "Cash": "cash"}  # fmt: skip
     for label, part in parts.items():
         if error := (view.get(part) or {}).get("error"):
             alerts.append(f"{label}: {error}")
@@ -342,6 +343,15 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
         alerts.append("Missing documents: " + ", ".join(m["label"] for m in missing))
     if report.get("trial_balance") and not report["trial_balance"].get("balanced"):
         alerts.append("The trial balance doesn't balance")
+    cash = report.get("cash") or {}
+    problems = [p.get("problem", "") for p in cash.get("problems") or []]
+    if negative := sum("negative" in p for p in problems):
+        alerts.append(f"Cash negative on {negative} day(s): the month can't close")
+    if above := sum("above" in p for p in problems):
+        alerts.append(f"Cash above the limit on {above} day(s)")
+    if advances := cash.get("open_advances"):
+        total = sum(Decimal(str(a.get("open") or 0)) for a in advances)
+        alerts.append(f"Open employee advances: {total:.2f} ({len(advances)})")
     outlook = view.get("outlook") or {}
     for t in outlook.get("thresholds") or []:
         if t.get("warn"):

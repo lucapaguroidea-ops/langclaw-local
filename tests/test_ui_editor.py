@@ -188,3 +188,15 @@ def test_overview_alerts_cover_results_and_partners_errors() -> None:
     view = {"report": {}, "outlook": {}, "bank": {}, "results": {"error": "db"},
             "partners": {"error": "db"}}  # fmt: skip
     assert editor.overview_alerts(view) == ["Results: db", "Partners: db"]
+
+
+def test_overview_alerts_cover_cash_problems_and_open_advances() -> None:
+    report = {"cash": {"problems": [{"day": "2026-09-03", "problem": "Cash negative: -5.00"},
+                                    {"day": "2026-09-04", "problem": "Cash above the limit"}],
+                       "open_advances": [{"employee": "Ana", "open": "40.00"},
+                                         {"employee": "Ion", "open": "10.00"}]}}  # fmt: skip
+    alerts = editor.overview_alerts({"report": report, "cash": {"error": "db"}})
+    assert "Cash: db" in alerts
+    assert "Cash negative on 1 day(s): the month can't close" in alerts
+    assert "Cash above the limit on 1 day(s)" in alerts
+    assert "Open employee advances: 50.00 (2)" in alerts
