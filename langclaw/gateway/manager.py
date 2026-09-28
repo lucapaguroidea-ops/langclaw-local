@@ -982,7 +982,12 @@ class GatewayManager:
         logger.debug(f"Checking permissions for user_id {msg.user_id}")
         username = (msg.metadata or {}).get("username", "")
         role = lookup_by_user(user_roles, msg.user_id, username)
-        return role if role is not None else perms.default_role
+        if role is not None:
+            return role
+        # Someone unlisted, writing in a client's chat: that client's own staff.
+        if perms.client_role and current_tenant() is not None:
+            return perms.client_role
+        return perms.default_role
 
     def _make_workflow_progress_sink(
         self, msg: InboundMessage, channel: BaseChannel

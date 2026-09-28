@@ -68,3 +68,25 @@ async def client_note() -> dict:
   folder and schema, and re-adding the same id finds them again.
 - **Existing data isn't moved.** Documents filed before tenancy was turned on
   stay in the old, shared location and aren't visible under any client.
+
+
+## Roles: the accountant and the client's staff
+
+With permissions on, a client's own staff writing in their chat can get a
+narrower role than the accountant. Anyone **not** listed in the channel's
+`user_roles` who writes in a *client's* chat gets `permissions.client_role`
+(instead of `default_role`); the accountant, listed in `user_roles`, keeps
+theirs. `langclaw.accounting.roles.accounting_roles()` gives both roles:
+`accountant` (every tool and workflow) and `client` (read-only reports about
+their own company — no posting, closing, reopening, reversing, filing or
+emailing; files they send are still filed by the intake, which needs no tool).
+
+```bash
+LANGCLAW__PERMISSIONS__ENABLED=true
+LANGCLAW__PERMISSIONS__CLIENT_ROLE=client
+LANGCLAW__CHANNELS__TELEGRAM__USER_ROLES=123456:accountant
+LANGCLAW__PERMISSIONS__ROLES='{"accountant": {"tools": ["*"], "workflows": ["*"], "subagents": ["*"]}, "client": {"tools": ["accounting_outlook", "accounting_period_report", "accounting_reports", "accounting_results", "advances_open", "advances_partners", "assets_list", "bank_movements", "bucket_link", "cash_book", "documents_get", "documents_search", "partner_balances", "partner_statement", "payables_due", "receivables_overdue"], "workflows": [], "subagents": []}}'
+```
+
+The `client` tool list is checked against the real tools in the test suite,
+so it can't name a tool that doesn't exist.

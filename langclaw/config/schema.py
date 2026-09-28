@@ -582,6 +582,12 @@ class PermissionsConfig(BaseModel):
     default_role: str = "viewer"
     """Role assigned to users not listed in any channel's ``user_roles``."""
 
+    client_role: str = ""
+    """With clients (tenants) on: the role of anyone writing in a *client's* chat
+    who isn't listed in the channel's ``user_roles`` — the client's own staff.
+    Empty keeps ``default_role``. ``langclaw.accounting.roles.accounting_roles()``
+    has a read-only ``client`` role for it."""
+
     roles: dict[str, RoleConfig] = Field(default_factory=dict)
     """Role name -> ``RoleConfig``. Define in ``config.json``::
 
