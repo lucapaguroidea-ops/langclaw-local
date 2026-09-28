@@ -23,6 +23,7 @@ All of them work inside the current client (tenant) only, like the document tool
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -106,8 +107,14 @@ def build_accounting_tools(
     *,
     bus: BaseMessageBus | None = None,
     report_to: dict[str, str] | None = None,
+    mailer: Callable[[str, str, str], Awaitable[dict[str, Any]]] | None = None,
 ) -> list[BaseTool]:
-    """The accounting tools over *services* (``accounting_queue`` needs *bus*)."""
+    """The accounting tools over *services* (``accounting_queue`` needs *bus*).
+
+    *mailer* ``(to, subject, body) -> {"draft_id"...}`` makes ``reminders_file``
+    also create an email draft per reminder (the gateway passes Gmail's
+    ``draft_email`` when Gmail has write access).
+    """
     from langchain_core.tools import StructuredTool
 
     from langclaw.bus.base import InboundMessage
@@ -842,7 +849,8 @@ def build_accounting_tools(
     async def reminders_file(reminders: list[dict[str, Any]], day: str = "") -> dict:
         """File approved payment reminders: each is saved in the client's bucket as
         a ``payment_reminder`` document, and every invoice it cites gets the date
-        added to its reminder history (so the next reminder can escalate).
+        added to its reminder history (so the next reminder can escalate). With
+        Gmail connected, an email draft to the customer is created too.
 
         Args:
             reminders: [{"partner", "cui", "subject", "body", "invoices": [bucket_key, ...]}].
@@ -856,6 +864,7 @@ def build_accounting_tools(
                 await _invoices(svc, date(1900, 1, 1), on), on=on, min_days=1
             )
             by_cui = {c["cui"]: [i["bucket_key"] for i in c["invoices"]] for c in overdue}
+            emails = {c["cui"]: c.get("email", "") for c in overdue}
             filed = []
             for n, r in enumerate(reminders or [], 1):
                 if isinstance(r, str):
@@ -888,7 +897,16 @@ def build_accounting_tools(
                             }
                         },
                     )
-                filed.append({"document": key, "partner": r.get("partner", ""), "invoices": keys})
+                item = {"document": key, "partner": r.get("partner", ""), "invoices": keys}
+                to = str(r.get("email") or emails.get(cui, ""))
+                if mailer is not None:
+                    if not to:
+                        item["draft"] = "no email address for this customer"
+                    else:
+                        sent = await mailer(to, str(r.get("subject", "")), str(r.get("body", "")))
+                        item["draft"] = sent.get("error") or sent.get("draft_id", "")
+                        item["to"] = to
+                filed.append(item)
         except (*_ERRORS, json.JSONDecodeError) as exc:
             return {"error": str(exc)}
         return {"filed": filed}  # fmt: skip

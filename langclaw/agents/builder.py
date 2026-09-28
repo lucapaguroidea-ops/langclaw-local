@@ -301,10 +301,21 @@ def create_claw_agent(
         if config.documents.accounting.enabled:
             from langclaw.accounting.tools import build_accounting_tools
 
+            gmail = config.tools.gmail
+            mailer = None
+            if gmail.enabled and gmail.client_id and not gmail.readonly:
+                from langclaw.agents.tools.gmail import make_draft_email_tool
+
+                draft_email = make_draft_email_tool(gmail)
+
+                async def mailer(to: str, subject: str, body: str) -> dict:
+                    return await draft_email.ainvoke({"to": to, "subject": subject, "body": body})
+
             builtin_tools += build_accounting_tools(
                 shared_services(config.documents, require_tenant=config.tenants.enabled),
                 bus=bus,
                 report_to={"channel": wf.review_channel, "chat_id": wf.review_chat_id},
+                mailer=mailer,
             )
         builtin_tools += build_document_tools(
             shared_services(config.documents, require_tenant=config.tenants.enabled),

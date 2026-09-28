@@ -159,3 +159,12 @@ def test_overdue_invoices_carry_their_reminder_history() -> None:
     (alfa,) = overdue_receivables([a], on=date(2026, 9, 30))
     inv = alfa["invoices"][0]
     assert inv["reminders_sent"] == 2 and inv["last_reminder"] == "2026-09-15"
+
+
+def test_overdue_customers_carry_their_email() -> None:
+    from langclaw.accounting.outlook import overdue_receivables
+
+    a = _inv("s1", "out", 100, "2026-08-01", partner="Alfa")
+    a["fields"].update(customer_email="plati@alfa.ro")
+    (alfa,) = overdue_receivables([a], on=date(2026, 9, 30))
+    assert alfa["email"] == "plati@alfa.ro"

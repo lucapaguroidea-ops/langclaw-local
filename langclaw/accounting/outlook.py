@@ -198,8 +198,8 @@ def overdue_receivables(
             continue
         name = row.get("receiver") or "?"
         entry = by_partner.setdefault(
-            name, {"partner": name, "cui": f.get("customer_cui", ""), "outstanding": Decimal(0),
-                   "invoices": []}
+            name, {"partner": name, "cui": f.get("customer_cui", ""),
+                   "email": f.get("customer_email", ""), "outstanding": Decimal(0), "invoices": []}
         )  # fmt: skip
         entry["outstanding"] += left
         entry["invoices"].append(

@@ -24,6 +24,7 @@ class Party:
     street: str = "Str. Exemplu nr. 1"
     city: str = "SECTOR1"
     county: str = "RO-B"
+    email: str = ""
 
 
 def _money(value: Decimal) -> str:
@@ -31,6 +32,12 @@ def _money(value: Decimal) -> str:
 
 
 def _party_xml(tag: str, p: Party) -> str:
+    contact = (
+        "\n    <cac:Contact><cbc:ElectronicMail>"
+        f"{escape(p.email)}</cbc:ElectronicMail></cac:Contact>"
+        if p.email
+        else ""
+    )
     legal = f"<cbc:CompanyLegalForm>{escape(p.reg_com)}</cbc:CompanyLegalForm>" if p.reg_com else ""
     return f"""<cac:{tag}><cac:Party>
     <cac:PartyName><cbc:Name>{escape(p.name)}</cbc:Name></cac:PartyName>
@@ -40,7 +47,7 @@ def _party_xml(tag: str, p: Party) -> str:
     <cac:PartyTaxScheme><cbc:CompanyID>{escape(p.cui)}</cbc:CompanyID>
       <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>
     <cac:PartyLegalEntity>
-      <cbc:RegistrationName>{escape(p.name)}</cbc:RegistrationName>{legal}</cac:PartyLegalEntity>
+      <cbc:RegistrationName>{escape(p.name)}</cbc:RegistrationName>{legal}</cac:PartyLegalEntity>{contact}
   </cac:Party></cac:{tag}>"""
 
 

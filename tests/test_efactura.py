@@ -428,3 +428,16 @@ async def test_synced_invoices_land_in_the_clients_table_and_are_searchable(s3) 
     finally:
         await pool.execute("DROP SCHEMA IF EXISTS tenant_acme CASCADE")
         await root.close()
+
+
+def test_contact_emails_are_read_and_stored() -> None:
+    from langclaw.documents.efactura.sync import invoice_record
+
+    buyer = Party(name=BUYER.name, cui=BUYER.cui, email="plati@client.ro")
+    xml = make_invoice(number="E-1", issue_date="2026-09-15", supplier=SELLER, customer=buyer,
+                       lines=[("Servicii", 1, 100.00, 21)])  # fmt: skip
+    inv = parse_ubl(xml)
+    assert inv.customer.email == "plati@client.ro" and inv.supplier.email == ""
+    msg = type("Msg", (), {"id": "1", "created": "2026-09-15"})()
+    fields = invoice_record(inv, msg, own_cif=SELLER.cui)["fields"]
+    assert fields["customer_email"] == "plati@client.ro" and fields["supplier_email"] == ""

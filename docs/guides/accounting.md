@@ -213,8 +213,15 @@ On the next run, `receivables_overdue` shows `reminders_sent` and
 `last_reminder` per invoice, and the model escalates: first notice, second
 reminder, final notice.
 
-Nothing is emailed automatically, because customer email addresses aren't
-captured yet. Send the filed text from the chat or your mail client.
+Customer emails come from the e-Factura invoices. The UBL parser reads each
+party's `cac:Contact/cbc:ElectronicMail`, and sync stores it as `customer_email`
+/ `supplier_email`. `receivables_overdue` shows the email per customer.
+
+When Gmail is connected with write access (`LANGCLAW__TOOLS__GMAIL__ENABLED=true`,
+`…__READONLY=false`), `reminders_file` also creates a **Gmail draft** per
+reminder, addressed to the customer. A person still presses send. Customers
+without an email are filed and reported with `"draft": "no email address for
+this customer"`. Without Gmail, reminders are only filed.
 
 ## Results and income tax
 

@@ -37,6 +37,8 @@ class UblParty:
     """Trade register number (``J40/1234/2020``), when present."""
     iban: str = ""
     address: str = ""
+    email: str = ""
+    """Contact email (``cac:Contact/cbc:ElectronicMail``), when given."""
 
 
 @dataclass(slots=True)
@@ -206,6 +208,7 @@ def _party(node: ET.Element | None) -> UblParty:
         cui=cui,
         reg_com=reg_com,
         address=address,
+        email=_text(node, "cac:Contact/cbc:ElectronicMail"),
     )
 
 

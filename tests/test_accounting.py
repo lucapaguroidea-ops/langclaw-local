@@ -956,3 +956,29 @@ async def test_the_reminders_workflow_files_what_was_approved(acme) -> None:
     reminders = await scoped.store.search(doc_type="payment_reminder", limit=20)
     assert seen[0] > 0 and len(reminders) == seen[0]
     assert (await scoped.store.get(sale["bucket_key"]))["fields"]["reminders"]
+
+
+@needs_pg
+async def test_filing_reminders_drafts_emails_when_a_mailer_is_given(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    sent: list[tuple[str, str, str]] = []
+
+    async def mailer(to: str, subject: str, body: str) -> dict:
+        sent.append((to, subject, body))
+        return {"status": "drafted", "draft_id": f"d{len(sent)}"}
+
+    tools = {t.name: t for t in build_accounting_tools(services, mailer=mailer)}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        overdue = await tools["receivables_overdue"].ainvoke({"day": "2027-12-31"})
+        reminders = [{"partner": c["partner"], "cui": c["cui"], "subject": "Reamintire",
+                      "body": "Vă rugăm..."} for c in overdue["customers"]]  # fmt: skip
+        reminders.append({"partner": "Fara email", "cui": "RO0", "subject": "x", "body": "y"})
+        out = await tools["reminders_file"].ainvoke({"reminders": reminders, "day": "2027-12-31"})
+    with_email = [c for c in overdue["customers"] if c["email"]]
+    assert with_email and len(sent) == len(with_email)
+    assert {s[0] for s in sent} == {c["email"] for c in with_email}
+    assert out["filed"][-1]["draft"] == "no email address for this customer"
+    assert all(f["draft"].startswith("d") for f in out["filed"] if f.get("to"))
