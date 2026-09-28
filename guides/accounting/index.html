@@ -1802,9 +1802,18 @@ works like this:</p>
    exactly those invoices, and the tone gets firmer with the delay.</li>
 <li>The run pauses for a person to approve or edit the drafts.</li>
 </ol>
-<p>The approved drafts are the output. Nothing is sent automatically, because
-there's no email channel yet. Send them from the chat, or copy them into your
-mail client.</p>
+<p>After approval, <code>reminders_file</code> files each reminder:</p>
+<ul>
+<li>The text goes into the client's bucket under <code>reminders/&lt;date&gt;/</code>, as a
+  <code>payment_reminder</code> document.</li>
+<li>Every invoice it cites gets the date added to its <code>reminders</code> history
+  (<code>reminded_on</code> holds the latest).</li>
+</ul>
+<p>On the next run, <code>receivables_overdue</code> shows <code>reminders_sent</code> and
+<code>last_reminder</code> per invoice, and the model escalates: first notice, second
+reminder, final notice.</p>
+<p>Nothing is emailed automatically, because customer email addresses aren't
+captured yet. Send the filed text from the chat or your mail client.</p>
 <h2 id="results-and-income-tax">Results and income tax<a class="headerlink" href="#results-and-income-tax" title="Permanent link">&para;</a></h2>
 <p><code>accounting_results(period)</code> computes the profit and loss for the month and the
 year to date from the journal:</p>
