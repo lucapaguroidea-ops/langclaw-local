@@ -1329,3 +1329,108 @@ async def test_the_cash_payment_limit_adds_up_a_partners_invoices_on_the_day(acm
         )
     assert first["warnings"] == [] and next_day["warnings"] == []
     assert "120.00" in second["warnings"][0] and bill["sender"] in second["warnings"][0]
+
+
+@needs_pg
+async def test_the_journal_register_lists_every_entry_or_only_non_invoice_ones(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    period = str(bill["document_date"])[:7]
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": bill["bucket_key"], "proposal": _entry_for(bill)}
+        )
+        await tools["cash_z_report"].ainvoke(
+            {"day": f"{period}-28", "lines": [{"rate": 21, "gross": 121}]}
+        )
+        full = await tools["accounting_journal_register"].ainvoke({"period": period})
+        other = await tools["accounting_journal_register"].ainvoke(
+            {"period": period, "without_invoices": True}
+        )
+        bad = await tools["accounting_journal_register"].ainvoke({"period": "2026-13"})
+    assert full["entries"] == 2 and other["entries"] == 1
+    assert full["balanced"] and full["debit"] == full["credit"]
+    csv_text = (await scoped.bucket.get(other["key"]))[0].decode("utf-8")
+    header, *rows = [r.split(";") for r in csv_text.strip().splitlines()]
+    assert header == ["nr", "date", "document", "explanation", "account", "debit", "credit"]
+    assert [r[4] for r in rows] == ["5311", "707", "4427"]
+    assert rows[0][2] == f"cash/z/{period}-28" and rows[0][5] == "121.00"
+    assert other["key"].endswith("registru-jurnal-other.csv") and "error" in bad
+
+
+@needs_pg
+async def test_the_account_ledger_reads_one_account_with_its_opening_balance(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        for day, gross in (("2026-08-30", 121), ("2026-09-03", 242)):
+            await tools["cash_z_report"].ainvoke(
+                {"day": day, "lines": [{"rate": 21, "gross": gross}]}
+            )
+        ledger = await tools["accounting_account_ledger"].ainvoke(
+            {"account": "4427", "period": "2026-09"}
+        )
+        bad = await tools["accounting_account_ledger"].ainvoke(
+            {"account": "x", "period": "2026-09"}
+        )
+    assert ledger["opening"] == "-21.00" and ledger["closing"] == "-63.00"
+    assert [r["document"] for r in ledger["lines"]] == ["cash/z/2026-09-03"]
+    assert ledger["lines"][0]["counterpart"] == "5311"
+    assert ledger["key"].endswith("reports/2026-09/fisa-4427.csv") and "error" in bad
+
+
+@needs_pg
+async def test_the_trial_balance_tool_splits_opening_previous_and_month(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    z = tools["cash_z_report"]
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await z.ainvoke({"day": "2025-12-15", "lines": [{"rate": 0, "gross": 100}]})
+        await z.ainvoke({"day": "2026-02-10", "lines": [{"rate": 0, "gross": 40}]})
+        await z.ainvoke({"day": "2026-03-10", "lines": [{"rate": 0, "gross": 5}]})
+        sheet = await tools["accounting_trial_balance"].ainvoke({"period": "2026-03"})
+    cash = next(r for r in sheet["accounts"] if r["account"] == "5311")
+    assert (cash["opening_debit"], cash["previous_debit"], cash["month_debit"]) == (
+        "100.00", "40.00", "5.00")  # fmt: skip
+    assert cash["closing_debit"] == "145.00" and sheet["balanced"]
+    assert sheet["key"].endswith("reports/2026-03/balanta.csv")
+
+
+@needs_pg
+async def test_opening_balances_are_posted_once_and_open_the_trial_balance(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    balances = {"5121": "1000", "1012": "-1000"}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": balances}
+        )
+        twice = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": balances}
+        )
+        bad = await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2025-12-31", "balances": {"5121": "5"}}
+        )
+        sheet = await tools["accounting_trial_balance"].ainvoke({"period": "2026-01"})
+        other = await tools["accounting_journal_register"].ainvoke(
+            {"period": "2025-12", "without_invoices": True}
+        )
+    assert out["posted"]["bucket_key"] == "opening/2025-12-31"
+    assert "already posted" in twice["error"] and "balance" in bad["error"]
+    bank = next(r for r in sheet["accounts"] if r["account"] == "5121")
+    assert bank["opening_debit"] == "1000.00" and sheet["balanced"]
+    assert other["entries"] == 1

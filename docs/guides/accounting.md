@@ -441,6 +441,60 @@ invoices get status `exported` and aren't exported again unless `again=True`.
   available, so the target fails with a clear error instead of guessing an API
   (`langclaw/accounting/export/nextup.py` is the place to wire it).
 
+### Journal register (registrul-jurnal)
+
+`accounting_journal_register(period, without_invoices=False)` writes every
+posted entry of the month as a CSV to
+`reports/<period>/registru-jurnal.csv`, with a 24-hour link. There is one row
+per line: `nr;date;document;explanation;account;debit;credit`. The result gives
+the entry count, the debit and credit totals, and whether they balance.
+
+With `without_invoices=True`, the file is `registru-jurnal-other.csv` and holds
+only the entries langclaw made itself: bank (`bank/`), cash (`cash/`) and month
+close (`close/`). SAGA's invoice import doesn't carry these, so the accountant
+enters them in SAGA as *note contabile*. There is no direct SAGA import for them
+yet, because the note-contabile import format wasn't available.
+
+### Trial balance (balanța de verificare)
+
+`accounting_trial_balance(period)` gives each account's five column pairs, each
+split into debit and credit:
+
+- the opening balance at 1 January;
+- turnover earlier in the year;
+- the month's turnover;
+- total sums;
+- the closing balance.
+
+Balances go on their debit or credit side. `balanced` checks that every pair's
+debit and credit totals agree. The sheet is saved as a CSV at
+`reports/<period>/balanta.csv`, with a 24-hour link. The month report's
+`trial_balance` still gives only the month's turnover.
+
+The opening balance comes from everything posted before 1 January. For a
+client whose earlier years aren't in langclaw, post their balances once with
+`accounting_opening_balances(day, balances)`:
+
+- Date it the day before the first month kept here, e.g. `2025-12-31`.
+- Give the balances as debit minus credit, so credit balances are negative,
+  e.g. `{"5121": 1000, "1012": -800, "401": -200}`.
+- The balances must sum to 0, and zero balances are skipped.
+- It is posted once, as `opening/<day>`, and appears in the "other" journal
+  register next to the bank, cash and close entries.
+
+### Account ledger (fișa contului)
+
+`accounting_account_ledger(account, period)` shows one account for the month.
+It covers the account's analytic sub-accounts too, so 5121 includes 5121.01.
+
+- It gives the opening balance, then each posted line with its `counterpart`
+  (the entry's accounts on the other side, e.g. `704,4427` for a sale on
+  4111) and a running balance, then the totals and the closing balance.
+- Balances are debit minus credit, so a negative figure is a credit balance,
+  as usual for 401 or 4427. `side` says which it is.
+- The ledger is saved as a CSV at `reports/<period>/fisa-<account>.csv`, with a
+  24-hour link.
+
 Targets live in one registry (`langclaw/accounting/export/__init__.py:EXPORTERS`);
 a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 
@@ -451,9 +505,8 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
   model and the reviewer.
 - The VAT table is reference data to be reviewed by your accountant; update it
   when the law changes.
-- Entries are single-currency (the invoice's); FX translation, fixed-asset
-  depreciation, and non-invoice documents (receipts, bank statements) aren't
-  covered yet.
+- Entries are single-currency (the invoice's). FX translation isn't covered
+  yet.
 - The SAGA file follows the published import layout but hasn't been imported
   into a real SAGA install yet — try one batch before relying on it.
 - Period VAT uses the rate on each invoice's VAT breakdown; a reverse-charge

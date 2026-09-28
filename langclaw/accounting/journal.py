@@ -149,6 +149,36 @@ class Journal:
         ]
         return out
 
+    async def entries_between(
+        self, date_from: date, date_to: date, *, without_invoices: bool = False
+    ) -> list[dict[str, Any]]:
+        """Entries dated in [*date_from*, *date_to*] with their lines, in date order.
+        *without_invoices* keeps only the entries langclaw made itself (bank, cash,
+        month close, opening balances: keys under ``bank/``, ``cash/``,
+        ``close/``, ``opening/``)."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.id, e.entry_date, e.bucket_key, e.explanation, l.account, l.debit, "
+            f"l.credit, l.explanation AS line_explanation FROM {self._schema}.journal_entries e "
+            f"JOIN {self._schema}.journal_lines l ON l.entry_id = e.id "
+            "WHERE e.entry_date BETWEEN $1 AND $2 AND (NOT $3 OR e.bucket_key LIKE 'bank/%' "
+            "OR e.bucket_key LIKE 'cash/%' OR e.bucket_key LIKE 'close/%' "
+            "OR e.bucket_key LIKE 'opening/%') "
+            "ORDER BY e.entry_date, e.id, l.id",
+            date_from,
+            date_to,
+            without_invoices,
+        )
+        entries: dict[int, dict[str, Any]] = {}
+        for r in rows:
+            head = {"entry_date": r["entry_date"], "bucket_key": r["bucket_key"],
+                    "explanation": r["explanation"], "lines": []}  # fmt: skip
+            entry = entries.setdefault(r["id"], head)
+            entry["lines"].append({"account": r["account"], "debit": r["debit"],
+                                   "credit": r["credit"],
+                                   "explanation": r["line_explanation"]})  # fmt: skip
+        return list(entries.values())
+
     async def posted_keys(self, keys: list[str]) -> set[str]:
         if not keys:
             return set()
@@ -179,10 +209,14 @@ class Journal:
 
     async def account_lines(self, account: str, date_from: date, date_to: date) -> list[dict]:
         """Lines on *account* (and its analytics) of entries dated in
-        [*date_from*, *date_to*], in date order."""
+        [*date_from*, *date_to*], in date order, each with ``counterparts``: the
+        entry's accounts on the other side (comma-separated)."""
         pool = await self._db()
         rows = await pool.fetch(
-            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation "
+            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation, "
+            f"(SELECT string_agg(DISTINCT o.account, ',') FROM {self._schema}.journal_lines o "
+            "WHERE o.entry_id = l.entry_id AND o.id <> l.id AND "
+            "((l.debit > 0 AND o.credit > 0) OR (l.credit > 0 AND o.debit > 0))) AS counterparts "
             f"FROM {self._schema}.journal_lines l "
             f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
             "WHERE e.entry_date BETWEEN $1 AND $2 "

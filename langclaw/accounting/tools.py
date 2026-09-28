@@ -51,6 +51,7 @@ from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
+from langclaw.accounting.ledger import account_ledger
 from langclaw.accounting.outlook import (
     cash_position,
     deadlines,
@@ -63,10 +64,12 @@ from langclaw.accounting.period import (
     blockers,
     d394_rows,
     document_state,
+    opening_entry,
     parse_period,
     resolve_period,
     settles_vat,
     trial_balance,
+    trial_balance_sheet,
     vat_settlement,
     vat_summary,
 )
@@ -1095,6 +1098,155 @@ def build_accounting_tools(
             {"period": period, "key": key, "url": url, "rows": rows,
              "note": "Draft figures, not the ANAF D394 file."}, default=str))  # fmt: skip
 
+    async def accounting_journal_register(period: str = "", without_invoices: bool = False) -> dict:
+        """The month's journal register (registrul-jurnal) as a CSV in the client's
+        bucket: every posted entry, one row per line (nr, date, document,
+        explanation, account, debit, credit). With without_invoices, only the
+        entries langclaw made itself (bank, cash, month close), i.e. what SAGA
+        doesn't get from its invoice import, to enter there as note contabile.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+            without_invoices: Leave out the invoices' own entries.
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            svc = services.current()
+            entries = await Journal(svc.store).entries_between(
+                start, end, without_invoices=without_invoices
+            )
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["nr", "date", "document", "explanation", "account", "debit",
+                             "credit"])  # fmt: skip
+            debit = credit = Decimal(0)
+            for nr, entry in enumerate(entries, 1):
+                for line in entry["lines"]:
+                    d, c = Decimal(line["debit"]), Decimal(line["credit"])
+                    debit, credit = debit + d, credit + c
+                    writer.writerow([nr, entry["entry_date"].isoformat(), entry["bucket_key"],
+                                     line["explanation"] or entry["explanation"], line["account"],
+                                     f"{d:.2f}", f"{c:.2f}"])  # fmt: skip
+            name = "registru-jurnal-other" if without_invoices else "registru-jurnal"
+            key = f"reports/{period}/{name}.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"period": period, "key": key, "url": url, "entries": len(entries),
+                "debit": f"{debit:.2f}", "credit": f"{credit:.2f}",
+                "balanced": debit == credit}  # fmt: skip
+
+    async def accounting_account_ledger(account: str, period: str = "") -> dict:
+        """One account's ledger for a month (fișa contului): opening balance, each
+        posted line with its counterpart accounts and a running balance, totals
+        and closing balance (debit − credit, so negative is a credit balance).
+        Includes its analytics
+        (5121 → 5121.01). Saved as reports/<period>/fisa-<account>.csv.
+
+        Args:
+            account: The account number, e.g. 4111, 401 or 5121.01.
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            account = (account or "").strip()
+            svc = services.current()
+            journal = Journal(svc.store)
+            ledger = account_ledger(
+                account,
+                await journal.balance_until(start - timedelta(days=1), account),
+                await journal.account_lines(account, start, end),
+            )
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["date", "document", "explanation", "counterpart", "debit", "credit",
+                             "balance"])  # fmt: skip
+            writer.writerow(["", "", "Sold inițial", "", "", "", ledger["opening"]])
+            for r in ledger["lines"]:
+                writer.writerow([r["date"], r["document"], r["explanation"], r["counterpart"],
+                                 r["debit"], r["credit"], r["balance"]])  # fmt: skip
+            writer.writerow(["", "", "Total / sold final", "", ledger["debit"], ledger["credit"],
+                             ledger["closing"]])  # fmt: skip
+            key = f"reports/{period}/fisa-{account}.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"period": period, "key": key, "url": url, **ledger}
+
+    async def accounting_trial_balance(period: str = "") -> dict:
+        """The month's trial balance (balanța de verificare) with its five column
+        pairs per account: opening balance at the start of the year, earlier
+        turnover this year, the month's turnover, total sums and closing balance.
+        Saved as reports/<period>/balanta.csv.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            year = date(start.year, 1, 1)
+            svc = services.current()
+            journal = Journal(svc.store)
+            sheet = trial_balance_sheet(
+                await journal.lines_between(date(1900, 1, 1), year - timedelta(days=1)),
+                await journal.lines_between(year, start - timedelta(days=1))
+                if start > year
+                else [],
+                await journal.lines_between(start, end),
+            )
+            columns = [f"{p}_{side}" for p in ("opening", "previous", "month", "total", "closing")
+                       for side in ("debit", "credit")]  # fmt: skip
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["account", *columns])
+            for r in sheet["accounts"]:
+                writer.writerow([r["account"], *(r[c] for c in columns)])
+            writer.writerow(["TOTAL", *(sheet["totals"].get(c, "0.00") for c in columns)])
+            key = f"reports/{period}/balanta.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"period": period, "key": key, "url": url, **sheet},
+                                     default=str))  # fmt: skip
+
+    async def accounting_opening_balances(day: str, balances: dict[str, Any]) -> dict:
+        """Post a client's opening balances (sold inițial) when they start with
+        langclaw, usually dated the last day before the first month kept here.
+        One entry under opening/<day>, posted once; the balances must sum to 0.
+        Example balances: {"5121": 1000, "1012": -800, "401": -200}.
+
+        Args:
+            day: The balances' date (YYYY-MM-DD), e.g. 2025-12-31.
+            balances: Account to balance, as debit − credit (a credit balance is
+                below 0).
+        """
+        try:
+            on = date.fromisoformat(day)
+            if isinstance(balances, str):
+                balances = json.loads(balances)
+            entry = opening_entry(balances)
+            doc = {"bucket_key": f"opening/{on.isoformat()}", "document_date": on.isoformat(),
+                   "fields": {"direction": "in"}}  # fmt: skip
+            posted = await Journal(services.current().store).post(doc, entry, approved_by="opening")
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted}, default=str))
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1316,6 +1468,10 @@ def build_accounting_tools(
         payables_due,
         payables_batch,
         accounting_d394,
+        accounting_journal_register,
+        accounting_account_ledger,
+        accounting_trial_balance,
+        accounting_opening_balances,
         cash_z_report,
         cash_book,
         cash_pay_invoice,
