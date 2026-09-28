@@ -206,7 +206,7 @@ class Journal:
             "WHERE e.entry_date BETWEEN $1 AND $2 AND (NOT $3 OR e.bucket_key LIKE 'bank/%' "
             "OR e.bucket_key LIKE 'cash/%' OR e.bucket_key LIKE 'close/%' "
             "OR e.bucket_key LIKE 'opening/%' OR e.bucket_key LIKE 'offset/%' "
-            "OR e.bucket_key LIKE 'reverse/%') "
+            "OR e.bucket_key LIKE 'reverse/%' OR e.bucket_key LIKE 'advance/%') "
             "ORDER BY e.entry_date, e.id, l.id",
             date_from,
             date_to,

@@ -831,6 +831,99 @@ def build_accounting_tools(
                 "movement": movement_key, "left": str(left - amount),
                 **({"not_booked": why} if why else {})}  # fmt: skip
 
+    async def bank_book_advance(
+        movement_key: str, partner_cui: str, partner_name: str = ""
+    ) -> dict:
+        """Book a bank movement that pays no invoice yet as an advance (avans): money
+        in from a customer is D bank / C 419, money out to a supplier is D 409 /
+        C bank. Apply it to the invoice when it arrives with advance_apply.
+
+        Args:
+            movement_key: The movement's key (from bank_import or bank_movements).
+            partner_cui: The customer's or supplier's tax ID.
+            partner_name: Their name, for the journal.
+        """
+        if not partner_cui.strip():
+            return {"error": "Give the partner_cui of the customer or supplier."}
+        try:
+            svc = services.current()
+            book = BankBook(svc.store)
+            tx = await book.get(movement_key)
+            if tx is None:
+                return {"error": f"No bank movement {movement_key!r}."}
+            if tx.get("match_kind") in ("certain", "partial", "fee", "cash", "advance"):
+                return {"error": f"{movement_key} is already booked ({tx['match_kind']})."}
+            amount = f"{abs(Decimal(tx['amount'])):.2f}"
+            bank = bank_account(tx.get("account_iban", ""), tx.get("currency", "RON"), _profile())
+            incoming = Decimal(tx["amount"]) > 0
+            note = (
+                f"Avans {'încasat de la' if incoming else 'plătit'} {partner_name or partner_cui}"
+            )
+            debit, credit = (bank, "419") if incoming else ("409", bank)
+            entry = {"lines": [
+                {"account": debit, "debit": amount, "credit": "0", "explanation": note},
+                {"account": credit, "debit": "0", "credit": amount, "explanation": note}],
+                "reasoning": f"{note}.", "legal_basis": "OMFP 1802/2014"}  # fmt: skip
+            side = "out" if incoming else "in"
+            doc = {"bucket_key": f"bank/{movement_key}/advance",
+                   "document_date": str(tx["booked"]), "sender": partner_name,
+                   "receiver": partner_name,
+                   "fields": {"direction": side, "customer_cui": partner_cui,
+                              "supplier_cui": partner_cui}}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="bank")
+            await book.set_match(movement_key, "", "advance", partner_cui)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted}, default=str))
+
+    async def advance_apply(bucket_key: str, day: str = "", amount: str = "") -> dict:
+        """Apply a partner's advance to their invoice: D 419 / C 4111 for a sale,
+        D 401 / C 409 for a purchase, for what's left of the advance or of the
+        invoice (the smaller), or *amount*; the invoice counts as paid by it.
+
+        Args:
+            bucket_key: The invoice's key.
+            day: The date (YYYY-MM-DD); empty means today.
+            amount: How much to apply; empty means as much as possible.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            svc = services.current()
+            row = await svc.store.get(bucket_key)
+            if not row or row.get("doc_type") not in ("invoice", "credit_note"):
+                return {"error": f"No invoice {bucket_key!r}."}
+            f = row.get("fields") or {}
+            sale = f.get("direction") == "out"
+            cui = f.get("customer_cui" if sale else "supplier_cui", "")
+            advance_acct = "419" if sale else "409"
+            lines = await Journal(svc.store).partner_lines(cui, on)
+            held = sum((Decimal(x["credit"]) - Decimal(x["debit"]) if sale
+                        else Decimal(x["debit"]) - Decimal(x["credit"])
+                        for x in lines if str(x["account"]).startswith(advance_acct)),
+                       Decimal(0)).quantize(Decimal("0.01"))  # fmt: skip
+            most = min(held, outstanding(row))
+            if most <= 0:
+                return {"error": f"No advance ({advance_acct}) left for {cui} to apply, "
+                        "or nothing left to pay on the invoice."}  # fmt: skip
+            value = Decimal(amount).quantize(Decimal("0.01")) if amount else most
+            if not 0 < value <= most:
+                return {"error": f"Amount {value} must be above 0 and at most {most}."}
+            note = f"Regularizare avans {f.get('invoice_number', '')}".strip()
+            debit, credit = (advance_acct, "4111") if sale else ("401", advance_acct)
+            entry = {"lines": [
+                {"account": debit, "debit": str(value), "credit": "0", "explanation": note},
+                {"account": credit, "debit": "0", "credit": str(value), "explanation": note}],
+                "reasoning": f"{note}.", "legal_basis": "OMFP 1802/2014"}  # fmt: skip
+            doc = {**row, "bucket_key": f"advance/{on.isoformat()}/{bucket_key}",
+                   "document_date": on.isoformat()}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="advance")
+            tx = {"key": f"advance:{on.isoformat()}:{bucket_key}", "booked": on,
+                  "reference": "avans"}  # fmt: skip
+            await _apply_payment(svc, bucket_key, value, tx)
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "amount": str(value)}, default=str))
+
     async def assets_add(
         name: str, account: str, value: float, in_service: str, life_months: int
     ) -> dict:
@@ -1654,6 +1747,8 @@ def build_accounting_tools(
         bank_import,
         bank_movements,
         bank_confirm_match,
+        bank_book_advance,
+        advance_apply,
         assets_add,
         assets_list,
         accounting_results,

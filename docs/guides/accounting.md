@@ -436,6 +436,25 @@ Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.
 
+## Advances (avansuri)
+
+When a customer pays before the invoice exists, or the client pays a supplier
+in advance, the bank movement stays unmatched after `bank_import`.
+
+- `bank_book_advance(movement_key, partner_cui, partner_name)` books it as an
+  advance:
+  - money in from a customer is D bank / C 419;
+  - money out to a supplier is D 409 / C bank.
+  The movement then leaves the unmatched list.
+- When the invoice arrives, `advance_apply(bucket_key, day, amount="")` uses
+  the advance: D 419 / C 4111 for a sale, D 401 / C 409 for a purchase.
+  - It applies the smaller of what's left of the advance and what's left to
+    pay on the invoice, or `amount` if given (no more than that).
+  - The invoice counts as paid by it.
+
+These are advances without VAT. Advance invoices (facturi de avans) with VAT
+stay with the accountant.
+
 ## Correcting a posted entry (stornare)
 
 `journal_reverse(bucket_key, reason, day="")` undoes a wrong entry without

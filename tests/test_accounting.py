@@ -1643,3 +1643,42 @@ async def test_an_offset_moves_vat_on_collection_out_of_4428(acme) -> None:
     assert accounts[:2] == ["401", "4111"] and {"4427", "4426", "4428"} <= set(accounts)
     moved = sum(x["debit"] for x in out["posted"]["lines"] if x["account"] == "4428")
     assert moved > 0
+
+
+@needs_pg
+async def test_a_customer_advance_is_booked_on_419_and_applied_to_the_invoice(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    cui = sale["fields"]["customer_cui"]
+    await scoped.bucket.put("bank/a1.sta", _mt940(("C", 333.33, "avans comanda")))
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        imported = await tools["bank_import"].ainvoke({"key": "bank/a1.sta"})
+        key = (await tools["bank_movements"].ainvoke({}))["movements"][0]["key"]
+        booked = await tools["bank_book_advance"].ainvoke(
+            {"movement_key": key, "partner_cui": cui, "partner_name": "Client"}
+        )
+        twice = await tools["bank_book_advance"].ainvoke({"movement_key": key, "partner_cui": cui})
+        left = await tools["bank_movements"].ainvoke({})
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
+        )
+        applied = await tools["advance_apply"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "day": "2026-09-30"}
+        )
+        none_left = await tools["advance_apply"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "day": "2026-09-30"}
+        )
+    assert imported["unmatched"] == 1
+    assert [(x["account"], x["credit"] > 0) for x in booked["posted"]["lines"]] == [
+        ("5121", False), ("419", True)]  # fmt: skip
+    assert "error" in twice and left["movements"] == []
+    assert applied["amount"] == "333.33"
+    assert [x["account"] for x in applied["posted"]["lines"]] == ["419", "4111"]
+    assert "error" in none_left
+    f = (await scoped.store.get(sale["bucket_key"]))["fields"]
+    assert f["paid_amount"] == "333.33"
