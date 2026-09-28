@@ -323,6 +323,13 @@ async def test_accounting_overview_route(setup) -> None:
     )
     assert (await resp.json()) == {"period": "2026-09", "tenant": "acme"}
 
+    async def firm(*, period=""):
+        return {"period": period, "clients": []}
+
+    channel._plane.accounting_firm = firm
+    resp = await client.get("/v1/accounting/firm", params={"period": "2026-09"}, headers=AUTH)
+    assert (await resp.json()) == {"period": "2026-09", "clients": []}
+
 
 async def test_tenant_routes(setup) -> None:
     from langgraph.store.memory import InMemoryStore

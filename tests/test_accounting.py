@@ -2109,3 +2109,51 @@ async def test_a_scanned_invoice_is_filed_like_an_efactura_one(acme) -> None:
         assert bad["status"] == "needs_review" and bad["problems"]
         row = await scoped.store.get("inbox/odd.pdf")
         assert row["status"] == "needs_review" and row["fields"]["problems"] == bad["problems"]
+
+
+def test_a_firm_row_sums_up_a_clients_month() -> None:
+    from langclaw.accounting.overview import firm_row
+
+    report = {"period": "2026-09", "closed": None, "blockers": [{"bucket_key": "a"}],
+              "documents": {"missing": [{"label": "Extras BT"}]},
+              "bank": {"agrees": False, "chain": [], "accounts": []},
+              "vat": {"to_pay": "126.46", "to_recover": "0.00"},
+              "anomalies": [{"account": "5311"}], "result_to_carry": None}  # fmt: skip
+    row = firm_row("acme", "ACME", report, {"total": 3})
+    assert row == {"client": "acme", "name": "ACME", "period": "2026-09", "closed": False,
+                   "blockers": 1, "missing": ["Extras BT"], "bank_agrees": False,
+                   "unmatched": 3, "vat_to_pay": "126.46", "vat_to_recover": "0.00",
+                   "anomalies": 1, "result_to_carry": None, "ready_to_close": False,
+                   "error": ""}  # fmt: skip
+    clean = firm_row(
+        "b",
+        "B",
+        {
+            **report,
+            "blockers": [],
+            "documents": {"missing": []},
+            "bank": {"agrees": True},
+            "anomalies": [],
+        },
+        {"total": 0},
+    )
+    assert clean["ready_to_close"] is True
+    failed = firm_row("c", "C", {"error": "boom"}, {"error": "x"})
+    assert failed["error"] == "boom" and failed["ready_to_close"] is False
+
+
+@needs_pg
+async def test_the_firm_overview_has_one_row_per_client(acme) -> None:
+    from langclaw.accounting.overview import firm_overview
+    from langclaw.tenants import Tenant
+
+    services, scoped = acme
+    rows = await scoped.store.search(limit=20)
+    period = max(str(r["document_date"])[:7] for r in rows)
+    clients = [Tenant(id="acme", name="ACME", tax_id="RO12345678"),
+               Tenant(id="beta", name="Beta", tax_id="RO7")]  # fmt: skip
+    out = await firm_overview(services, clients, period)
+    assert out["period"] == period and [r["client"] for r in out["clients"]] == ["acme", "beta"]
+    acme_row, beta_row = out["clients"]
+    assert acme_row["blockers"] > 0 and acme_row["ready_to_close"] is False
+    assert beta_row["blockers"] == 0 and beta_row["error"] == ""
