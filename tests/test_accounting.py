@@ -1224,3 +1224,52 @@ async def test_cash_receipts_are_booked_once_and_count_as_deductible_vat(acme) -
     assert "already posted" in twice["error"] and "4111" in bad["error"]
     assert Decimal(after["vat"]["deductible"]) - Decimal(before["vat"]["deductible"]) == 21
     assert book["closing"] == "-121.00"
+
+
+@needs_pg
+async def test_employee_advances_are_settled_by_receipts_and_returned_cash(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        given = await tools["cash_advance"].ainvoke(
+            {"day": "2026-11-02", "amount": "300", "employee": "Ana Pop", "document": "DP 1"}
+        )
+        await tools["cash_advance"].ainvoke(
+            {"day": "2026-11-02", "amount": "100", "employee": "Ion Ene", "document": "DP 2"}
+        )
+        spent = await tools["cash_receipt"].ainvoke(
+            {
+                "day": "2026-11-04",
+                "amount": "242",
+                "account": "6022",
+                "document": "B 9",
+                "employee": "Ana Pop",
+            }  # fmt: skip
+        )
+        open_mid = await tools["advances_open"].ainvoke({"day": "2026-11-05"})
+        back = await tools["cash_advance"].ainvoke(
+            {
+                "day": "2026-11-06",
+                "amount": "58",
+                "employee": "Ana Pop",
+                "document": "DI 3",
+                "returned": True,
+            }  # fmt: skip
+        )
+        too_much = await tools["cash_advance"].ainvoke(
+            {"day": "2026-11-06", "amount": "500", "employee": "Ion Ene", "returned": True}
+        )
+        open_end = await tools["advances_open"].ainvoke({"day": "2026-11-30"})
+        book = await tools["cash_book"].ainvoke({"period": "2026-11"})
+    assert given["posted"]["lines"][0]["account"] == "542"
+    assert spent["posted"]["lines"][-1]["account"] == "542"
+    assert {a["employee"]: a["open"] for a in open_mid["advances"]} == {
+        "Ana Pop": "58.00", "Ion Ene": "100.00"}  # fmt: skip
+    assert back["open"] == "0.00" and "only 100.00" in too_much["error"]
+    assert open_end["advances"] == [{"employee": "Ion Ene", "open": "100.00"}]
+    assert open_end["total"] == "100.00"
+    assert book["closing"] == "-342.00"

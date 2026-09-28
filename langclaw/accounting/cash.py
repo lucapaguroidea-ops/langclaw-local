@@ -13,7 +13,9 @@ balance, with the days the cash went negative (money paid out that the register
 never had — usually a missing receipt) or above the client's ``cash_limit``.
 
 :func:`cash_expense_entry` books a purchase paid in cash with a receipt and no
-invoice (bon fiscal): D expense or stock / D 4426 / C 5311.
+invoice (bon fiscal): D expense or stock / D 4426 / C 5311 — or C 542 when an
+employee paid it from a cash advance (:func:`advance_entry`: D 542 / C 5311 when
+the advance is given, D 5311 / C 542 for what they bring back).
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from langclaw.accounting.vat import allowed_vat_rates
 
 _CENT = Decimal("0.01")
 CASH_ACCOUNT = "5311"
+ADVANCE_ACCOUNT = "542"
 DEFAULT_REVENUE_ACCOUNT = "707"
 
 
@@ -105,11 +108,18 @@ def cash_book(
 
 
 def cash_expense_entry(
-    day: date, gross: str, rate: Any, account: str, *, deduct_vat: bool
+    day: date,
+    gross: str,
+    rate: Any,
+    account: str,
+    *,
+    deduct_vat: bool,
+    paid_from: str = CASH_ACCOUNT,
 ) -> dict[str, Any]:
     """The entry for a *gross* cash purchase at VAT *rate* booked on *account*
     (class 6 expense, class 3 stock or class 2 asset). With *deduct_vat* the VAT
-    goes to 4426, otherwise it stays in the cost.
+    goes to 4426, otherwise it stays in the cost. *paid_from* is 5311, or 542 for
+    a receipt settling an employee's advance.
 
     Raises:
         ValueError: a bad amount or account, or a rate not valid on *day*.
@@ -134,11 +144,38 @@ def cash_expense_entry(
     lines = [{"account": account, "debit": str(amount - vat), "credit": "0", "explanation": note}]
     if vat:
         lines.append({"account": "4426", "debit": str(vat), "credit": "0", "explanation": note})
-    lines.append({"account": CASH_ACCOUNT, "debit": "0", "credit": str(amount),
+    lines.append({"account": paid_from, "debit": "0", "credit": str(amount),
                   "explanation": note})  # fmt: skip
     return {
         "lines": lines,
         "totals": {"gross": amount, "net": amount - vat, "vat": vat},
         "reasoning": f"{note}: cheltuială plătită cu numerar.",
         "legal_basis": "OMFP 1802/2014; Codul fiscal art. 299, 319",
+    }
+
+
+def advance_entry(amount: str, employee: str, *, returned: bool = False) -> dict[str, Any]:
+    """Cash advanced to *employee* (D 542 / C 5311), or, *returned*, the unspent
+    part they bring back (D 5311 / C 542).
+
+    Raises:
+        ValueError: no employee or an amount not above 0.
+    """
+    if not (employee or "").strip():
+        raise ValueError("Name the employee who gets or returns the advance.")
+    try:
+        value = Decimal(str(amount)).quantize(_CENT)
+    except InvalidOperation as exc:
+        raise ValueError(f"Bad amount {amount!r}.") from exc
+    if value <= 0:
+        raise ValueError(f"The amount must be above 0, not {value}.")
+    note = f"{'Restituire avans' if returned else 'Avans de trezorerie'} {employee.strip()}"
+    debit, credit = (CASH_ACCOUNT, ADVANCE_ACCOUNT) if returned else (ADVANCE_ACCOUNT, CASH_ACCOUNT)
+    return {
+        "lines": [
+            {"account": debit, "debit": str(value), "credit": "0", "explanation": note},
+            {"account": credit, "debit": "0", "credit": str(value), "explanation": note},
+        ],
+        "reasoning": f"{note}.",
+        "legal_basis": "OMFP 1802/2014",
     }

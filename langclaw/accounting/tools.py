@@ -40,7 +40,13 @@ from langclaw.accounting.bank.booking import (
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
-from langclaw.accounting.cash import CASH_ACCOUNT, cash_expense_entry, z_report_entry
+from langclaw.accounting.cash import (
+    ADVANCE_ACCOUNT,
+    CASH_ACCOUNT,
+    advance_entry,
+    cash_expense_entry,
+    z_report_entry,
+)
 from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
@@ -1174,6 +1180,7 @@ def build_accounting_tools(
     async def cash_receipt(
         day: str, amount: str, account: str, vat_rate: float = 21,
         document: str = "", description: str = "", deduct_vat: bool = True,
+        employee: str = "",
     ) -> dict:  # fmt: skip
         """Book a purchase paid in cash with a receipt and no invoice (bon fiscal,
         e.g. fuel or small supplies): D expense/stock account / D 4426 / C 5311.
@@ -1188,15 +1195,19 @@ def build_accounting_tools(
             document: The receipt number; a receipt can be booked once.
             description: What was bought.
             deduct_vat: False when the VAT can't be deducted.
+            employee: Who paid it from a cash advance (then C 542, not 5311).
         """
         try:
             on = date.fromisoformat(day)
             deduct = deduct_vat and _profile().get("vat_payer", True) is not False
-            entry = cash_expense_entry(on, amount, vat_rate, account, deduct_vat=deduct)
+            paid_from = ADVANCE_ACCOUNT if employee.strip() else CASH_ACCOUNT
+            entry = cash_expense_entry(on, amount, vat_rate, account, deduct_vat=deduct,
+                                       paid_from=paid_from)  # fmt: skip
             svc = services.current()
             key = f"cash/receipt/{on.isoformat()}/{document or amount}"
+            sender = employee.strip() or description
             doc = {"bucket_key": key, "document_date": on.isoformat(),
-                   "fields": {"direction": "in"}, "sender": description}  # fmt: skip
+                   "fields": {"direction": "in"}, "sender": sender}  # fmt: skip
             posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
             totals = entry["totals"]
             breakdown = [{"rate": str(vat_rate), "taxable": str(totals["net"]),
@@ -1209,6 +1220,58 @@ def build_accounting_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
+
+    async def cash_advance(
+        day: str, amount: str, employee: str, document: str = "", returned: bool = False
+    ) -> dict:
+        """Give an employee a cash advance (avans de trezorerie, D 542 / C 5311), or
+        with returned=true take back what they didn't spend (D 5311 / C 542).
+        Their receipts settle it via cash_receipt(employee=...).
+
+        Args:
+            day: The date (YYYY-MM-DD).
+            amount: The cash given or returned.
+            employee: The employee's name, as used on their receipts.
+            document: The cash document number; each is booked once.
+            returned: True for unspent cash coming back.
+        """
+        try:
+            on = date.fromisoformat(day)
+            name = employee.strip()
+            entry = advance_entry(amount, name, returned=returned)
+            journal = Journal(services.current().store)
+            opened = {r["name"]: Decimal(r["balance"])
+                      for r in await journal.balances_by_name(ADVANCE_ACCOUNT, on)}  # fmt: skip
+            owed = opened.get(name, Decimal(0)).quantize(Decimal("0.01"))
+            value = Decimal(entry["lines"][0]["debit"])
+            if returned and value > owed:
+                return {"error": f"{name} has only {owed} of advance to return."}
+            kind = "return" if returned else "advance"
+            doc = {"bucket_key": f"cash/{kind}/{on.isoformat()}/{document or name}/{value}",
+                   "document_date": on.isoformat(), "fields": {"direction": "in"},
+                   "sender": name}  # fmt: skip
+            posted = await journal.post(doc, entry, approved_by="cash")
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        left = owed - value if returned else owed + value
+        return json.loads(json.dumps({"posted": posted, "open": str(left)}, default=str))
+
+    async def advances_open(day: str = "") -> dict:
+        """Cash advances employees still have to settle (542), per employee.
+
+        Args:
+            day: As of this date (YYYY-MM-DD); empty means today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            rows = await Journal(services.current().store).balances_by_name(ADVANCE_ACCOUNT, on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        advances = [{"employee": r["name"], "open": str(Decimal(r["balance"]).quantize(
+            Decimal("0.01")))} for r in rows if Decimal(r["balance"])]  # fmt: skip
+        total = sum((Decimal(a["open"]) for a in advances), Decimal(0))
+        return {"day": on.isoformat(), "advances": advances, "total": str(total.quantize(
+            Decimal("0.01")))}  # fmt: skip
 
     fns = [
         accounting_context,
@@ -1236,6 +1299,8 @@ def build_accounting_tools(
         cash_book,
         cash_pay_invoice,
         cash_receipt,
+        cash_advance,
+        advances_open,
     ]
     if bus is not None:
         fns.append(accounting_queue)

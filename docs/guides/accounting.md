@@ -297,6 +297,21 @@ The receipt is filed as a `cash_receipt` document, and its deductible VAT goes
 into the month's VAT summary. Whether a particular receipt qualifies for
 deduction is left to the accountant.
 
+### Employee cash advances (avans de trezorerie, 542)
+
+- `cash_advance(day, amount, employee, document)` gives an employee cash:
+  D 542 / C 5311.
+- `cash_receipt(..., employee="Ana Pop")` books a receipt paid from that
+  advance: C 542 instead of 5311.
+- `cash_advance(..., returned=true)` takes back what the employee didn't spend:
+  D 5311 / C 542. It refuses more than the employee still has open.
+- `advances_open(day)` lists what each employee still has to settle.
+  - A negative figure means they spent more than they were given, so the
+    company owes them.
+
+Employees are identified by the name as written, so use the same spelling
+every time.
+
 ### Cash book (registru de casă)
 
 `cash_book(period)` reads 5311 back from the journal. It gives the opening

@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from langclaw.accounting.cash import cash_book, cash_expense_entry, z_report_entry
+from langclaw.accounting.cash import advance_entry, cash_book, cash_expense_entry, z_report_entry
 
 D = Decimal
 
@@ -82,3 +82,19 @@ def test_cash_receipts_need_an_expense_account_and_a_valid_rate() -> None:
         cash_expense_entry(date(2026, 9, 15), "119", 19, "6022", deduct_vat=True)
     with pytest.raises(ValueError, match="above 0"):
         cash_expense_entry(date(2026, 9, 15), "0", 21, "6022", deduct_vat=True)
+
+
+def test_an_advance_moves_cash_to_542_and_back() -> None:
+    given = advance_entry("300", "Ana Pop")
+    back = advance_entry("50", "Ana Pop", returned=True)
+    assert [(x["account"], x["debit"], x["credit"]) for x in given["lines"]] == [
+        ("542", "300.00", "0"), ("5311", "0", "300.00")]  # fmt: skip
+    assert [(x["account"], x["debit"]) for x in back["lines"]] == [("5311", "50.00"), ("542", "0")]
+    with pytest.raises(ValueError, match="employee"):
+        advance_entry("10", " ")
+
+
+def test_a_receipt_can_settle_an_advance() -> None:
+    entry = cash_expense_entry(date(2026, 9, 15), "121", 21, "6022", deduct_vat=True,
+                               paid_from="542")  # fmt: skip
+    assert entry["lines"][-1]["account"] == "542"
