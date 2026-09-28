@@ -360,6 +360,9 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
         alerts.append("Missing documents: " + ", ".join(m["label"] for m in missing))
     if report.get("trial_balance") and not report["trial_balance"].get("balanced"):
         alerts.append("The trial balance doesn't balance")
+    if carry := report.get("result_to_carry"):
+        alerts.append(f"{carry['year']} {carry['kind']} of {carry['amount']} still on 121: "
+                      "carry it with accounting_result_carry")  # fmt: skip
     if anomalies := report.get("anomalies"):
         accounts = ", ".join(a["account"] for a in anomalies)
         alerts.append(f"Balances on the wrong side: {accounts}")

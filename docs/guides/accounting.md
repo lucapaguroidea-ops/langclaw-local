@@ -67,6 +67,13 @@ so proposals get more consistent as the accountant approves them.
   balances of 4426 and 4427 up to the month's last day are cleared into
   4423 (payable) or 4424 (refundable):
   4427 = 4426 + 4423, or 4427 + 4424 = 4426.
+  - **VAT still to recover** from earlier periods (the 4424 balance the
+    day before the month, not refunded yet) is carried forward: the report's
+    `vat` has `carried_from_previous` (the D300 "sold negativ reportat"),
+    `to_pay` and `to_recover`, and the settlement sets it off against what's
+    payable now (C 4424), so 4423 holds only what's left to pay. Whatever it
+    doesn't cover stays on 4424 for the next period. A refund received is
+    booked D 5121 / C 4424 and stops being carried.
   - **VAT on collection** (`"vat_on_collection": true`): invoices book their VAT
     on 4428. Each payment booked from a bank statement or with
     `cash_pay_invoice` moves the paid share of the invoice's VAT:
@@ -138,6 +145,18 @@ saved as `reports/<period>/d394.csv` in the client's bucket.
 These are figures for the accountant to check and file, not the ANAF D300 XML;
 generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
 ANAF schemas and is a later slice.
+
+
+### Last year's result (repartizarea profitului)
+
+When December closes, classes 6 and 7 are closed into 121. That result stays on
+121 until the shareholders decide what to do with it, and every month report of
+the new year shows it as `result_to_carry` (`year`, `amount`, `kind`) — the
+console raises an alert. Once decided,
+`accounting_result_carry(day, reserves, dividends)` posts it once:
+
+- a **profit**: D 121 / C 1061 (reserves), C 457 (dividends), C 117 (the rest);
+- a **loss**: D 117 / C 121.
 
 ## Bank statements and payments
 

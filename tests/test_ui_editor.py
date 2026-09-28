@@ -198,6 +198,11 @@ def test_recent_months_and_overview_alerts() -> None:
     assert "vat_registration at 85.0% of the limit" in alerts
     assert "Overdue receivables: 700.00" in alerts
     assert "1 bank movement(s) not matched" in alerts
+    carry = {"report": {"result_to_carry": {"year": 2025, "kind": "profit", "amount": "5000.00"}},
+             "outlook": {}, "bank": {}}  # fmt: skip
+    assert editor.overview_alerts(carry) == [
+        "2025 profit of 5000.00 still on 121: carry it with accounting_result_carry"
+    ]
     checks = {"chain": [{"problem": "gap", "statement": "bank/10.sta"}],
               "accounts": [{"iban": "RO1", "bank": "150.00", "ledger": "130.00",
                             "account": "5121", "agrees": False}]}  # fmt: skip

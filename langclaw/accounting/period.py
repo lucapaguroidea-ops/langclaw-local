@@ -329,11 +329,17 @@ def settles_vat(period: str, profile: dict[str, Any]) -> bool:
     return profile.get("vat_period") != "quarterly" or end.month % 3 == 0
 
 
-def vat_settlement(*, deductible: Decimal, collected: Decimal) -> dict[str, Any] | None:
+def vat_settlement(
+    *, deductible: Decimal, collected: Decimal, carried: Decimal = Decimal(0)
+) -> dict[str, Any] | None:
     """The settlement entry for the balances of 4426 (*deductible*, debit) and 4427
     (*collected*, credit): 4427 = 4426 + 4423 (payable) or 4427 + 4424 (refundable)
-    = 4426. ``None`` when both are zero."""
+    = 4426. *carried* is VAT still to recover from earlier periods (the 4424
+    debit balance, not refunded): it's set off against what's payable now
+    (credit 4424), and whatever it doesn't cover stays on 4424. ``None`` when
+    there's nothing to settle."""
     d, c = deductible.quantize(_CENT), collected.quantize(_CENT)
+    carried = max(carried.quantize(_CENT), Decimal(0))
     if not d and not c:
         return None
 
@@ -345,21 +351,28 @@ def vat_settlement(*, deductible: Decimal, collected: Decimal) -> dict[str, Any]
             "explanation": "Regularizare TVA",
         }
 
-    lines = []
+    lines, used = [], Decimal(0)
     if c:
         lines.append(line("4427", c, Decimal(0)))
     if c > d:
         if d:
             lines.append(line("4426", Decimal(0), d))
-        lines.append(line("4423", Decimal(0), c - d))
+        used = min(carried, c - d)
+        if used:
+            lines.append(line("4424", Decimal(0), used))
+        if c - d - used:
+            lines.append(line("4423", Decimal(0), c - d - used))
     else:
         if d > c:
             lines.append(line("4424", d - c, Decimal(0)))
         if d:
             lines.append(line("4426", Decimal(0), d))
+    reasoning = f"Regularizare TVA: colectată {c}, deductibilă {d}."
+    if used:
+        reasoning += f" Compensat cu TVA de recuperat din perioadele anterioare: {used}."
     return {
         "lines": lines,
-        "reasoning": f"Regularizare TVA: colectată {c}, deductibilă {d}.",
+        "reasoning": reasoning,
         "legal_basis": "OMFP 1802/2014; Codul fiscal art. 316",
     }
 

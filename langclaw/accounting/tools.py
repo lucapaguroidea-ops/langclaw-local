@@ -401,6 +401,20 @@ def build_accounting_tools(
         return {"first_opening": Decimal(str(f["opening"])),
                 "ledger_at_first": await journal.balance_until(before, account)}  # fmt: skip
 
+    async def _result_before(journal: Journal, day: date) -> Decimal:
+        """121's balance from earlier years (debit − credit: negative is a profit)
+        that hasn't been carried to 117 yet, as of *day*."""
+
+        def on_121(lines: list[dict[str, Any]]) -> Decimal:
+            return sum((Decimal(str(ln.get("debit") or 0)) - Decimal(str(ln.get("credit") or 0))
+                        for ln in lines if str(ln["account"]).split(".")[0] == "121"),
+                       Decimal(0))  # fmt: skip
+
+        jan = date(day.year, 1, 1)  # this year's own result reaches 121 only at year end
+        own = on_121(await journal.lines_between(jan, day)) - on_121(
+            await journal.lines_between(jan, day, without_year_end=True))  # fmt: skip
+        return (await journal.balance_until(day, "121") - own).quantize(Decimal("0.01"))
+
     async def _bank_check(svc: DocumentServices, journal: Journal, end: date) -> dict[str, Any]:
         """Statement continuity up to *end* and, per bank account, its latest
         statement's closing balance vs the ledger on that day."""
@@ -451,10 +465,12 @@ def build_accounting_tools(
             )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
+        carried = max(await journal.balance_until(start - timedelta(days=1), "4424"), Decimal(0))
         if settles_vat(period, _profile()):
             settlement = vat_settlement(
                 deductible=await journal.balance_until(end, "4426"),
                 collected=-await journal.balance_until(end, "4427"),
+                carried=carried,
             )
         report = {
             "period": period,
@@ -508,6 +524,16 @@ def build_accounting_tools(
                              "by_invoice": {k: by_invoice[k] for k in
                                             ("collected", "deductible", "payable",
                                              "refundable")}}  # fmt: skip
+        payable, refundable = Decimal(str(report["vat"]["payable"])), Decimal(
+            str(report["vat"]["refundable"]))  # fmt: skip
+        report["vat"]["carried_from_previous"] = carried  # D300: sold negativ reportat
+        report["vat"]["to_pay"] = max(payable - carried, Decimal(0))
+        report["vat"]["to_recover"] = refundable + max(carried - payable, Decimal(0))
+        prior = await _result_before(journal, end)
+        report["result_to_carry"] = {
+            "year": start.year - 1, "amount": abs(prior),
+            "kind": "profit" if prior < 0 else "loss",
+        } if prior else None  # fmt: skip
         if start.month == 12:  # December: close classes 6 and 7 into 121
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)
@@ -1620,6 +1646,62 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted}, default=str))
 
+    async def accounting_result_carry(
+        day: str, reserves: float = 0, dividends: float = 0, approved_by: str = ""
+    ) -> dict:
+        """Carry last year's result out of 121 once the shareholders have decided
+        (repartizarea profitului): a profit goes to legal/other reserves (1061),
+        dividends (457) and the rest to retained earnings (117); a loss goes to 117.
+        Posted once, dated *day* (in the new year).
+
+        Args:
+            day: The decision date, YYYY-MM-DD.
+            reserves: Part of the profit to reserves (1061).
+            dividends: Part of the profit to pay as dividends (457).
+            approved_by: Who approved it.
+        """
+        try:
+            on = date.fromisoformat(day)
+            journal = Journal(services.current().store)
+            prior = await _result_before(journal, on)
+            if not prior:
+                return {"error": f"Nothing to carry: 121 has no result from before {on.year}."}
+            cent = Decimal("0.01")
+            res, div = Decimal(str(reserves)).quantize(cent), Decimal(str(dividends)).quantize(cent)
+            if res < 0 or div < 0:
+                return {"error": "reserves and dividends can't be negative."}
+
+            def line(account: str, debit: Decimal, credit: Decimal) -> dict[str, str]:
+                why = "Repartizarea rezultatului exercițiului precedent"
+                return {"account": account, "debit": str(debit) if debit else "0",
+                        "credit": str(credit) if credit else "0", "explanation": why}  # fmt: skip
+
+            if prior > 0:  # a loss
+                if res or div:
+                    return {"error": f"{on.year - 1} ended with a loss of {prior}: there's "
+                            "nothing to put in reserves or pay as dividends."}  # fmt: skip
+                lines = [line("117", prior, Decimal(0)), line("121", Decimal(0), prior)]
+            else:
+                profit = -prior
+                if res + div > profit:
+                    return {"error": f"Reserves and dividends ({res + div}) exceed the "
+                            f"{on.year - 1} profit ({profit})."}  # fmt: skip
+                lines = [line("121", profit, Decimal(0))]
+                lines += [
+                    line(a, Decimal(0), v)
+                    for a, v in (("1061", res), ("457", div), ("117", profit - res - div))
+                    if v
+                ]
+            entry = {"lines": lines, "legal_basis": "OMFP 1802/2014",
+                     "reasoning": f"Rezultatul {on.year - 1}: {abs(prior)} "
+                                  f"({'pierdere' if prior > 0 else 'profit'})."}  # fmt: skip
+            doc = {"bucket_key": f"close/{on.year - 1}/result-carry",
+                   "document_date": on.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+            posted = await journal.post(doc, entry, approved_by=approved_by or "result-carry")
+        except (*_ERRORS, ValueError) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted}, default=str))
+
     async def accounting_reports(period: str = "") -> dict:
         """The files saved for a month under reports/<period>/ (close report,
         journal register, trial balance, ledgers, D394 draft), each with a
@@ -1871,6 +1953,7 @@ def build_accounting_tools(
         accounting_account_ledger,
         accounting_trial_balance,
         accounting_opening_balances,
+        accounting_result_carry,
         accounting_reports,
         cash_z_report,
         cash_book,

@@ -262,3 +262,23 @@ def test_paid_share_scales_each_invoice_to_what_was_paid_in_the_period() -> None
     assert len(rows) == 1
     summary = vat_summary(rows)
     assert summary["sales"] == [{"rate": "21", "taxable": D("500.00"), "vat": D("105.00")}]
+
+
+def test_vat_to_recover_from_earlier_periods_is_set_off_against_this_one() -> None:
+    from langclaw.accounting.period import vat_settlement
+
+    def by_account(entry):
+        return {(ln["account"], ln["debit"], ln["credit"]) for ln in entry["lines"]}
+
+    # 226.46 payable this month, 100 still to recover from before: pay 126.46.
+    used = vat_settlement(deductible=D("235.54"), collected=D("462.00"), carried=D("100.00"))
+    assert by_account(used) == {("4427", "462.00", "0"), ("4426", "0", "235.54"),
+                                ("4424", "0", "100.00"), ("4423", "0", "126.46")}  # fmt: skip
+    assert "100.00" in used["reasoning"]
+    # More to recover than is due: nothing to pay, the rest stays on 4424.
+    covered = vat_settlement(deductible=D("0"), collected=D("50.00"), carried=D("80.00"))
+    assert by_account(covered) == {("4427", "50.00", "0"), ("4424", "0", "50.00")}
+    # A refundable month just adds to 4424; the carried amount isn't touched.
+    more = vat_settlement(deductible=D("500.00"), collected=D("100.00"), carried=D("80.00"))
+    assert ("4424", "400.00", "0") in by_account(more)
+    assert all(ln["credit"] == "0" or ln["account"] != "4424" for ln in more["lines"])

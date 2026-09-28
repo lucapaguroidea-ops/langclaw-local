@@ -1969,3 +1969,47 @@ async def test_bank_statements_carry_forward_and_reconcile_with_the_ledger(acme)
         assert october["bank"]["agrees"] is False and october["bank"]["chain"]
         closed = await tools["accounting_period_close"].ainvoke({"period": "2026-10"})
         assert "follow on" in closed["error"]
+
+
+@needs_pg
+async def test_vat_to_recover_and_last_years_result_carry_into_the_new_period(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = [r for r in await scoped.store.search(limit=20) if r["status"] == "filed"]
+    period = max(str(r["document_date"])[:7] for r in rows)
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    with tenant_scope(client):
+        # Last year ended with 300 VAT to recover and a 5000 profit on 121.
+        await tools["accounting_opening_balances"].ainvoke({"day": "2025-12-31", "balances": {
+            "4424": 300, "5121": 4700, "121": -5000}})  # fmt: skip
+        for row in rows:
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        report = await tools["accounting_period_report"].ainvoke({"period": period})
+        vat = report["vat"]
+        assert vat["carried_from_previous"] == "300.00"
+        payable = Decimal(vat["payable"])
+        assert Decimal(vat["to_pay"]) == max(payable - 300, 0)
+        assert Decimal(vat["to_recover"]) == Decimal(vat["refundable"]) + max(300 - payable, 0)
+        used = [ln for ln in report["vat_settlement"]["lines"] if ln["account"] == "4424"]
+        assert not payable or Decimal(used[0]["credit"]) == min(payable, Decimal(300))
+
+        assert report["result_to_carry"] == {"year": 2025, "amount": "5000.00",
+                                             "kind": "profit"}  # fmt: skip
+        out = await tools["accounting_result_carry"].ainvoke(
+            {"day": "2026-05-20", "dividends": 1000, "reserves": 250}
+        )
+        lines = {(ln["account"], ln["debit"], ln["credit"]) for ln in out["posted"]["lines"]}
+        assert lines == {("121", 5000, 0), ("457", 0, 1000), ("1061", 0, 250), ("117", 0, 3750)}
+        again = await tools["accounting_result_carry"].ainvoke({"day": "2026-06-01"})
+        assert "nothing" in again["error"].lower()
+        after = await tools["accounting_period_report"].ainvoke({"period": period})
+        assert after["result_to_carry"] is None
+        too_much = await tools["accounting_result_carry"].ainvoke({"day": "2026-06-01"})
+        assert "error" in too_much
+    assert await Journal(scoped.store).balance_until(date(2026, 6, 1), "117") == Decimal("-3750.00")
