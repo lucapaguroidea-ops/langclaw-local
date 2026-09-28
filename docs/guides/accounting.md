@@ -422,14 +422,16 @@ does a client's month in one run:
 4. `accounting_outlook` produces the outlook: deadlines, limits and cash.
 5. The model drafts a status for the accountant and advice for the client.
 6. The run pauses for a person to approve or edit.
-7. Once approved, `accounting_period_close` closes the month. That only
-   happens if the report shows nothing blocking: no invoices without an entry,
+7. Once approved, the run takes a fresh `accounting_period_report` and
+   `accounting_period_close` closes the month. That only happens if the fresh
+   report shows nothing blocking: no invoices without an entry,
    no missing documents, a balanced trial balance and no balances on the wrong
    side. Closing files the journal register and the trial balance.
    - Otherwise the run ends and the month stays open.
    - A rejection also leaves the month open.
-   - Because the report is taken before the queued proposals are posted, a
-     month with fresh invoices usually closes on a later run.
+   - The fresh report is taken after approval, so proposals approved while
+     the review waited count. The month closes in the same run once every
+     invoice has its entry.
 
 With an empty `period` it works on **last month**. The period tools take `""`
 too (`resolve_period`), so a schedule never needs updating.

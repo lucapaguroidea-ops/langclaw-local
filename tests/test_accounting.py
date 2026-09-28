@@ -1737,3 +1737,56 @@ async def test_the_monthly_loop_closes_a_clean_month_once_approved(acme) -> None
         done = await runner.resume(spec, "month:2", {"action": "approve", "by": "luca"})
     assert done.status == "completed"
     assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == ["2027-03"]
+
+
+@needs_pg
+async def test_the_monthly_loop_rechecks_after_approval_so_entries_booked_meanwhile_count(
+    acme,
+) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import build_document_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    services, scoped = acme
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                               profile={"vat_payer": True}))  # fmt: skip
+    tools = build_accounting_tools(services) + build_document_tools(services)
+    by_name = {t.name: t for t in tools}
+    real = build_toolset_executor(tools)
+
+    async def executor(request):
+        if request.kind == "llm":
+            return request.schema(status="pending entries", summary="ok", items=[])
+        return await real(request)
+
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    spec_json = json.loads(path.read_text())
+    spec_json["nodes"]["sync"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    spec_json["nodes"]["queue"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    parsed = parse_graph_spec("accounting_month", spec_json)
+    spec = WorkflowSpec(name="accounting_month", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    rows = await scoped.store.search(doc_type="invoice", limit=50)
+    period = str(rows[0]["document_date"])[:7]
+    month = [r for r in rows if str(r["document_date"])[:7] == period]
+    with tenant_scope(await registry.get("acme")):
+        waiting = await runner.start(spec, {"period": period}, run_id="month:3", tenant="acme")
+        for row in month:  # the queued proposals get approved while the review waits
+            await by_name["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        done = await runner.resume(spec, "month:3", {"action": "approve", "by": "luca"})
+    run = await runner.get_run(spec, "month:3")
+    assert run["state"]["data"]["report"]["blockers"]  # blocked when first reported
+    assert waiting.status == "waiting" and done.status == "completed"
+    assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == [period]

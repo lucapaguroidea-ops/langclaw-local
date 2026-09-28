@@ -110,7 +110,8 @@ def test_the_monthly_loop_template_is_valid_against_the_real_tools() -> None:
     parse_graph_spec("accounting_month", spec, available_tools=names)
     tools = [n["tool"] for n in spec["nodes"].values() if n["type"] == "tool"]
     assert tools == ["efactura_sync", "accounting_queue", "accounting_period_report",
-                     "accounting_outlook", "accounting_period_close"]  # fmt: skip
+                     "accounting_outlook", "accounting_period_close",
+                     "accounting_period_report"]  # fmt: skip
 
 
 def test_aging_counts_what_is_left_after_partial_payments() -> None:

@@ -1,5 +1,5 @@
 {
-  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve; once approved, close the month, but only when the report shows nothing blocking (no invoices without an entry, no missing documents, a balanced trial balance, no balances on the wrong side); a rejection leaves it open. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
+  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve; once approved, close the month, but only when a fresh report, taken after approval, shows nothing blocking (no invoices without an entry, no missing documents, a balanced trial balance, no balances on the wrong side); a rejection leaves it open. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
   "input": {
     "period": {
       "type": "string",
@@ -75,34 +75,41 @@
       "rules": [
         {
           "if": {
-            "path": "report.blockers",
+            "path": "recheck.blockers",
             "op": "truthy"
           },
           "then": "END"
         },
         {
           "if": {
-            "path": "report.documents.missing",
+            "path": "recheck.documents.missing",
             "op": "truthy"
           },
           "then": "END"
         },
         {
           "if": {
-            "path": "report.trial_balance.balanced",
+            "path": "recheck.trial_balance.balanced",
             "op": "falsy"
           },
           "then": "END"
         },
         {
           "if": {
-            "path": "report.anomalies",
+            "path": "recheck.anomalies",
             "op": "truthy"
           },
           "then": "END"
         }
       ],
       "else": "close"
+    },
+    "recheck": {
+      "type": "tool",
+      "tool": "accounting_period_report",
+      "args": {
+        "period": "{{input.period}}"
+      }
     }
   },
   "edges": [
@@ -132,6 +139,10 @@
     },
     {
       "from": "review",
+      "to": "recheck"
+    },
+    {
+      "from": "recheck",
       "to": "can_close"
     }
   ],
