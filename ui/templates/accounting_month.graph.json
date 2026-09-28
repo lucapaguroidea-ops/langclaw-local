@@ -1,37 +1,139 @@
 {
-  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
+  "description": "The monthly loop for one client: import e-Factura, queue proposals for invoices without an entry, report the month (blockers, expected documents, trial balance, VAT) and the outlook (deadlines, limits, cash), then draft advice for a person to approve; once approved, close the month, but only when the report shows nothing blocking (no invoices without an entry, no missing documents, a balanced trial balance, no balances on the wrong side); a rejection leaves it open. Schedule it from the client's chat for the 1st of each month; with no period it works on last month.",
   "input": {
-    "period": {"type": "string", "description": "The month, as YYYY-MM. Empty: last month."}
+    "period": {
+      "type": "string",
+      "description": "The month, as YYYY-MM. Empty: last month."
+    }
   },
   "nodes": {
-    "sync": {"type": "tool", "tool": "efactura_sync", "args": {}},
-    "queue": {"type": "tool", "tool": "accounting_queue", "args": {"limit": 50}},
-    "report": {"type": "tool", "tool": "accounting_period_report", "args": {"period": "{{input.period}}"}},
-    "outlook": {"type": "tool", "tool": "accounting_outlook", "args": {"period": "{{input.period}}"}},
+    "sync": {
+      "type": "tool",
+      "tool": "efactura_sync",
+      "args": {}
+    },
+    "queue": {
+      "type": "tool",
+      "tool": "accounting_queue",
+      "args": {
+        "limit": 50
+      }
+    },
+    "report": {
+      "type": "tool",
+      "tool": "accounting_period_report",
+      "args": {
+        "period": "{{input.period}}"
+      }
+    },
+    "outlook": {
+      "type": "tool",
+      "tool": "accounting_outlook",
+      "args": {
+        "period": "{{input.period}}"
+      }
+    },
     "advise": {
       "type": "llm",
-      "system": "You are a Romanian chartered accountant. From the facts only (don't invent figures, rates or deadlines), write the month's status for the accountant: what still blocks the close (invoices without an entry — proposals were just queued for them —, missing documents), then the advice for the client: returns due with dates, limits marked warn, overdue receivables naming the largest partners, and a projected bank balance below what falls due. Brief, in Romanian.",
+      "system": "You are a Romanian chartered accountant. From the facts only (don't invent figures, rates or deadlines), write the month's status for the accountant: what still blocks the close (invoices without an entry — proposals were just queued for them —, missing documents, days with negative cash, balances on the wrong side, advances that could be applied to open invoices), then the advice for the client: returns due with dates, limits marked warn, overdue receivables naming the largest partners, and a projected bank balance below what falls due. Brief, in Romanian.",
       "prompt": "e-Factura import:\n{{sync}}\n\nQueued proposals:\n{{queue}}\n\nMonth report:\n{{report}}\n\nOutlook:\n{{outlook}}",
       "output": {
-        "status": {"type": "string", "description": "For the accountant: what blocks the close and what was done."},
-        "summary": {"type": "string", "description": "Two or three sentences for the client."},
-        "items": {"type": "array", "description": "Advice items: objects {topic, recommendation, because, due, urgency (high|medium|low)}."}
+        "status": {
+          "type": "string",
+          "description": "For the accountant: what blocks the close and what was done."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Two or three sentences for the client."
+        },
+        "items": {
+          "type": "array",
+          "description": "Advice items: objects {topic, recommendation, because, due, urgency (high|medium|low)}."
+        }
       }
     },
     "review": {
       "type": "human_review",
-      "message": "The month for this client — check the status and the advice before it goes out.",
-      "show": ["report", "outlook", "advise"],
+      "message": "The month for this client — check the status and the advice. Approving also closes the month when nothing blocks it.",
+      "show": [
+        "report",
+        "outlook",
+        "advise"
+      ],
       "editable": "advise"
+    },
+    "close": {
+      "type": "tool",
+      "tool": "accounting_period_close",
+      "args": {
+        "period": "{{input.period}}",
+        "closed_by": "accounting_month"
+      }
+    },
+    "can_close": {
+      "type": "branch",
+      "rules": [
+        {
+          "if": {
+            "path": "report.blockers",
+            "op": "truthy"
+          },
+          "then": "END"
+        },
+        {
+          "if": {
+            "path": "report.documents.missing",
+            "op": "truthy"
+          },
+          "then": "END"
+        },
+        {
+          "if": {
+            "path": "report.trial_balance.balanced",
+            "op": "falsy"
+          },
+          "then": "END"
+        },
+        {
+          "if": {
+            "path": "report.anomalies",
+            "op": "truthy"
+          },
+          "then": "END"
+        }
+      ],
+      "else": "close"
     }
   },
   "edges": [
-    {"from": "START", "to": "sync"},
-    {"from": "sync", "to": "queue"},
-    {"from": "queue", "to": "report"},
-    {"from": "report", "to": "outlook"},
-    {"from": "outlook", "to": "advise"},
-    {"from": "advise", "to": "review"}
+    {
+      "from": "START",
+      "to": "sync"
+    },
+    {
+      "from": "sync",
+      "to": "queue"
+    },
+    {
+      "from": "queue",
+      "to": "report"
+    },
+    {
+      "from": "report",
+      "to": "outlook"
+    },
+    {
+      "from": "outlook",
+      "to": "advise"
+    },
+    {
+      "from": "advise",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "can_close"
+    }
   ],
   "output": "advise"
 }
