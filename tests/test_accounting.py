@@ -2233,3 +2233,36 @@ async def test_entries_and_closes_record_who_acted_not_what_the_model_typed(acme
             {"day": "2026-02-01", "balances": {"5121": 1, "1012": -1}}
         )
         assert (await journal.get("opening/2026-02-01"))["recorded_by"] == ""
+
+
+@needs_pg
+async def test_a_clients_books_archive_into_one_zip_in_their_bucket(acme) -> None:
+    import hashlib
+    import io
+    import zipfile
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-01-31", "balances": {"5121": 100, "1012": -100}}
+        )
+        out = await tools["accounting_archive"].ainvoke({})
+    assert out["key"].startswith("archives/") and out["url"]
+    data, _ = await scoped.bucket.get(out["key"])
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["client"] == "acme" and manifest["schema"] == "tenant_acme"
+        tables = {t["table"]: t for t in manifest["tables"]}
+        assert tables["journal_entries"]["rows"] == 1 and tables["journal_lines"]["rows"] == 2
+        assert tables["documents"]["rows"] == 4  # the demo e-Factura invoices
+        for name, t in tables.items():
+            body = zf.read(f"{name}.jsonl")
+            assert hashlib.sha256(body).hexdigest() == t["sha256"]
+            assert len(body.splitlines()) == t["rows"]
+        first = json.loads(zf.read("journal_entries.jsonl").splitlines()[0])
+        assert first["bucket_key"] == "opening/2026-01-31"
+    assert out["tables"] == {name: t["rows"] for name, t in tables.items()}

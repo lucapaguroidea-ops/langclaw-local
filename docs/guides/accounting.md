@@ -171,6 +171,21 @@ generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
 ANAF schemas and is a later slice.
 
 
+### Archiving a client's books
+
+`accounting_archive()` writes the client's books into one zip in their bucket,
+`archives/<time>.zip`, and returns a 24-hour link: journal entries and lines,
+closed periods and their history, bank movements, fixed assets and document
+records, one JSON-lines file per table, plus `manifest.json` with each table's
+row count and SHA-256. It's a copy that doesn't need the database, to keep or
+to hand over when a client leaves. Schedule it (e.g. monthly with the `cron`
+tool) for a regular copy.
+
+Honest limits: it's an **export, not a restore** (nothing reads an archive back
+yet); it lands in the **same bucket** as the client's files, so copy it
+elsewhere if the bucket is what you're protecting against; and it isn't a
+database backup — take those at the Postgres service too.
+
 ### Who did it: `recorded_by`
 
 `approved_by`, `closed_by` and `reopened_by` are what someone typed — often
