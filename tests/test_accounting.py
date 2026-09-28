@@ -1145,3 +1145,56 @@ async def test_the_cash_book_reads_5311_from_the_journal(acme) -> None:
     kinds = sorted(p["problem"].split(":")[0] for p in book["problems"])
     assert kinds == ["Cash above the 1000.00 limit", "Cash negative"]
     assert "error" in bad
+
+
+@needs_pg
+async def test_invoices_paid_in_cash_go_through_5311(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    bill = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "in")  # fmt: skip
+    gross = Decimal(str(bill["amount"])).quantize(Decimal("0.01"))
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                    profile={"cash_payment_limit": 1})  # fmt: skip
+    with tenant_scope(client):
+        await tools["journal_post"].ainvoke(
+            {"bucket_key": bill["bucket_key"], "proposal": _entry_for(bill)}
+        )
+        part = await tools["cash_pay_invoice"].ainvoke(
+            {
+                "bucket_key": bill["bucket_key"],
+                "amount": "1.00",
+                "day": "2026-09-20",
+                "document": "DP 7",
+            }  # fmt: skip
+        )
+        again = await tools["cash_pay_invoice"].ainvoke(
+            {
+                "bucket_key": bill["bucket_key"],
+                "amount": "1.00",
+                "day": "2026-09-20",
+                "document": "DP 7",
+            }  # fmt: skip
+        )
+        rest = await tools["cash_pay_invoice"].ainvoke(
+            {"bucket_key": bill["bucket_key"], "day": "2026-09-21", "document": "DP 8"}
+        )
+        over = await tools["cash_pay_invoice"].ainvoke(
+            {"bucket_key": bill["bucket_key"], "amount": "5", "day": "2026-09-22"}
+        )
+        book = await tools["cash_book"].ainvoke({"period": "2026-09"})
+    assert [(x["account"], x["credit"]) for x in part["posted"]["lines"]][1] == ("5311", 1.0)
+    assert part["posted"]["lines"][0]["account"].startswith("401")
+    assert part["left"] == str(gross - 1) and part["warnings"] == []
+    assert "already" in again["error"]
+    assert rest["left"] == "0.00" and rest["paid"] == str(gross - 1)
+    assert "limit" in rest["warnings"][0]
+    assert "nothing left" in over["error"]
+    f = (await scoped.store.get(bill["bucket_key"]))["fields"]
+    assert f["paid_on"] == "2026-09-21" and len(f["payments"]) == 2
+    assert book["closing"] == str(-gross) and book["problems"]

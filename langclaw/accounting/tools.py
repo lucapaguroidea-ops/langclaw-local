@@ -1122,6 +1122,54 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"period": period, **book}
 
+    async def cash_pay_invoice(
+        bucket_key: str, amount: str = "", day: str = "", document: str = ""
+    ) -> dict:
+        """Record an invoice paid (or collected) in cash: D 401 / C 5311 for a
+        supplier invoice, D 5311 / C 4111 for a sale. Marks the invoice paid once
+        nothing is left. The same payment document can be booked once.
+
+        Args:
+            bucket_key: The invoice's key.
+            amount: How much was paid; empty means what's left to pay.
+            day: The payment date (YYYY-MM-DD); empty means today.
+            document: The cash document number (chitanță / dispoziție de plată).
+        """
+        try:
+            svc = services.current()
+            row = await svc.store.get(bucket_key)
+            if not row or row.get("doc_type") not in ("invoice", "credit_note"):
+                return {"error": f"No invoice {bucket_key!r}."}
+            on = date.fromisoformat(day) if day else date.today()
+            left = outstanding(row)
+            if left <= 0:
+                return {"error": f"{bucket_key} has nothing left to pay."}
+            paid = Decimal(amount).quantize(Decimal("0.01")) if amount else left
+            if paid <= 0 or paid > left:
+                return {"error": f"Amount {paid} must be above 0 and at most {left} left to pay."}
+            tx = {"key": f"cash:{on.isoformat()}:{document or paid}", "booked": on,
+                  "reference": document}  # fmt: skip
+            doc = {**row, "bucket_key": f"cash/{tx['key'][5:]}/{bucket_key}",
+                   "document_date": on.isoformat()}  # fmt: skip
+            invoice_entry = await Journal(svc.store).get(bucket_key)
+            entry = payment_entry(row, str(paid), bank=CASH_ACCOUNT,
+                                  invoice_lines=(invoice_entry or {}).get("lines"))  # fmt: skip
+            entry["reasoning"] = entry["reasoning"].replace("extras de cont", "numerar")
+            posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
+            await _apply_payment(svc, bucket_key, paid, tx)
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        warnings = []
+        limit = _profile().get("cash_payment_limit")
+        same_day = [p for p in (row.get("fields") or {}).get("payments") or []
+                    if str(p.get("tx", "")).startswith(f"cash:{on.isoformat()}:")]  # fmt: skip
+        total = paid + sum((Decimal(p["amount"]) for p in same_day), Decimal(0))
+        if limit and total > Decimal(str(limit)):
+            warnings.append(f"Cash paid on {on} for this invoice is {total}, above the "
+                            f"profile's cash_payment_limit of {limit}.")  # fmt: skip
+        return json.loads(json.dumps({"posted": posted, "paid": str(paid), "left": str(left - paid),
+                                      "warnings": warnings}, default=str))  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -1146,6 +1194,7 @@ def build_accounting_tools(
         accounting_d394,
         cash_z_report,
         cash_book,
+        cash_pay_invoice,
     ]
     if bus is not None:
         fns.append(accounting_queue)

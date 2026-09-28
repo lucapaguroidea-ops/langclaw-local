@@ -261,6 +261,23 @@ VAT summary (the D300 draft). It doesn't go into D394, which lists invoices
 with a partner tax ID. Cash deposited at or withdrawn from the bank is booked
 through 581 by `bank_import` (see the bank section).
 
+### Invoices paid in cash
+
+`cash_pay_invoice(bucket_key, amount, day, document)` records an invoice paid
+or collected in cash, with the chitanță or dispoziție de plată number:
+
+- a supplier invoice is booked D 401 / C 5311, and a sale D 5311 / C 4111
+  (using the partner account the invoice was booked on);
+- if `amount` is empty, it pays whatever is left, and it refuses more than
+  that;
+- the invoice's payments are updated, and `paid_on` is set once nothing is
+  left;
+- the same document can't be booked twice.
+
+If the profile sets `cash_payment_limit`, a warning is returned when an
+invoice's cash payments on one day go above it. No legal limit is built in,
+so set the one that applies to the client.
+
 ### Cash book (registru de casă)
 
 `cash_book(period)` reads 5311 back from the journal. It gives the opening
