@@ -71,6 +71,7 @@ from langclaw.accounting.period import (
     settles_vat,
     trial_balance,
     trial_balance_sheet,
+    vat_due,
     vat_settlement,
     vat_summary,
 )
@@ -431,6 +432,13 @@ def build_accounting_tools(
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],
                           "open_advances": await _open_advances(journal, end)}  # fmt: skip
+        if _profile().get("vat_on_collection"):  # VAT is due as invoices are paid
+            by_invoice = report["vat"]
+            month_lines = await journal.lines_between(start, end)
+            report["vat"] = {**by_invoice, **vat_due(month_lines), "basis": "payments",
+                             "by_invoice": {k: by_invoice[k] for k in
+                                            ("collected", "deductible", "payable",
+                                             "refundable")}}  # fmt: skip
         if start.month == 12:  # December: close classes 6 and 7 into 121
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)

@@ -72,8 +72,11 @@ so proposals get more consistent as the accountant approves them.
     `cash_pay_invoice` moves the paid share of the invoice's VAT:
     D 4428 / C 4427 for a sale, D 4426 / C 4428 for a purchase. The settlement
     then clears only the VAT that became due, and unpaid VAT stays on 4428.
-  - The VAT summary (D300 draft) still counts invoices by their date, not by
-    payment. For these clients, check it against 4426 and 4427.
+  - The month report's `vat` (the D300 draft) then counts what became due in
+    the month, with `"basis": "payments"`: credits to 4427 and debits to 4426.
+    That includes paid invoices, Z reports and receipts. The invoice-date
+    totals stay under `by_invoice`. The per-rate rows still come from the
+    invoices.
   - A partner offset (`partner_offset`) moves the offset share the same way,
     invoice by invoice.
 

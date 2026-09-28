@@ -241,6 +241,21 @@ def vat_summary(invoices: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def vat_due(lines: list[dict[str, Any]]) -> dict[str, Decimal]:
+    """VAT that became due in a period, from its journal *lines*: credits to 4427
+    (collected) and debits to 4426 (deductible). For VAT on collection, where the
+    invoices' VAT waits on 4428 until they're paid; settlement lines (debits to
+    4427, credits to 4426) don't count."""
+    collected = sum((_dec(x.get("credit")) for x in lines
+                     if str(x["account"]).split(".")[0] == "4427"), Decimal(0))  # fmt: skip
+    deductible = sum((_dec(x.get("debit")) for x in lines
+                      if str(x["account"]).split(".")[0] == "4426"), Decimal(0))  # fmt: skip
+    net = (collected - deductible).quantize(_CENT)
+    zero = Decimal(0).quantize(_CENT)
+    return {"collected": collected.quantize(_CENT), "deductible": deductible.quantize(_CENT),
+            "payable": max(net, zero), "refundable": max(-net, zero)}  # fmt: skip
+
+
 def blockers(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Invoices in the period that don't have a journal entry yet."""
     return [
