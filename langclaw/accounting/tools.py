@@ -987,10 +987,7 @@ def build_accounting_tools(
             doc = {"bucket_key": f"offset/{on.isoformat()}/{partner_cui}",
                    "document_date": on.isoformat(), "sender": row["name"],
                    "fields": {"direction": "in", "supplier_cui": partner_cui}}  # fmt: skip
-            posted = await journal.post(doc, entry, approved_by="offset")
-            tx = {"key": f"offset:{on.isoformat()}:{partner_cui}", "booked": on,
-                  "reference": "compensare"}  # fmt: skip
-            applied = []
+            plan = []  # (invoice, part) per side, oldest first
             for side, field in (("out", "customer_cui"), ("in", "supplier_cui")):
                 left = value
                 invoices = sorted((r for r in await _invoices(svc, date(1900, 1, 1), on)
@@ -1002,9 +999,20 @@ def build_accounting_tools(
                     if left <= 0:
                         break
                     part = min(left, outstanding(invoice))
-                    await _apply_payment(svc, invoice["bucket_key"], part, tx)
-                    applied.append({"bucket_key": invoice["bucket_key"], "amount": str(part)})
+                    plan.append((invoice, part))
                     left -= part
+            if _profile().get("vat_on_collection"):  # the offset share of VAT becomes due
+                for invoice, part in plan:
+                    extra = payment_entry(invoice, str(part), invoice_lines=None, bank="-",
+                                          vat_on_collection=True)["lines"][2:]  # fmt: skip
+                    entry["lines"] += extra
+            posted = await journal.post(doc, entry, approved_by="offset")
+            tx = {"key": f"offset:{on.isoformat()}:{partner_cui}", "booked": on,
+                  "reference": "compensare"}  # fmt: skip
+            applied = []
+            for invoice, part in plan:
+                await _apply_payment(svc, invoice["bucket_key"], part, tx)
+                applied.append({"bucket_key": invoice["bucket_key"], "amount": str(part)})
         except (*_ERRORS, InvalidOperation) as exc:
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted, "amount": str(value),

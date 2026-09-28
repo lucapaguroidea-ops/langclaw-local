@@ -1601,3 +1601,41 @@ async def test_vat_on_collection_becomes_due_as_the_customer_pays(acme) -> None:
     assert Decimal(accounts["4427"]["balance"]) == -share
     assert Decimal(accounts["4428"]["balance"]) == -(vat - share)
     assert report["vat_settlement"] is not None
+
+
+@needs_pg
+async def test_an_offset_moves_vat_on_collection_out_of_4428(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    bill = next(r for r in rows if r["fields"]["direction"] == "in")
+    cui = sale["fields"]["customer_cui"]
+    copy = {k: v for k, v in bill.items() if k not in ("id", "bucket_key", "fields")}
+    await scoped.store.save("inbox/from-customer.xml", {**copy, "sender": sale["receiver"],
+        "fields": {**bill["fields"], "supplier_cui": cui, "invoice_number": "BACK-1"}})  # fmt: skip
+    bill2 = await scoped.store.get("inbox/from-customer.xml")
+    with tenant_scope(
+        Tenant(
+            id="acme",
+            name="ACME",
+            tax_id="RO12345678",
+            profile={"vat_payer": True, "vat_on_collection": True},
+        )
+    ):
+        for row in (sale, bill2):
+            entry = _entry_for(row)
+            for line in entry["lines"]:
+                if line["account"] in ("4426", "4427"):
+                    line["account"] = "4428"
+            await tools["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": entry}
+            )
+        out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+    accounts = [x["account"] for x in out["posted"]["lines"]]
+    assert accounts[:2] == ["401", "4111"] and {"4427", "4426", "4428"} <= set(accounts)
+    moved = sum(x["debit"] for x in out["posted"]["lines"] if x["account"] == "4428")
+    assert moved > 0

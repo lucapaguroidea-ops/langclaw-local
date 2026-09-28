@@ -74,7 +74,8 @@ so proposals get more consistent as the accountant approves them.
     then clears only the VAT that became due, and unpaid VAT stays on 4428.
   - The VAT summary (D300 draft) still counts invoices by their date, not by
     payment. For these clients, check it against 4426 and 4427.
-  - A partner offset doesn't move 4428 yet.
+  - A partner offset (`partner_offset`) moves the offset share the same way,
+    invoice by invoice.
 
 - **depreciation** — the month's depreciation entry for the client's fixed
   assets, previewed here and posted at close: D 6811 / C the
