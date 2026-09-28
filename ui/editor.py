@@ -277,6 +277,22 @@ def parse_field_filters(text: str) -> tuple[dict[str, str], list[str]]:
     return filters, problems
 
 
+def documents_caption(page: dict[str, Any]) -> str:
+    """The Documents page's line above the table: which rows these are, out of
+    how many matches, and what they add up to (``GET /v1/documents`` result)."""
+    count, start = page.get("count") or 0, page.get("offset") or 0
+    if not count:
+        return "No more documents." if start else "No documents match."
+    shown = f"Showing **{start + 1}–{start + count}**"
+    if page.get("total") is None:
+        return shown + (", ranked by meaning" if page.get("mode") == "semantic" else "")
+    amounts = ", ".join(
+        f"{value:,.2f} {currency}".strip()
+        for currency, value in (page.get("amounts") or {}).items()
+    )
+    return f"{shown} of **{page['total']}**" + (f" · total {amounts}" if amounts else "")
+
+
 #: Company-profile fields the Clients form edits directly (the rest go in JSON).
 PROFILE_FIELDS = ("vat_payer", "vat_on_collection", "tax_regime", "caen")
 
@@ -349,6 +365,8 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
         alerts.append(f"Balances on the wrong side: {accounts}")
     if advances := report.get("partner_advances"):
         alerts.append(f"Partner advances not yet applied: {len(advances)}")
+    if offsets := report.get("offsets_possible"):
+        alerts.append(f"Partners to offset (compensare): {len(offsets)}")
     cash = report.get("cash") or {}
     problems = [p.get("problem", "") for p in cash.get("problems") or []]
     if negative := sum("negative" in p for p in problems):
@@ -365,6 +383,15 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
     overdue = ((outlook.get("cash") or {}).get("receivables") or {}).get("overdue")
     if overdue not in (None, "0", "0.00"):
         alerts.append(f"Overdue receivables: {overdue}")
-    if movements := (view.get("bank") or {}).get("movements"):
-        alerts.append(f"{len(movements)} bank movement(s) not matched")
+    checks = (view.get("report") or {}).get("bank") or {}
+    for c in checks.get("chain") or []:
+        alerts.append(f"Bank statement {c['problem']}: {c['statement']}")
+    for a in checks.get("accounts") or []:
+        if not a.get("agrees"):
+            alerts.append(
+                f"Bank {a['iban']} says {a['bank']}, books ({a['account']}) {a['ledger']}"
+            )
+    bank = view.get("bank") or {}
+    if movements := bank.get("movements"):
+        alerts.append(f"{bank.get('total') or len(movements)} bank movement(s) not matched")
     return alerts

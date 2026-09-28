@@ -258,17 +258,22 @@ class ControlPlane:
         status: str = "",
         fields: dict[str, str] | None = None,
         limit: int = 50,
+        offset: int = 0,
         tenant: str = "",
     ) -> dict[str, Any]:
-        """Filtered documents; with *q*, a text match — or ranked by meaning when
-        *semantic* and an embedding model is configured. With clients on, one
-        *tenant*'s documents (required).
+        """One page of filtered documents; with *q*, a text match — or ranked by
+        meaning when *semantic* and an embedding model is configured. With clients
+        on, one *tenant*'s documents (required).
 
-        Returns ``{"documents", "count", "mode", "semantic"}`` where ``mode`` is
-        ``filter`` / ``text`` / ``semantic`` (what was actually done) and
-        ``semantic`` says whether meaning search is available.
+        Returns ``{"documents", "count", "offset", "next_offset", "total",
+        "amounts", "mode", "semantic"}``: ``count`` is this page (at most 200),
+        ``next_offset`` the next page's offset (``None`` on the last one),
+        ``total`` / ``amounts`` count every match and sum its amounts per
+        currency (``None`` when ranked by meaning, which orders rather than
+        filters), ``mode`` is ``filter`` / ``text`` / ``semantic`` (what was
+        actually done) and ``semantic`` says whether meaning search is available.
         """
-        from langclaw.documents.store import DocumentStoreError
+        from langclaw.documents.store import MAX_PAGE, DocumentStoreError
 
         services = await self._documents(tenant)
         filters = {
@@ -281,17 +286,30 @@ class ControlPlane:
             "fields": fields,
         }
         can_rank = services.embeddings is not None
+        offset = max(0, offset)
+        page = {"limit": limit, "offset": offset}
         try:
             if q and semantic and can_rank:
                 vector = await services.embeddings.aembed_query(q)
-                rows = await services.store.similar(vector, limit=limit, **filters)
-                mode = "semantic"
+                rows = await services.store.similar(vector, **page, **filters)
+                mode, totals = "semantic", {"total": None, "amounts": None}
+                more = len(rows) == max(1, min(limit, MAX_PAGE))
             else:
-                rows = await services.store.search(text=q, limit=limit, **filters)
+                rows = await services.store.search(text=q, **page, **filters)
+                totals = await services.store.totals(text=q, **filters)
                 mode = "text" if q else "filter"
+                more = offset + len(rows) < totals["total"]
         except DocumentStoreError as exc:
             raise ValueError(str(exc)) from exc
-        return {"documents": rows, "count": len(rows), "mode": mode, "semantic": can_rank}
+        return {
+            "documents": rows,
+            "count": len(rows),
+            "offset": offset,
+            "next_offset": offset + len(rows) if rows and more else None,
+            **totals,
+            "mode": mode,
+            "semantic": can_rank,
+        }
 
     async def get_document(self, bucket_key: str, *, tenant: str = "") -> dict[str, Any]:
         """One record plus a temporary download link for its file (``""`` if the

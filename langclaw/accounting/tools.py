@@ -39,6 +39,7 @@ from langclaw.accounting.bank.booking import (
 )
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
+from langclaw.accounting.bank.reconcile import reconcile_account, statement_chain
 from langclaw.accounting.bank.store import BankBook
 from langclaw.accounting.cash import (
     ADVANCE_ACCOUNT,
@@ -298,7 +299,7 @@ def build_accounting_tools(
             waiting = [
                 r
                 for doc_type in _INVOICE_TYPES
-                for r in await svc.store.search(doc_type=doc_type, status="filed", limit=500)
+                for r in await svc.store.search_all(doc_type=doc_type, status="filed")
             ]
             done = await Journal(svc.store).posted_keys([r["bucket_key"] for r in waiting])
         except _ERRORS as exc:
@@ -349,12 +350,8 @@ def build_accounting_tools(
                 r
                 for status in (("posted", "exported") if again else ("posted",))
                 for doc_type in _INVOICE_TYPES
-                for r in await svc.store.search(
-                    doc_type=doc_type,
-                    status=status,
-                    date_from=date_from,
-                    date_to=date_to,
-                    limit=200,
+                for r in await svc.store.search_all(
+                    doc_type=doc_type, status=status, date_from=date_from, date_to=date_to
                 )
             ]
             batch = exporter.build(rows, own_cif=own_cif)  # an unavailable target fails here
@@ -397,6 +394,43 @@ def build_accounting_tools(
                 for r in await journal.advance_balances(day)
                 if r["received"] or r["paid"]]  # fmt: skip
 
+    async def _opening(journal: Journal, account: str, f: dict[str, Any] | None) -> dict:
+        if not f:
+            return {}
+        before = date.fromisoformat(str(f["date_from"])[:10]) - timedelta(days=1)
+        return {"first_opening": Decimal(str(f["opening"])),
+                "ledger_at_first": await journal.balance_until(before, account)}  # fmt: skip
+
+    async def _bank_check(svc: DocumentServices, journal: Journal, end: date) -> dict[str, Any]:
+        """Statement continuity up to *end* and, per bank account, its latest
+        statement's closing balance vs the ledger on that day."""
+        statements = await svc.store.search_all(doc_type="bank_statement", date_to=end.isoformat())
+        latest: dict[str, dict[str, Any]] = {}
+        for st in statements:  # newest first
+            f = st.get("fields") or {}
+            if f.get("iban") and f.get("closing") is not None and f["iban"] not in latest:
+                latest[f["iban"]] = st
+        book, accounts = BankBook(svc.store), []
+        first: dict[str, dict[str, Any]] = {}
+        for st in statements:
+            f = st.get("fields") or {}
+            if f.get("iban") and f.get("date_from") and f.get("opening") is not None:
+                if f["iban"] not in first or f["date_from"] < first[f["iban"]]["date_from"]:
+                    first[f["iban"]] = f
+        for iban, st in sorted(latest.items()):
+            f = st["fields"]
+            day = date.fromisoformat(str(f.get("date_to") or st["document_date"])[:10])
+            account = bank_account(iban, f.get("currency") or st.get("currency") or "RON",
+                                   _profile())  # fmt: skip
+            accounts.append(reconcile_account(
+                iban=iban, account=account, day=day.isoformat(),
+                bank=Decimal(str(f["closing"])), ledger=await journal.balance_until(day, account),
+                unbooked=await book.unbooked(iban, day), **await _opening(journal, account,
+                                                                     first.get(iban))))  # fmt: skip
+        chain = statement_chain(statements)
+        return {"chain": chain, "accounts": accounts,
+                "agrees": not chain and all(a["agrees"] for a in accounts)}  # fmt: skip
+
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
         period = resolve_period(period)
         start, end = parse_period(period)
@@ -405,17 +439,15 @@ def build_accounting_tools(
         docs = [
             r
             for doc_type in _INVOICE_TYPES
-            for r in await svc.store.search(
-                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            for r in await svc.store.search_all(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         ]
-        month = await svc.store.search(
-            date_from=start.isoformat(), date_to=end.isoformat(), limit=200
-        )
+        month = await svc.store.search_all(date_from=start.isoformat(), date_to=end.isoformat())
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
         for cash_type in ("z_report", "cash_receipt"):  # cash sales / purchases carry VAT too
-            booked += await svc.store.search(
-                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            booked += await svc.store.search_all(
+                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
@@ -439,6 +471,13 @@ def build_accounting_tools(
         so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
         report["anomalies"] = balance_anomalies(so_far["accounts"])
         report["partner_advances"] = await _partner_advances(journal, end)
+        cent = Decimal("0.01")
+        report["offsets_possible"] = [  # partners who owe and are owed: compensare
+            {"cui": r["partner_cui"], "partner": r["name"],
+             "amount": str(min(Decimal(r["rec"]), Decimal(r["pay"])).quantize(cent))}
+            for r in await journal.partner_balances(end)
+            if Decimal(r["rec"]) > 0 and Decimal(r["pay"]) > 0
+        ]  # fmt: skip
         report["advances_to_apply"] = []  # open invoices of partners holding an advance
         if report["partner_advances"]:
             held = {a["cui"]: a for a in report["partner_advances"]}
@@ -452,6 +491,7 @@ def build_accounting_tools(
                         {"bucket_key": inv["bucket_key"], "partner": adv["partner"],
                          "left_to_pay": str(outstanding(inv)), "available": str(available)}
                     )  # fmt: skip
+        report["bank"] = await _bank_check(svc, journal, end)
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],
@@ -472,8 +512,6 @@ def build_accounting_tools(
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)
             report["year_end"] = year_end_entry([*year, *pending])
-        if len(docs) >= 200:
-            report["note"] = "Over 200 invoices in the month: the report covers the first 200."
         return svc, json.loads(json.dumps(report, default=str))
 
     async def accounting_period_report(period: str = "") -> dict:
@@ -517,6 +555,16 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            if report["bank"]["chain"]:
+                return {"error": f"Bank statements don't follow on from each other: "
+                        f"{report['bank']['chain'][0]['message']}",
+                        "problems": report["bank"]["chain"]}  # fmt: skip
+            off = [a for a in report["bank"]["accounts"] if not a["agrees"]]
+            if off:
+                a = off[0]
+                return {"error": f"The bank says {a['bank']} on {a['iban']} ({a['day']}), the "
+                        f"books say {a['ledger']} on {a['account']}. {a.get('hint', '')}".strip(),
+                        "accounts": off}  # fmt: skip
             negative = [p for p in report["cash"]["problems"] if "negative" in p["problem"]]
             if negative:
                 return {"error": f"Cash went negative on {len(negative)} day(s) in {period}; "
@@ -580,8 +628,8 @@ def build_accounting_tools(
         return [
             r
             for doc_type in _INVOICE_TYPES
-            for r in await svc.store.search(
-                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            for r in await svc.store.search_all(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         ]
 
@@ -614,8 +662,8 @@ def build_accounting_tools(
                 history.append((label, vat["payable"] - vat["refundable"]))
             year_docs = await _invoices(svc, date(start.year, 1, 1), end)
             open_docs = await _invoices(svc, date(1900, 1, 1), end)
-            statements = await svc.store.search(
-                doc_type="bank_statement", date_to=end.isoformat(), limit=50
+            statements = await svc.store.search_all(
+                doc_type="bank_statement", date_to=end.isoformat()
             )
             results = await _results(svc, period)
         except _ERRORS as exc:
@@ -647,15 +695,13 @@ def build_accounting_tools(
                 "tax_estimate": results["tax_estimate"],
             },
         }
-        if len(year_docs) >= 200:
-            facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
         return json.loads(json.dumps(facts, default=str))
 
     async def _open_invoices(svc: DocumentServices) -> list[dict[str, Any]]:
         return [
             r
             for status in ("filed", "posted", "exported")
-            for r in await svc.store.search(doc_type="invoice", status=status, limit=200)
+            for r in await svc.store.search_all(doc_type="invoice", status=status)
             if not (r.get("fields") or {}).get("paid_on")
         ]
 
@@ -791,6 +837,11 @@ def build_accounting_tools(
                     continue
                 await book.set_match(t.key, "", "fee", "bank fee")
                 fees.append({"key": t.key, "amount": str(t.amount), "description": t.description})
+            same_account = [st for st in await svc.store.search_all(doc_type="bank_statement")
+                            if (st.get("fields") or {}).get("iban") == statement.iban]  # fmt: skip
+            chain = [
+                c for c in statement_chain(same_account) if key in (c["statement"], c["after"])
+            ]
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {
@@ -798,6 +849,7 @@ def build_accounting_tools(
             "iban": statement.iban,
             "period": [statement.date_from, statement.date_to],
             "problems": problems,
+            "chain": chain,
             "imported": len(new),
             "already_imported": len(statement.transactions) - len(new),
             "paid": [m for m in matches if m["kind"] == "certain"],
@@ -810,20 +862,36 @@ def build_accounting_tools(
             "unmatched": len(fresh) - len(matches) - len(fees) - len(cash),
         }
 
-    async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:
-        """The client's imported bank movements, newest first.
+    async def bank_movements(unmatched_only: bool = True, limit: int = 50, offset: int = 0) -> dict:
+        """The client's imported bank movements, newest first, one page at a time.
+
+        "total" counts every movement and "money_in" / "money_out" sum them per
+        currency, so use those for how-many and how-much questions instead of
+        paging. To list more, call again with offset set to "next_offset" (null on
+        the last page).
 
         Args:
             unmatched_only: Only movements without a certain match to an invoice.
-            limit: Maximum movements (1-500).
+            limit: Movements in this page (1-500).
+            offset: Movements to skip, e.g. the previous page's next_offset.
         """
         try:
-            rows = await BankBook(services.current().store).list(
-                unmatched_only=unmatched_only, limit=limit
-            )
+            book = BankBook(services.current().store)
+            rows = await book.list(unmatched_only=unmatched_only, limit=limit, offset=offset)
+            totals = await book.totals(unmatched_only=unmatched_only)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"movements": rows}
+        start = max(0, offset)
+        more = bool(rows) and start + len(rows) < totals["total"]
+        out = {"movements": rows, "count": len(rows), **totals,
+               "next_offset": start + len(rows) if more else None}  # fmt: skip
+        if more:
+            out["note"] = (
+                f"Showing {start + 1}-{start + len(rows)} of {totals['total']}, newest first. "
+                f"Call again with offset={out['next_offset']} for more; total, money_in and "
+                "money_out already cover every movement."
+            )
+        return out
 
     async def bank_confirm_match(movement_key: str, bucket_key: str) -> dict:
         """Confirm that a bank movement pays an invoice, fully or in part (the

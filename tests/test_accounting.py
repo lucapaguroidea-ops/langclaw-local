@@ -1493,7 +1493,9 @@ async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
             await tools["journal_post"].ainvoke(
                 {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
             )
+        before = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
         out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        after = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
         again = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
         nobody = await tools["partner_offset"].ainvoke({"partner_cui": "RO1", "day": "2026-09-30"})
         balances = await tools["partner_balances"].ainvoke({"day": "2026-09-30"})
@@ -1501,6 +1503,8 @@ async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
     assert [(x["account"], x["debit"] > 0) for x in out["posted"]["lines"]] == [
         ("401", True), ("4111", False)]  # fmt: skip
     assert "error" in again and "nothing to offset" in nobody["error"]
+    assert [(o["cui"], o["amount"]) for o in before["offsets_possible"]] == [(cui, out["amount"])]
+    assert after["offsets_possible"] == []
     mine = next(p for p in balances["partners"] if p["cui"] == cui)
     assert "0.00" in (mine["receivable"], mine["payable"])
     for key in (sale["bucket_key"], "inbox/from-customer.xml"):
@@ -1737,3 +1741,231 @@ async def test_the_monthly_loop_closes_a_clean_month_once_approved(acme) -> None
         done = await runner.resume(spec, "month:2", {"action": "approve", "by": "luca"})
     assert done.status == "completed"
     assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == ["2027-03"]
+
+
+@needs_pg
+async def test_the_monthly_loop_rechecks_after_approval_so_entries_booked_meanwhile_count(
+    acme,
+) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import build_document_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    services, scoped = acme
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                               profile={"vat_payer": True}))  # fmt: skip
+    tools = build_accounting_tools(services) + build_document_tools(services)
+    by_name = {t.name: t for t in tools}
+    real = build_toolset_executor(tools)
+
+    async def executor(request):
+        if request.kind == "llm":
+            return request.schema(status="pending entries", summary="ok", items=[])
+        return await real(request)
+
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    spec_json = json.loads(path.read_text())
+    spec_json["nodes"]["sync"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    spec_json["nodes"]["queue"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    parsed = parse_graph_spec("accounting_month", spec_json)
+    spec = WorkflowSpec(name="accounting_month", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    rows = await scoped.store.search(doc_type="invoice", limit=50)
+    period = str(rows[0]["document_date"])[:7]
+    month = [r for r in rows if str(r["document_date"])[:7] == period]
+    with tenant_scope(await registry.get("acme")):
+        waiting = await runner.start(spec, {"period": period}, run_id="month:3", tenant="acme")
+        for row in month:  # the queued proposals get approved while the review waits
+            await by_name["journal_post"].ainvoke(
+                {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
+            )
+        done = await runner.resume(spec, "month:3", {"action": "approve", "by": "luca"})
+    run = await runner.get_run(spec, "month:3")
+    assert run["state"]["data"]["report"]["blockers"]  # blocked when first reported
+    assert waiting.status == "waiting" and done.status == "completed"
+    assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == [period]
+
+
+@needs_pg
+async def test_closing_december_in_the_monthly_loop_files_balance_confirmations(acme) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import build_document_tools
+    from langclaw.tenants import Tenant, TenantRegistry, tenant_scope
+    from langclaw.workflows.executor import build_toolset_executor
+    from langclaw.workflows.graph import GraphWorkflowRunner, build_state_graph, parse_graph_spec
+    from langclaw.workflows.registry import WorkflowSpec
+
+    services, scoped = acme
+    registry = TenantRegistry(InMemoryStore())
+    await registry.save(Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                               profile={"vat_payer": False}))  # fmt: skip
+    tools = build_accounting_tools(services) + build_document_tools(services)
+    real = build_toolset_executor(tools)
+
+    async def executor(request):
+        if request.kind == "llm":
+            return request.schema(status="clean", summary="ok", items=[])
+        return await real(request)
+
+    path = (
+        Path(__file__).resolve().parent.parent / "ui" / "templates" / "accounting_month.graph.json"
+    )
+    spec_json = json.loads(path.read_text())
+    spec_json["nodes"]["queue"] = {"type": "tool", "tool": "accounting_outlook", "args": {}}
+    parsed = parse_graph_spec("accounting_month", spec_json)
+    spec = WorkflowSpec(name="accounting_month", graph=build_state_graph(parsed), graph_spec=parsed)
+    runner = GraphWorkflowRunner(executor_provider=lambda: executor)
+    runner.tenants = registry
+    with tenant_scope(await registry.get("acme")):
+        z = {t.name: t for t in tools}["cash_z_report"]
+        await z.ainvoke({"day": "2027-12-05", "lines": [{"rate": 0, "gross": 100}]})
+        await runner.start(spec, {"period": "2027-12"}, run_id="month:12", tenant="acme")
+        done = await runner.resume(spec, "month:12", {"action": "approve", "by": "luca"})
+    assert done.status == "completed"
+    assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == ["2027-12"]
+    run = await runner.get_run(spec, "month:12")
+    assert run["state"]["data"]["confirmations"]["day"] == "2027-12-31"
+
+
+@needs_pg
+async def test_no_invoice_cap_old_unpaid_invoices_stay_visible_behind_many_newer(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    base = {
+        k: v for k, v in sale.items() if k not in ("id", "bucket_key", "fields", "document_date")
+    }
+    old = {
+        **sale["fields"],
+        "invoice_number": "OLD-1",
+        "due_date": "2025-01-31",
+        "customer_cui": "RO999",
+    }
+    await scoped.store.save("inbox/old.xml", {**base, "document_date": "2025-01-01", "fields": old})
+    for i in range(250):  # newer, already paid
+        f = {
+            **sale["fields"],
+            "invoice_number": f"N-{i}",
+            "paid_on": "2026-09-01",
+            "paid_amount": str(sale["amount"]),
+        }
+        await scoped.store.save(
+            f"inbox/n{i}.xml", {**base, "document_date": "2026-09-01", "fields": f}
+        )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        overdue = await tools["receivables_overdue"].ainvoke({"day": "2026-09-30"})
+        month = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    keys = [i["bucket_key"] for c in overdue["customers"] for i in c["invoices"]]
+    assert "inbox/old.xml" in keys
+    assert month["invoices"] >= 250 and "note" not in month
+
+
+@needs_pg
+async def test_bank_movements_page_with_a_total_and_old_accounts_keep_their_balance(
+    acme,
+) -> None:
+    from datetime import timedelta
+
+    from langclaw.accounting.bank.parse import Transaction
+    from langclaw.accounting.bank.store import BankBook
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    day = date(2026, 1, 1)
+    txs = [
+        Transaction((day + timedelta(days=i % 200)).isoformat(),
+                    Decimal(10) if i % 2 else Decimal(-4), "RON", reference=f"R{i}")
+        for i in range(620)
+    ]  # fmt: skip
+    await BankBook(scoped.store).add("bank/many.sta", "RO01BANK", txs)
+    # An account whose last statement is older than 60 newer ones of another account.
+    await scoped.store.save("bank/old.sta", {"doc_type": "bank_statement",
+        "document_date": "2025-12-31", "fields": {"iban": "RO02OLD", "closing": 500}})  # fmt: skip
+    for i in range(60):
+        await scoped.store.save(f"bank/new-{i}.sta", {"doc_type": "bank_statement",
+            "document_date": (day + timedelta(days=i)).isoformat(),
+            "fields": {"iban": "RO01BANK", "closing": 1000 + i}})  # fmt: skip
+
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        first = await tools["bank_movements"].ainvoke({"unmatched_only": False})
+        assert first["count"] == 50 and first["total"] == 620 and first["next_offset"] == 50
+        assert first["money_in"] == {"RON": "3100.00"} and first["money_out"] == {"RON": "-1240.00"}
+        assert "620" in first["note"] and "offset=50" in first["note"]
+        seen, offset = [m["key"] for m in first["movements"]], first["next_offset"]
+        while offset is not None:
+            page = await tools["bank_movements"].ainvoke(
+                {"unmatched_only": False, "limit": 500, "offset": offset}
+            )
+            seen += [m["key"] for m in page["movements"]]
+            offset = page["next_offset"]
+        assert sorted(seen) == sorted(t.key for t in txs) and "note" not in page
+
+        facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
+        assert Decimal(str(facts["cash"]["bank_balance"])) == Decimal(500 + 1059)
+
+
+@needs_pg
+async def test_bank_statements_carry_forward_and_reconcile_with_the_ledger(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    sale = next(r for r in rows if r["fields"]["direction"] == "out")
+    purchase = next(r for r in rows if r["fields"]["direction"] == "in")
+    await scoped.bucket.put("bank/09.sta", _mt940_paying(sale, purchase))
+    closing = 1000 + float(sale["amount"]) - float(purchase["amount"])
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await tools["bank_import"].ainvoke({"key": "bank/09.sta"})
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+        (acct,) = report["bank"]["accounts"]
+        assert acct["account"] == "5121" and acct["agrees"] is False
+        assert "opening" in acct["hint"]  # nothing brought 5121 into the books yet
+
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-08-31", "balances": {"5121": 1000, "1012": -1000}}
+        )
+        (acct,) = (await tools["accounting_period_report"].ainvoke({"period": "2026-09"}))[
+            "bank"]["accounts"]  # fmt: skip
+        assert float(acct["difference"]) == -float(purchase["amount"])  # the unconfirmed payment
+        assert acct["unbooked"] == 1 and acct["unexplained"] == "0.00"
+
+        key = (await tools["bank_movements"].ainvoke({}))["movements"][0]["key"]
+        await tools["bank_confirm_match"].ainvoke(
+            {"movement_key": key, "bucket_key": purchase["bucket_key"]}
+        )
+        bank = (await tools["accounting_period_report"].ainvoke({"period": "2026-09"}))["bank"]
+        assert bank["agrees"] is True and bank["chain"] == []
+
+        # October's statement opens 50 higher than September closed: one is missing.
+        await scoped.bucket.put("bank/10.sta", (
+            ":20:ST2\n:25:RO49AAAA1B31007593840000\n:28C:2/1\n"
+            f":60F:C261001RON{closing + 50:.2f}\n:62F:C261031RON{closing + 50:.2f}\n"
+        ).replace(".", ",").encode())  # fmt: skip
+        out = await tools["bank_import"].ainvoke({"key": "bank/10.sta"})
+        assert [c["problem"] for c in out["chain"]] == ["gap"]
+        assert out["chain"][0]["difference"] == "50.00"
+        october = await tools["accounting_period_report"].ainvoke({"period": "2026-10"})
+        assert october["bank"]["agrees"] is False and october["bank"]["chain"]
+        closed = await tools["accounting_period_close"].ainvoke({"period": "2026-10"})
+        assert "follow on" in closed["error"]

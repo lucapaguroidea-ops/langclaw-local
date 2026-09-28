@@ -192,7 +192,29 @@ A payment dated in a **closed** month is still applied to the invoice, but it
 isn't booked. It's listed under `not_booked` with the reason, for the
 accountant.
 
-`bank_movements(unmatched_only=True)` lists what's still open.
+### Balances carried between statements, and the books
+
+Every balance in the books is carried forward by construction: an opening
+balance is the sum of every journal line before the period (March opens where
+February closed), and closed months can't change. Bank statements are checked
+against that in two ways, in the month report's `bank` section:
+
+- **`chain`** — per account, each statement must open with the previous one's
+  closing balance (`gap`: a statement is probably missing) and start after it
+  ends (`overlap`: the same days may be imported twice). `bank_import` also
+  returns the problems that involve the statement just imported.
+- **`accounts`** — per account, the latest statement's closing balance vs the
+  ledger (5121 / 5124 / the profile's `bank_accounts`) on its last day:
+  `difference`, the movements not booked yet (`unbooked_total`) and what they
+  don't explain (`unexplained`), with a `hint`. When the first statement
+  opens with a balance the books don't have, the hint says to post it with
+  `accounting_opening_balances`.
+
+`accounting_period_close` refuses while statements don't follow on or the bank
+and the books disagree; the monthly loop stops before closing, the console's
+Bank tab shows both tables and the overview raises an alert.
+
+`bank_movements(unmatched_only=True)` lists what's still open, newest first, one page at a time (`limit` up to 500). It also returns `total` (every movement), `money_in` / `money_out` (summed per currency over all of them) and `next_offset` for the next page, so nothing is hidden however many movements a client has. The console's Bank tab and the "not matched" alert use `total`. The outlook's bank balance reads every statement up to the month's end, so an account whose last statement is old still counts.
 
 ## Advice: what's coming
 
@@ -422,14 +444,19 @@ does a client's month in one run:
 4. `accounting_outlook` produces the outlook: deadlines, limits and cash.
 5. The model drafts a status for the accountant and advice for the client.
 6. The run pauses for a person to approve or edit.
-7. Once approved, `accounting_period_close` closes the month. That only
-   happens if the report shows nothing blocking: no invoices without an entry,
+7. Once approved, the run takes a fresh `accounting_period_report` and
+   `accounting_period_close` closes the month. That only happens if the fresh
+   report shows nothing blocking: no invoices without an entry,
    no missing documents, a balanced trial balance and no balances on the wrong
    side. Closing files the journal register and the trial balance.
    - Otherwise the run ends and the month stays open.
    - A rejection also leaves the month open.
-   - Because the report is taken before the queued proposals are posted, a
-     month with fresh invoices usually closes on a later run.
+   - When the month closed is December, the run also files the balance
+     confirmations at 31 December with `partner_confirmations` (plus Gmail
+     drafts if Gmail is connected).
+   - The fresh report is taken after approval, so proposals approved while
+     the review waited count. The month closes in the same run once every
+     invoice has its entry.
 
 With an empty `period` it works on **last month**. The period tools take `""`
 too (`resolve_period`), so a schedule never needs updating.
@@ -506,9 +533,13 @@ When a partner both owes the client (41x) and is owed by them (40x),
   batches skip them.
 - If the partner has nothing to offset, it says so.
 
+The month report lists the candidates as `offsets_possible`: each partner with
+both a receivable and a payable at month end, and the amount that can be
+offset. The console raises an alert, "Partners to offset (compensare): N", and
+lists them in the Close tab.
+
 The offset entry appears in the journal register's non-invoice file. The
 signed confirmation (proces-verbal de compensare) stays with the accountant.
-Only the first 200 invoices of each kind are searched.
 
 ## In the console
 

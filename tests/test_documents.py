@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -185,6 +186,37 @@ async def test_search_filters(store: DocumentStore) -> None:
     assert await store.known_keys(["k1", "zz"]) == {"k1"}
 
 
+async def _invoices(store: DocumentStore, n: int, *, sender: str = "ACME") -> None:
+    pool = await store._db()
+    await pool.executemany(
+        "INSERT INTO documents (bucket_key, doc_type, sender, document_date, amount, currency) "
+        "VALUES ($1, 'invoice', $2, $3, $4, 'RON')",
+        [(f"inv/{i:04d}", sender, date(2024, 1, 1) + timedelta(days=i), 10) for i in range(n)],
+    )
+
+
+@needs_pg
+async def test_search_pages_through_every_match_and_totals_count_them_all(
+    store: DocumentStore,
+) -> None:
+    await _invoices(store, 250)
+    await store.save("eur", {"doc_type": "invoice", "amount": 5, "currency": "EUR"})
+    await store.save("lease", {"doc_type": "contract"})
+
+    first = await store.search(doc_type="invoice", limit=200)
+    rest = await store.search(doc_type="invoice", limit=200, offset=200)
+    assert len(first) == 200 and len(rest) == 51
+    assert {r["bucket_key"] for r in first} | {r["bucket_key"] for r in rest} == {
+        *(f"inv/{i:04d}" for i in range(250)),
+        "eur",
+    }
+    assert await store.totals(doc_type="invoice") == {
+        "total": 251,
+        "amounts": {"RON": 2500.0, "EUR": 5.0},
+    }
+    assert await store.totals(sender="nobody") == {"total": 0, "amounts": {}}
+
+
 @needs_pg
 async def test_bad_date_is_a_clear_error(store: DocumentStore) -> None:
     with pytest.raises(DocumentStoreError, match="YYYY-MM-DD"):
@@ -219,6 +251,46 @@ async def test_tools_end_to_end(bucket: Bucket, store: DocumentStore) -> None:
     assert (await tools["documents_get"].ainvoke({"bucket_key": "nope"}))["error"]
     bad = await tools["documents_save"].ainvoke({"bucket_key": "k", "document_date": "soon"})
     assert "YYYY-MM-DD" in bad["error"]
+
+
+@needs_pg
+async def test_chat_search_says_how_many_match_and_pages_to_the_rest(
+    bucket: Bucket, store: DocumentStore
+) -> None:
+    await _invoices(store, 250)
+    search = _tools(bucket, store)["documents_search"]
+
+    first = await search.ainvoke({"doc_type": "invoice"})
+    assert first["count"] == 20 and first["total"] == 250
+    assert first["amounts"] == {"RON": 2500.0} and first["next_offset"] == 20
+    assert "250" in first["note"] and "offset=20" in first["note"]
+
+    seen = [d["bucket_key"] for d in first["documents"]]
+    offset = first["next_offset"]
+    while offset is not None:
+        page = await search.ainvoke({"doc_type": "invoice", "limit": 200, "offset": offset})
+        seen += [d["bucket_key"] for d in page["documents"]]
+        offset = page["next_offset"]
+    assert sorted(seen) == [f"inv/{i:04d}" for i in range(250)]
+    assert "note" not in page and page["total"] == 250
+
+
+@needs_pg
+async def test_documents_api_pages_with_a_total(store: DocumentStore) -> None:
+    await _invoices(store, 120)
+    plane = _plane(DocumentServices(DocumentsConfig(), store=store))
+
+    first = await plane.list_documents(doc_type="invoice")
+    assert (first["count"], first["total"], first["offset"], first["next_offset"]) == (
+        50,
+        120,
+        0,
+        50,
+    )
+    assert first["amounts"] == {"RON": 1200.0}
+    last = await plane.list_documents(doc_type="invoice", limit=100, offset=100)
+    assert (last["count"], last["next_offset"]) == (20, None)
+    assert last["documents"][-1]["bucket_key"] == "inv/0000"
 
 
 async def test_bucket_tools_report_errors_as_dicts(bucket: Bucket) -> None:
@@ -612,6 +684,12 @@ async def test_saved_documents_are_found_by_meaning(store: DocumentStore) -> Non
     assert [d["bucket_key"] for d in found["documents"]][0] == "b"
     assert found["documents"][0]["similarity"] > found["documents"][1]["similarity"]
     assert "embedding" not in found["documents"][0]  # vectors stay out of the model's context
+    assert found["next_offset"] == 2
+    more = await tools["documents_semantic_search"].ainvoke(
+        {"query": "rent", "limit": 2, "offset": 2}
+    )
+    assert len(more["documents"]) == 1 and more["next_offset"] is None
+    assert {d["bucket_key"] for d in found["documents"] + more["documents"]} == {"a", "b", "c"}
     power = await tools["documents_semantic_search"].ainvoke({"query": "power bill"})
     assert power["documents"][0]["bucket_key"] == "a"
 

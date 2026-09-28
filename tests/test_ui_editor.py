@@ -134,6 +134,24 @@ def test_parse_field_filters() -> None:
     )
 
 
+def test_documents_page_caption_counts_every_match() -> None:
+    page = {"count": 50, "offset": 50, "total": 312, "amounts": {"RON": 12345.5, "EUR": 10}}
+    assert editor.documents_caption(page) == (
+        "Showing **51–100** of **312** · total 12,345.50 RON, 10.00 EUR"
+    )
+    assert editor.documents_caption({"count": 3, "offset": 0, "total": 3, "amounts": {}}) == (
+        "Showing **1–3** of **3**"
+    )
+    ranked = {"count": 50, "offset": 0, "total": None, "mode": "semantic"}
+    assert editor.documents_caption(ranked) == "Showing **1–50**, ranked by meaning"
+    assert editor.documents_caption({"count": 0, "offset": 0, "total": 0}) == (
+        "No documents match."
+    )
+    assert editor.documents_caption({"count": 0, "offset": 50, "total": None}) == (
+        "No more documents."
+    )
+
+
 def test_tenant_payload_from_the_clients_form() -> None:
     payload = editor.tenant_payload(
         name=" ACME SRL ",
@@ -180,6 +198,13 @@ def test_recent_months_and_overview_alerts() -> None:
     assert "vat_registration at 85.0% of the limit" in alerts
     assert "Overdue receivables: 700.00" in alerts
     assert "1 bank movement(s) not matched" in alerts
+    checks = {"chain": [{"problem": "gap", "statement": "bank/10.sta"}],
+              "accounts": [{"iban": "RO1", "bank": "150.00", "ledger": "130.00",
+                            "account": "5121", "agrees": False}]}  # fmt: skip
+    got = editor.overview_alerts({"report": {"bank": checks}, "outlook": {}, "bank": {}})
+    assert got == ["Bank statement gap: bank/10.sta", "Bank RO1 says 150.00, books (5121) 130.00"]
+    paged = {"report": {}, "outlook": {}, "bank": {"movements": [{"key": "k"}], "total": 75}}
+    assert "75 bank movement(s) not matched" in editor.overview_alerts(paged)
     errored = editor.overview_alerts({"report": {"error": "boom"}, "outlook": {}, "bank": {}})
     assert errored == ["Close report: boom"]
 
@@ -212,3 +237,8 @@ def test_overview_alerts_count_open_partner_advances() -> None:
     report = {"partner_advances": [{"cui": "RO1", "partner": "A", "received": "10.00",
                                     "paid": "0.00"}]}  # fmt: skip
     assert "Partner advances not yet applied: 1" in editor.overview_alerts({"report": report})
+
+
+def test_overview_alerts_count_possible_offsets() -> None:
+    report = {"offsets_possible": [{"cui": "RO1", "partner": "A", "amount": "5.00"}]}
+    assert "Partners to offset (compensare): 1" in editor.overview_alerts({"report": report})
