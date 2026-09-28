@@ -896,6 +896,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#advances-avansuri" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advances (avansuri)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#correcting-a-posted-entry-stornare" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1705,6 +1716,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#advances-avansuri" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advances (avansuri)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#correcting-a-posted-entry-stornare" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1974,8 +1996,10 @@ so proposals get more consistent as the accountant approves them.</p>
 <li>The month report's <code>vat</code> (the D300 draft) then counts what became due in
     the month, with <code>"basis": "payments"</code>: credits to 4427 and debits to 4426.
     That includes paid invoices, Z reports and receipts. The invoice-date
-    totals stay under <code>by_invoice</code>. The per-rate rows still come from the
-    invoices.</li>
+    totals stay under <code>by_invoice</code>. The per-rate rows (<code>sales</code>, <code>purchases</code>)
+    come from the share of each invoice paid in the month, taken from the
+    invoice's payments, plus the month's Z reports and receipts. They can
+    differ from the totals by rounding cents.</li>
 <li>
 <p>A partner offset (<code>partner_offset</code>) moves the offset share the same way,
     invoice by invoice.</p>
@@ -2297,6 +2321,29 @@ that chat.</p>
 <p>Because the queued proposals run alongside the loop, the month report is taken
 when they start. Its blockers include the invoices just queued. Run the report
 again, or open the console's Client overview, once they're reviewed.</p>
+<h2 id="advances-avansuri">Advances (avansuri)<a class="headerlink" href="#advances-avansuri" title="Permanent link">&para;</a></h2>
+<p>When a customer pays before the invoice exists, or the client pays a supplier
+in advance, the bank movement stays unmatched after <code>bank_import</code>.</p>
+<ul>
+<li><code>bank_book_advance(movement_key, partner_cui, partner_name)</code> books it as an
+  advance:</li>
+<li>money in from a customer is D bank / C 419;</li>
+<li>money out to a supplier is D 409 / C bank.
+  The movement then leaves the unmatched list.</li>
+<li>When the invoice arrives, <code>advance_apply(bucket_key, day, amount="")</code> uses
+  the advance: D 419 / C 4111 for a sale, D 401 / C 409 for a purchase.</li>
+<li>It applies the smaller of what's left of the advance and what's left to
+    pay on the invoice, or <code>amount</code> if given (no more than that).</li>
+<li>The invoice counts as paid by it.</li>
+</ul>
+<p><code>advances_partners(day)</code> lists, per partner, the advances not applied yet:
+<code>received</code> on 419 and <code>paid</code> on 409. The month report shows them as
+<code>partner_advances</code>. The console raises an alert "Partner advances not yet
+applied: N" and lists them in the Close tab. The report's <code>advances_to_apply</code>
+lists the open invoices of those partners, with what's left to pay and the
+advance available. Those are the candidates for <code>advance_apply</code>.</p>
+<p>These are advances without VAT. Advance invoices (facturi de avans) with VAT
+stay with the accountant.</p>
 <h2 id="correcting-a-posted-entry-stornare">Correcting a posted entry (stornare)<a class="headerlink" href="#correcting-a-posted-entry-stornare" title="Permanent link">&para;</a></h2>
 <p><code>journal_reverse(bucket_key, reason, day="")</code> undoes a wrong entry without
 deleting anything:</p>
