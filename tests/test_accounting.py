@@ -1875,3 +1875,49 @@ async def test_no_invoice_cap_old_unpaid_invoices_stay_visible_behind_many_newer
     keys = [i["bucket_key"] for c in overdue["customers"] for i in c["invoices"]]
     assert "inbox/old.xml" in keys
     assert month["invoices"] >= 250 and "note" not in month
+
+
+@needs_pg
+async def test_bank_movements_page_with_a_total_and_old_accounts_keep_their_balance(
+    acme,
+) -> None:
+    from datetime import timedelta
+
+    from langclaw.accounting.bank.parse import Transaction
+    from langclaw.accounting.bank.store import BankBook
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    day = date(2026, 1, 1)
+    txs = [
+        Transaction((day + timedelta(days=i % 200)).isoformat(),
+                    Decimal(10) if i % 2 else Decimal(-4), "RON", reference=f"R{i}")
+        for i in range(620)
+    ]  # fmt: skip
+    await BankBook(scoped.store).add("bank/many.sta", "RO01BANK", txs)
+    # An account whose last statement is older than 60 newer ones of another account.
+    await scoped.store.save("bank/old.sta", {"doc_type": "bank_statement",
+        "document_date": "2025-12-31", "fields": {"iban": "RO02OLD", "closing": 500}})  # fmt: skip
+    for i in range(60):
+        await scoped.store.save(f"bank/new-{i}.sta", {"doc_type": "bank_statement",
+            "document_date": (day + timedelta(days=i)).isoformat(),
+            "fields": {"iban": "RO01BANK", "closing": 1000 + i}})  # fmt: skip
+
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        first = await tools["bank_movements"].ainvoke({"unmatched_only": False})
+        assert first["count"] == 50 and first["total"] == 620 and first["next_offset"] == 50
+        assert first["money_in"] == {"RON": "3100.00"} and first["money_out"] == {"RON": "-1240.00"}
+        assert "620" in first["note"] and "offset=50" in first["note"]
+        seen, offset = [m["key"] for m in first["movements"]], first["next_offset"]
+        while offset is not None:
+            page = await tools["bank_movements"].ainvoke(
+                {"unmatched_only": False, "limit": 500, "offset": offset}
+            )
+            seen += [m["key"] for m in page["movements"]]
+            offset = page["next_offset"]
+        assert sorted(seen) == sorted(t.key for t in txs) and "note" not in page
+
+        facts = await tools["accounting_outlook"].ainvoke({"period": "2026-09"})
+        assert Decimal(str(facts["cash"]["bank_balance"])) == Decimal(500 + 1059)

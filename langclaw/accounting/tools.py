@@ -613,8 +613,8 @@ def build_accounting_tools(
                 history.append((label, vat["payable"] - vat["refundable"]))
             year_docs = await _invoices(svc, date(start.year, 1, 1), end)
             open_docs = await _invoices(svc, date(1900, 1, 1), end)
-            statements = await svc.store.search(
-                doc_type="bank_statement", date_to=end.isoformat(), limit=50
+            statements = await svc.store.search_all(
+                doc_type="bank_statement", date_to=end.isoformat()
             )
             results = await _results(svc, period)
         except _ERRORS as exc:
@@ -807,20 +807,36 @@ def build_accounting_tools(
             "unmatched": len(fresh) - len(matches) - len(fees) - len(cash),
         }
 
-    async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:
-        """The client's imported bank movements, newest first.
+    async def bank_movements(unmatched_only: bool = True, limit: int = 50, offset: int = 0) -> dict:
+        """The client's imported bank movements, newest first, one page at a time.
+
+        "total" counts every movement and "money_in" / "money_out" sum them per
+        currency, so use those for how-many and how-much questions instead of
+        paging. To list more, call again with offset set to "next_offset" (null on
+        the last page).
 
         Args:
             unmatched_only: Only movements without a certain match to an invoice.
-            limit: Maximum movements (1-500).
+            limit: Movements in this page (1-500).
+            offset: Movements to skip, e.g. the previous page's next_offset.
         """
         try:
-            rows = await BankBook(services.current().store).list(
-                unmatched_only=unmatched_only, limit=limit
-            )
+            book = BankBook(services.current().store)
+            rows = await book.list(unmatched_only=unmatched_only, limit=limit, offset=offset)
+            totals = await book.totals(unmatched_only=unmatched_only)
         except _ERRORS as exc:
             return {"error": str(exc)}
-        return {"movements": rows}
+        start = max(0, offset)
+        more = bool(rows) and start + len(rows) < totals["total"]
+        out = {"movements": rows, "count": len(rows), **totals,
+               "next_offset": start + len(rows) if more else None}  # fmt: skip
+        if more:
+            out["note"] = (
+                f"Showing {start + 1}-{start + len(rows)} of {totals['total']}, newest first. "
+                f"Call again with offset={out['next_offset']} for more; total, money_in and "
+                "money_out already cover every movement."
+            )
+        return out
 
     async def bank_confirm_match(movement_key: str, bucket_key: str) -> dict:
         """Confirm that a bank movement pays an invoice, fully or in part (the

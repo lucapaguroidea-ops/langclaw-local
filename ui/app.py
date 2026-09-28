@@ -981,8 +981,10 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
                 st.caption("No open partner balances.")
     with bank_tab:
         if "error" not in bank:
+            shown, total = len(bank["movements"]), bank.get("total", len(bank["movements"]))
             st.caption(
                 "Movements without a certain match. Confirm them in chat with bank_confirm_match."
+                + (f" Showing the newest {shown} of {total}." if total > shown else "")
             )
             st.dataframe(bank["movements"], hide_index=True,
                          column_order=["booked", "amount", "counterparty", "description",

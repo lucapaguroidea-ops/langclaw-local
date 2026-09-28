@@ -198,6 +198,8 @@ def test_recent_months_and_overview_alerts() -> None:
     assert "vat_registration at 85.0% of the limit" in alerts
     assert "Overdue receivables: 700.00" in alerts
     assert "1 bank movement(s) not matched" in alerts
+    paged = {"report": {}, "outlook": {}, "bank": {"movements": [{"key": "k"}], "total": 75}}
+    assert "75 bank movement(s) not matched" in editor.overview_alerts(paged)
     errored = editor.overview_alerts({"report": {"error": "boom"}, "outlook": {}, "bank": {}})
     assert errored == ["Close report: boom"]
 

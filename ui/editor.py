@@ -383,6 +383,7 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
     overdue = ((outlook.get("cash") or {}).get("receivables") or {}).get("overdue")
     if overdue not in (None, "0", "0.00"):
         alerts.append(f"Overdue receivables: {overdue}")
-    if movements := (view.get("bank") or {}).get("movements"):
-        alerts.append(f"{len(movements)} bank movement(s) not matched")
+    bank = view.get("bank") or {}
+    if movements := bank.get("movements"):
+        alerts.append(f"{bank.get('total') or len(movements)} bank movement(s) not matched")
     return alerts

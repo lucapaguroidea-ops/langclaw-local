@@ -192,7 +192,7 @@ A payment dated in a **closed** month is still applied to the invoice, but it
 isn't booked. It's listed under `not_booked` with the reason, for the
 accountant.
 
-`bank_movements(unmatched_only=True)` lists what's still open.
+`bank_movements(unmatched_only=True)` lists what's still open, newest first, one page at a time (`limit` up to 500). It also returns `total` (every movement), `money_in` / `money_out` (summed per currency over all of them) and `next_offset` for the next page, so nothing is hidden however many movements a client has. The console's Bank tab and the "not matched" alert use `total`. The outlook's bank balance reads every statement up to the month's end, so an account whose last statement is old still counts.
 
 ## Advice: what's coming
 
