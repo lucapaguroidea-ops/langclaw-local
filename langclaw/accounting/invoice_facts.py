@@ -113,8 +113,8 @@ def invoice_fields(facts: dict[str, Any], *, own_cif: str) -> dict[str, Any]:
         if category != "AE" and abs(taxable * rate / 100 - amount) > _TOLERANCE:
             problems.append(f"{rate}% of {taxable} isn't {amount}.")
         if issued and rate and category != "AE" and rate not in allowed:
-            problems.append(f"{_rate(rate)}% VAT wasn't in force on {issued} "
-                            f"(then: {', '.join(sorted(_rate(r) for r in allowed))}%).")  # fmt: skip
+            then = ", ".join(sorted(_rate(r) for r in allowed))
+            problems.append(f"{_rate(rate)}% VAT wasn't in force on {issued} (then: {then}%).")
 
     kind = "credit_note" if str(facts.get("kind") or "").lower() == "credit_note" else "invoice"
     fields = {
