@@ -181,10 +181,18 @@ row count and SHA-256. It's a copy that doesn't need the database, to keep or
 to hand over when a client leaves. Schedule it (e.g. monthly with the `cron`
 tool) for a regular copy.
 
-Honest limits: it's an **export, not a restore** (nothing reads an archive back
-yet); it lands in the **same bucket** as the client's files, so copy it
-elsewhere if the bucket is what you're protecting against; and it isn't a
-database backup — take those at the Postgres service too.
+`accounting_archive_restore(key)` reads one back, e.g. after the database was
+lost: first every file must match the manifest's checksum and row count (a
+damaged archive restores nothing), then it loads all tables in one
+transaction — all or nothing — into **empty books only** (a client with journal
+entries or documents is refused; a restore never merges). New entries after a
+restore continue after the restored ids.
+
+Honest limits: the archive lands in the **same bucket** as the client's files,
+so copy it elsewhere if the bucket is what you're protecting against; it holds
+the books, not the files themselves (those stay in the bucket) nor workflow
+runs or chat history; and it isn't a database backup — take those at the
+Postgres service too.
 
 ### Who did it: `recorded_by`
 

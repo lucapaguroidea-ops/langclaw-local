@@ -2266,3 +2266,53 @@ async def test_a_clients_books_archive_into_one_zip_in_their_bucket(acme) -> Non
         first = json.loads(zf.read("journal_entries.jsonl").splitlines()[0])
         assert first["bucket_key"] == "opening/2026-01-31"
     assert out["tables"] == {name: t["rows"] for name, t in tables.items()}
+
+
+@needs_pg
+async def test_an_archive_restores_into_an_empty_client_and_checks_itself(acme) -> None:
+    import io
+    import zipfile
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.documents import store as store_mod
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678")
+    with tenant_scope(client):
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-01-31", "balances": {"5121": 100, "1012": -100}}
+        )
+        await tools["accounting_period_close"].ainvoke({"period": "2026-01", "closed_by": "ana"})
+        archived = await tools["accounting_archive"].ainvoke({})
+        busy = await tools["accounting_archive_restore"].ainvoke({"key": archived["key"]})
+        assert "already has" in busy["error"]  # never on top of existing books
+
+        pool = await scoped.store._db()
+        await pool.execute("DROP SCHEMA tenant_acme CASCADE")  # the database is lost
+        Journal._ready.clear()
+        store_mod._READY.clear()
+        restored = await tools["accounting_archive_restore"].ainvoke({"key": archived["key"]})
+        assert restored["restored"] == archived["tables"]
+        journal = Journal(scoped.store)
+        assert await journal.balance_until(date(2026, 1, 31), "5121") == Decimal("100.00")
+        assert [p["period"] for p in await journal.closed_periods()] == ["2026-01"]
+        assert len(await scoped.store.search_all(doc_type="invoice")) == 4
+        # New rows after a restore get fresh ids (sequences moved past the restored ones).
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-02-01", "balances": {"5121": 1, "1012": -1}}
+        )
+
+        data, _ = await scoped.bucket.get(archived["key"])
+        src, out = zipfile.ZipFile(io.BytesIO(data)), io.BytesIO()
+        with zipfile.ZipFile(out, "w") as zf:
+            for name in src.namelist():
+                body = src.read(name)
+                zf.writestr(name, body + b"\n" if name == "journal_lines.jsonl" else body)
+        await scoped.bucket.put("archives/tampered.zip", out.getvalue())
+        tampered = await tools["accounting_archive_restore"].ainvoke(
+            {"key": "archives/tampered.zip"}
+        )
+        assert "journal_lines" in tampered["error"] and "checksum" in tampered["error"]

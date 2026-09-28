@@ -28,7 +28,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
-from langclaw.accounting.archive import archive_books
+from langclaw.accounting.archive import ArchiveError, archive_books, restore_books
 from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
 from langclaw.accounting.bank.booking import (
     bank_account,
@@ -729,6 +729,23 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"key": key, "url": url,
                 "tables": {t["table"]: t["rows"] for t in manifest["tables"]}}  # fmt: skip
+
+    async def accounting_archive_restore(key: str) -> dict:
+        """Restore this client's books from an archive made by accounting_archive,
+        e.g. after the database was lost. Only into empty books (no journal
+        entries or documents yet), and only after every file matches the
+        archive's checksums; all or nothing.
+
+        Args:
+            key: The archive's key in the client's bucket, e.g. archives/20260928T120000Z.zip.
+        """
+        try:
+            svc = services.current()
+            data, _ = await svc.bucket.get(key)
+            restored = await restore_books(svc.store, data)
+        except (*_ERRORS, ArchiveError) as exc:
+            return {"error": str(exc)}
+        return {"restored": restored, "from": key}
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -2037,6 +2054,7 @@ def build_accounting_tools(
         accounting_period_reopen,
         accounting_invoice_file,
         accounting_archive,
+        accounting_archive_restore,
         accounting_reports,
         cash_z_report,
         cash_book,
