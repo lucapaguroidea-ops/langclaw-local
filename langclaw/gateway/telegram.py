@@ -32,6 +32,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from langclaw.actors import actor_id
 from langclaw.bus.base import BaseMessageBus, InboundMessage, OutboundMessage
 from langclaw.config.schema import TelegramChannelConfig
 from langclaw.cron.utils import is_cron_context_id
@@ -586,7 +587,9 @@ class TelegramChannel(BaseChannel):
 
         who = f"@{user.username}" if user.username else (user.first_name or str(user.id))
         try:
-            await self._plane.answer_review_by_key(key, action, by=who, via="telegram")
+            await self._plane.answer_review_by_key(
+                key, action, by=who, via="telegram", actor=actor_id("telegram", str(user.id))
+            )
         except ConflictError as exc:
             await query.answer(str(exc), show_alert=True)
             return

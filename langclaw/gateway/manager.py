@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 
+from langclaw.actors import actor_id, actor_scope, current_actor
 from langclaw.bus.base import BaseMessageBus, InboundMessage, OutboundMessage
 from langclaw.checkpointer.base import BaseCheckpointerBackend
 from langclaw.config.schema import LangclawConfig
@@ -625,6 +626,7 @@ class GatewayManager:
                         decision,
                         by=ctx.user_id,
                         via=ctx.channel,
+                        actor=actor_id(ctx.channel, ctx.user_id),
                         fallback_target={
                             "channel": ctx.channel,
                             "user_id": ctx.user_id,
@@ -980,7 +982,12 @@ class GatewayManager:
         logger.debug(f"Checking permissions for user_id {msg.user_id}")
         username = (msg.metadata or {}).get("username", "")
         role = lookup_by_user(user_roles, msg.user_id, username)
-        return role if role is not None else perms.default_role
+        if role is not None:
+            return role
+        # Someone unlisted, writing in a client's chat: that client's own staff.
+        if perms.client_role and current_tenant() is not None:
+            return perms.client_role
+        return perms.default_role
 
     def _make_workflow_progress_sink(
         self, msg: InboundMessage, channel: BaseChannel
@@ -1275,7 +1282,10 @@ class GatewayManager:
 
     async def _handle(self, msg: InboundMessage) -> None:
         """Handle *msg* as its client (tenant), when clients are enabled."""
-        with tenant_scope(await self._resolve_tenant(msg)):
+        # Chat turns act for their sender; workflow messages keep the actor the
+        # runner sets (the reviewer, on a resume).
+        actor = actor_id(msg.channel, msg.user_id) if msg.origin == "user" else current_actor()
+        with tenant_scope(await self._resolve_tenant(msg)), actor_scope(actor):
             await self._handle_message(msg)
 
     async def _handle_message(self, msg: InboundMessage) -> None:

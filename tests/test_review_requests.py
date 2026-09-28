@@ -242,7 +242,9 @@ async def test_telegram_approve_button_answers_the_review() -> None:
     ch = _telegram(plane)
     update, query = _button_press(review_callback("approve", "k1"))
     await ch._handle_review_button(update, None)
-    plane.answer_review_by_key.assert_awaited_once_with("k1", "approve", by="@luca", via="telegram")
+    plane.answer_review_by_key.assert_awaited_once_with(
+        "k1", "approve", by="@luca", via="telegram", actor="telegram:42"
+    )
     query.answer.assert_awaited_once_with("Approved — continuing.")
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -247,3 +248,14 @@ def test_overview_alerts_count_open_partner_advances() -> None:
 def test_overview_alerts_count_possible_offsets() -> None:
     report = {"offsets_possible": [{"cui": "RO1", "partner": "A", "amount": "5.00"}]}
     assert "Partners to offset (compensare): 1" in editor.overview_alerts({"report": report})
+
+
+def test_template_update_is_offered_only_when_the_template_moved_on() -> None:
+    latest = editor.new_draft("Accounting proposal (propose → check → review → post)")
+    assert editor.template_update("accounting_proposal", latest) is None  # up to date
+    old = json.loads(json.dumps(latest))
+    old["nodes"].pop(next(iter(old["nodes"])))
+    update = editor.template_update("accounting_proposal", old)
+    assert update is not None and update["graph"] == latest
+    assert update["diff"].startswith("---") and "+" in update["diff"]
+    assert editor.template_update("my_own_flow", old) is None  # not from a template

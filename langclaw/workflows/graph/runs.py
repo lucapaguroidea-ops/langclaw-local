@@ -270,6 +270,10 @@ class RunIndex:
         records.sort(key=lambda r: r.get("started_at", ""), reverse=True)
         return records[:limit]
 
+    async def review_load(self, *, days: int = 30) -> dict[str, Any]:
+        """:func:`review_load` over every run in the index."""
+        return review_load(await self._backend.all(), days=days)
+
     async def pending_reviews(self, *, workflow: str = "") -> list[dict[str, Any]]:
         """Every unanswered review, oldest first, with its run's identity."""
         out: list[dict[str, Any]] = []
@@ -285,3 +289,71 @@ class RunIndex:
                     )
         out.sort(key=lambda r: r.get("created_at", ""))
         return out
+
+
+def review_load(
+    records: list[dict[str, Any]], *, now: datetime | None = None, days: int = 30
+) -> dict[str, Any]:
+    """How much review work is waiting and who answered how much, from run
+    *records*: pending reviews by client (``tenant``) and workflow with the
+    oldest, and — for answers in the last *days* — per person (the answer's
+    ``actor`` when the channel identified them, else its ``by``) the count by
+    action and the median hours from request to answer."""
+    from statistics import median
+
+    now = now or datetime.now(UTC)
+
+    def hours(start: str, end: datetime) -> float:
+        try:
+            return round((end - datetime.fromisoformat(start)).total_seconds() / 3600, 1)
+        except (TypeError, ValueError):
+            return 0.0
+
+    pending: list[dict[str, Any]] = []
+    waits: dict[str, list[float]] = {}
+    people: dict[str, dict[str, Any]] = {}
+    for record in records:
+        for review in record.get("reviews") or []:
+            decision = review.get("decision")
+            if decision is None:
+                pending.append({"run_id": record.get("run_id", ""),
+                                "tenant": record.get("tenant", ""),
+                                "workflow": record.get("workflow", ""),
+                                "hours": hours(review.get("created_at", ""), now)})  # fmt: skip
+                continue
+            try:
+                at = datetime.fromisoformat(decision.get("at", ""))
+            except ValueError:
+                continue
+            if (now - at).days >= days:
+                continue
+            who = decision.get("actor") or decision.get("by") or "unknown"
+            blank = {"name": decision.get("by", ""), "count": 0, "approved": 0, "rejected": 0,
+                     "edited": 0}  # fmt: skip
+            person = people.setdefault(who, blank)
+            person["count"] += 1
+            key = {"approve": "approved", "reject": "rejected", "edit": "edited"}.get(
+                decision.get("action", ""))  # fmt: skip
+            if key:
+                person[key] += 1
+            waits.setdefault(who, []).append(hours(review.get("created_at", ""), at))
+
+    def grouped(field: str) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for p in pending:
+            if not p[field]:
+                continue
+            g = out.setdefault(p[field], {"count": 0, "oldest_hours": 0.0})
+            g["count"] += 1
+            g["oldest_hours"] = max(g["oldest_hours"], p["hours"])
+        return out
+
+    for who, person in people.items():
+        person["median_hours"] = round(median(waits[who]), 1)
+    oldest = max(pending, key=lambda p: p["hours"], default=None)
+    return {
+        "pending": {"total": len(pending), "oldest": oldest,
+                    "by_tenant": grouped("tenant"), "by_workflow": grouped("workflow")},
+        "answered": {"total": sum(p["count"] for p in people.values()), "days": days,
+                     "by_person": people},
+    }  # fmt: skip

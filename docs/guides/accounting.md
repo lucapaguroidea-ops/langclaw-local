@@ -171,6 +171,49 @@ generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
 ANAF schemas and is a later slice.
 
 
+### Archiving a client's books
+
+`accounting_archive()` writes the client's books into one zip in their bucket,
+`archives/<time>.zip`, and returns a 24-hour link: journal entries and lines,
+closed periods and their history, bank movements, fixed assets and document
+records, one JSON-lines file per table, plus `manifest.json` with each table's
+row count and SHA-256. It's a copy that doesn't need the database, to keep or
+to hand over when a client leaves. Schedule it (e.g. monthly with the `cron`
+tool) for a regular copy.
+
+`accounting_archive_restore(key)` reads one back, e.g. after the database was
+lost: first every file must match the manifest's checksum and row count (a
+damaged archive restores nothing), then it loads all tables in one
+transaction — all or nothing — into **empty books only** (a client with journal
+entries or documents is refused; a restore never merges). New entries after a
+restore continue after the restored ids.
+
+Honest limits: the archive lands in the **same bucket** as the client's files,
+so copy it elsewhere if the bucket is what you're protecting against; it holds
+the books, not the files themselves (those stay in the bucket) nor workflow
+runs or chat history; and it isn't a database backup — take those at the
+Postgres service too.
+
+### Who did it: `recorded_by`
+
+`approved_by`, `closed_by` and `reopened_by` are what someone typed — often
+the model. Next to them, every journal entry and every close / reopen in the
+month's `history` carries **`recorded_by`**, which langclaw sets from the
+channel, never from the model (`langclaw/actors.py`):
+
+- a chat turn acts for its sender: `"telegram:12345"` (the channel and the
+  sender's id as the channel reports it);
+- the steps after a workflow review act for whoever answered it: a Telegram
+  button records `"telegram:<their id>"`, `/workflows approve` the chat
+  sender. Over the HTTP API it depends on the token: a **personal token**
+  (`LANGCLAW__CHANNELS__API__PEOPLE=ana:tok1,ion:tok2`) is that person, recorded
+  as `"api:ana"`; with the shared key the name a request gives is only claimed,
+  recorded as `"api-claimed:<name>"`. Set `UI_PERSONAL_LOGIN=true` on the
+  console so each person signs in with their own token and their reviews are
+  recorded as theirs;
+- code outside a turn or a review (a script, a scheduled run nobody
+  answered) records `""` rather than guessing.
+
 ### Last year's result (repartizarea profitului)
 
 When December closes, classes 6 and 7 are closed into 121. That result stays on

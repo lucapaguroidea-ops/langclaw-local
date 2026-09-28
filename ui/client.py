@@ -37,6 +37,10 @@ class LangclawClient:
             transport=transport,
         )
 
+    def whoami(self) -> dict[str, str]:
+        """``{"person": name}`` for a personal token, ``""`` for the shared one."""
+        return self._request("GET", "/v1/whoami")
+
     # -- plumbing --------------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -168,6 +172,10 @@ class LangclawClient:
     def reviews(self, workflow: str = "") -> list[dict[str, Any]]:
         params = {"workflow": workflow} if workflow else None
         return self._request("GET", "/v1/reviews", params=params)["reviews"]
+
+    def review_load(self, days: int = 30) -> dict[str, Any]:
+        """``{"pending", "answered"}`` — see ``GET /v1/reviews/load``."""
+        return self._request("GET", "/v1/reviews/load", params={"days": days})
 
     def answer_review(
         self,

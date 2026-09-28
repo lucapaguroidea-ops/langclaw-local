@@ -108,3 +108,9 @@ def test_unreachable_server_raises_langclaw_error() -> None:
     c, _ = _client(boom)
     with pytest.raises(LangclawError, match="Cannot reach langclaw"):
         c.status()
+
+
+def test_whoami_names_the_person_behind_a_token() -> None:
+    c, seen = _client(lambda r: httpx.Response(200, json={"person": "ana"}))
+    assert c.whoami() == {"person": "ana"}
+    assert seen[0].url.path == "/v1/whoami"

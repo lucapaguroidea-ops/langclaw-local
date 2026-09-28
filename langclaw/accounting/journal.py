@@ -12,6 +12,8 @@ from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from langclaw.actors import current_actor
+
 if TYPE_CHECKING:
     from langclaw.documents.store import DocumentStore
 
@@ -51,6 +53,8 @@ CREATE TABLE IF NOT EXISTS {schema}.period_log (
     reason  TEXT NOT NULL DEFAULT '',
     at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {schema}.journal_entries ADD COLUMN IF NOT EXISTS recorded_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE {schema}.period_log ADD COLUMN IF NOT EXISTS recorded_by TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS journal_partner_idx ON {schema}.journal_entries (partner_cui);
 """
 
@@ -119,8 +123,8 @@ class Journal:
                     raise JournalError(f"Period {period} is closed; nothing can be posted in it.")
             entry_id = await conn.fetchval(
                 f"INSERT INTO {self._schema}.journal_entries (bucket_key, entry_date, direction, "
-                "partner_cui, partner_name, explanation, legal_basis, approved_by) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                "partner_cui, partner_name, explanation, legal_basis, approved_by, recorded_by) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
                 document["bucket_key"],
                 entry_date,
                 "in" if incoming else "out",
@@ -129,6 +133,7 @@ class Journal:
                 str(proposal.get("reasoning") or ""),
                 str(proposal.get("legal_basis") or ""),
                 approved_by,
+                current_actor(),
             )
             await conn.executemany(
                 f"INSERT INTO {self._schema}.journal_lines "
@@ -381,10 +386,11 @@ class Journal:
             )
             if done:
                 await conn.execute(
-                    f"INSERT INTO {self._schema}.period_log (period, action, by_whom) "
-                    "VALUES ($1, 'closed', $2)",
+                    f"INSERT INTO {self._schema}.period_log (period, action, by_whom, "
+                    "recorded_by) VALUES ($1, 'closed', $2, $3)",
                     period,
                     closed_by,
+                    current_actor(),
                 )
         return bool(done)
 
@@ -421,11 +427,12 @@ class Journal:
                 f"DELETE FROM {self._schema}.closed_periods WHERE period = $1", period
             )
             await conn.execute(
-                f"INSERT INTO {self._schema}.period_log (period, action, by_whom, reason) "
-                "VALUES ($1, 'reopened', $2, $3)",
+                f"INSERT INTO {self._schema}.period_log (period, action, by_whom, reason, "
+                "recorded_by) VALUES ($1, 'reopened', $2, $3, $4)",
                 period,
                 reopened_by,
                 reason.strip(),
+                current_actor(),
             )
         return sorted(r["bucket_key"] for r in removed)
 
@@ -433,12 +440,13 @@ class Journal:
         """Every close and reopen of *period*, oldest first."""
         pool = await self._db()
         rows = await pool.fetch(
-            f"SELECT action, by_whom, reason, at FROM {self._schema}.period_log "
+            f"SELECT action, by_whom, reason, recorded_by, at FROM {self._schema}.period_log "
             "WHERE period = $1 ORDER BY id",
             period,
         )
         return [{"action": r["action"], "by": r["by_whom"], "reason": r["reason"],
-                 "at": r["at"].isoformat()} for r in rows]  # fmt: skip
+                 "recorded_by": r["recorded_by"], "at": r["at"].isoformat()}
+                for r in rows]  # fmt: skip
 
     async def closed_periods(self) -> list[dict[str, Any]]:
         pool = await self._db()

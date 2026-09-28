@@ -28,6 +28,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
+from langclaw.accounting.archive import ArchiveError, archive_books, restore_books
 from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
 from langclaw.accounting.bank.booking import (
     bank_account,
@@ -709,6 +710,42 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"saved": saved["bucket_key"], "status": status, "problems": out["problems"],
                 "direction": out["fields"]["direction"]}  # fmt: skip
+
+    async def accounting_archive() -> dict:
+        """Archive this client's books into one zip in their bucket (archives/...):
+        journal entries and lines, closed periods and their history, bank
+        movements, fixed assets and document records, one JSON-lines file per
+        table plus a manifest with row counts and checksums. A copy to keep or
+        hand over that doesn't depend on the database; returns a 24-hour link.
+        """
+        try:
+            svc = services.current()
+            data, manifest = await archive_books(svc.store)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            key = f"archives/{stamp}.zip"
+            await svc.bucket.put(key, data, content_type="application/zip")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"key": key, "url": url,
+                "tables": {t["table"]: t["rows"] for t in manifest["tables"]}}  # fmt: skip
+
+    async def accounting_archive_restore(key: str) -> dict:
+        """Restore this client's books from an archive made by accounting_archive,
+        e.g. after the database was lost. Only into empty books (no journal
+        entries or documents yet), and only after every file matches the
+        archive's checksums; all or nothing.
+
+        Args:
+            key: The archive's key in the client's bucket, e.g. archives/20260928T120000Z.zip.
+        """
+        try:
+            svc = services.current()
+            data, _ = await svc.bucket.get(key)
+            restored = await restore_books(svc.store, data)
+        except (*_ERRORS, ArchiveError) as exc:
+            return {"error": str(exc)}
+        return {"restored": restored, "from": key}
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -2016,6 +2053,8 @@ def build_accounting_tools(
         accounting_result_carry,
         accounting_period_reopen,
         accounting_invoice_file,
+        accounting_archive,
+        accounting_archive_restore,
         accounting_reports,
         cash_z_report,
         cash_book,

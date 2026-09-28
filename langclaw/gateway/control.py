@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from langclaw.bus.base import InboundMessage
+from langclaw.workflows.graph.runs import review_load
 
 if TYPE_CHECKING:
     import asyncio
@@ -590,6 +591,15 @@ class ControlPlane:
             return []
         return await graph.index.pending_reviews(workflow=workflow)
 
+    async def review_load(self, *, days: int = 30) -> dict[str, Any]:
+        """Pending reviews by client / workflow (with the oldest) and answers of
+        the last *days* per person (``runs.review_load``)."""
+        self.require_workflows()
+        graph = self._graph_runner()
+        if graph is None:
+            return review_load([], days=days)
+        return await graph.index.review_load(days=days)
+
     async def answer_review(
         self,
         run_id: str,
@@ -597,6 +607,7 @@ class ControlPlane:
         *,
         by: str,
         via: str,
+        actor: str = "",
         interrupt_id: str = "",
         fallback_target: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
@@ -611,6 +622,9 @@ class ControlPlane:
             decision: ``"approve"`` / ``"reject"``, or ``{"action", "data", "comment"}``.
             by: Who answered (user id or name), recorded on the review.
             via: Where it was answered (``"telegram"``, ``"ui"``...).
+            actor: Who answered as the channel identified them
+                (``"telegram:12345"``; ``langclaw.actors``) — what the steps
+                after the review record as having acted.
             interrupt_id: Which review, when a run has several; empty ⇒ oldest.
             fallback_target: Where to deliver the result if the run has no
                 recorded origin (``channel``, ``user_id``, ``context_id``, ``chat_id``).
@@ -635,7 +649,9 @@ class ControlPlane:
 
         try:
             review = await graph.claim_review(
-                run_id, {**decision, "by": by, "via": via}, interrupt_id=interrupt_id
+                run_id,
+                {**decision, "by": by, "via": via, "actor": actor},
+                interrupt_id=interrupt_id,
             )
         except ReviewAlreadyResolved as exc:
             raise ConflictError(str(exc), exc.decision) from exc
@@ -661,7 +677,7 @@ class ControlPlane:
         return review
 
     async def answer_review_by_key(
-        self, key: str, action: str, *, by: str, via: str
+        self, key: str, action: str, *, by: str, via: str, actor: str = ""
     ) -> tuple[dict[str, Any], str]:
         """Answer the review a button with short *key* belongs to.
 
@@ -678,7 +694,7 @@ class ControlPlane:
             raise NotFoundError("That review no longer exists.")
         run_id, interrupt_id = found
         review = await self.answer_review(
-            run_id, {"action": action}, by=by, via=via, interrupt_id=interrupt_id
+            run_id, {"action": action}, by=by, via=via, actor=actor, interrupt_id=interrupt_id
         )
         return review, run_id
 

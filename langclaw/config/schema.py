@@ -293,6 +293,11 @@ class ApiChannelConfig(BaseModel):
     """Identity API chat turns run as (sessions, RBAC ``user_roles``, cron ownership)."""
     user_roles: StringDict = Field(default_factory=dict)
     """Maps the API ``user_id`` to a permission role. Env format: ``api:admin``"""
+    people: StringDict = Field(default_factory=dict)
+    """Personal tokens, name → token (env format: ``ana:tok1,ion:tok2``). A request
+    made with one is *that person*: review answers are recorded as ``api:<name>``.
+    With the shared ``token`` the name a request gives is only claimed
+    (``api-claimed:<name>``)."""
     max_turns: int = 500
     """How many recent chat turns to keep in memory for polling."""
 
@@ -576,6 +581,12 @@ class PermissionsConfig(BaseModel):
 
     default_role: str = "viewer"
     """Role assigned to users not listed in any channel's ``user_roles``."""
+
+    client_role: str = ""
+    """With clients (tenants) on: the role of anyone writing in a *client's* chat
+    who isn't listed in the channel's ``user_roles`` — the client's own staff.
+    Empty keeps ``default_role``. ``langclaw.accounting.roles.accounting_roles()``
+    has a read-only ``client`` role for it."""
 
     roles: dict[str, RoleConfig] = Field(default_factory=dict)
     """Role name -> ``RoleConfig``. Define in ``config.json``::

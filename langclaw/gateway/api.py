@@ -41,6 +41,7 @@ Management (see :class:`~langclaw.gateway.control.ControlPlane`)::
     GET    /v1/runs/{run_id}             status, reviews, state, and each step's result
     POST   /v1/runs/{run_id}/cancel
     GET    /v1/reviews [?workflow=]      reviews waiting for an answer
+    GET    /v1/reviews/load [?days=30]   pending by client / workflow; answers per person
     POST   /v1/runs/{run_id}/review      {"action": "approve"|"edit"|"reject",
                                           "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}
     GET    /v1/schedules                 POST /v1/schedules   DELETE /v1/schedules/{id}
@@ -234,6 +235,7 @@ class ApiChannel(BaseChannel):
                 web.post("/v1/runs/{run_id}/cancel", self._cancel_run),
                 web.post("/v1/runs/{run_id}/review", self._answer_review),
                 web.get("/v1/reviews", self._list_reviews),
+                web.get("/v1/reviews/load", self._review_load),
                 web.get("/v1/tenants", self._list_tenants),
                 web.get("/v1/tenants/{tenant_id}", self._get_tenant),
                 web.put("/v1/tenants/{tenant_id}", self._save_tenant),
@@ -241,6 +243,7 @@ class ApiChannel(BaseChannel):
                 web.get("/v1/documents", self._list_documents),
                 web.get("/v1/accounting/overview", self._accounting_overview),
                 web.get("/v1/accounting/firm", self._accounting_firm),
+                web.get("/v1/whoami", self._whoami),
                 web.get("/v1/documents/{key:.+}", self._get_document),
                 web.get("/v1/schedules", self._list_schedules),
                 web.post("/v1/schedules", self._add_schedule),
@@ -260,14 +263,23 @@ class ApiChannel(BaseChannel):
         from aiohttp import web
 
         expected = f"Bearer {self._config.token}".encode()
+        people = {name: f"Bearer {tok}".encode() for name, tok in self._config.people.items()
+                  if name and tok}  # fmt: skip
 
         @web.middleware
         async def middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
             if request.path == "/healthz":
                 return await handler(request)
             given = request.headers.get("Authorization", "").encode()
-            if not self._config.token or not hmac.compare_digest(given, expected):
+            # Compare against every token (no early exit), so timing names no one.
+            person = ""
+            for name, token in people.items():
+                if hmac.compare_digest(given, token):
+                    person = name
+            shared = bool(self._config.token) and hmac.compare_digest(given, expected)
+            if not (shared or person):
                 return self._json({"error": "unauthorized"}, 401)
+            request["person"] = person
             return await handler(request)
 
         return middleware
@@ -476,6 +488,10 @@ class ApiChannel(BaseChannel):
         reviews = await self._require_plane().list_reviews(request.query.get("workflow", ""))
         return self._json({"reviews": reviews})
 
+    async def _review_load(self, request: web.Request) -> web.Response:
+        days = _parse_int(request.query.get("days"), default=30, name="days")
+        return self._json(await self._require_plane().review_load(days=days))
+
     async def _answer_review(self, request: web.Request) -> web.Response:
         body = await self._body(request)
         action = body.get("action")
@@ -484,11 +500,15 @@ class ApiChannel(BaseChannel):
         data = body.get("data") or {}
         if not isinstance(data, dict):
             raise ValueError("'data' must be an object.")
+        person = request.get("person", "")
+        claimed = str(body.get("by") or self._config.user_id)
         review = await self._require_plane().answer_review(
             request.match_info["run_id"],
             {"action": action, "data": data, "comment": str(body.get("comment") or "")},
-            by=str(body.get("by") or self._config.user_id),
+            by=person or claimed,
             via=str(body.get("via") or self.name),
+            # A personal token is the person; with the shared key the name is only claimed.
+            actor=f"api:{person}" if person else f"api-claimed:{claimed}",
             interrupt_id=str(body.get("interrupt_id") or ""),
             fallback_target={
                 "channel": self.name,
@@ -527,6 +547,9 @@ class ApiChannel(BaseChannel):
                 tenant=query.get("tenant", ""),
             )
         )
+
+    async def _whoami(self, request: web.Request) -> web.Response:
+        return self._json({"person": request.get("person", "")})
 
     async def _accounting_firm(self, request: web.Request) -> web.Response:
         return self._json(

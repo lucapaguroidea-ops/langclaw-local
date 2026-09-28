@@ -9,8 +9,12 @@ Talks to the langclaw control-plane API; the API token stays server-side.
 Environment:
     LANGCLAW_URL        e.g. http://langclaw.railway.internal:18790
     LANGCLAW_API_TOKEN  the gateway's LANGCLAW__CHANNELS__API__TOKEN
-    UI_PASSWORD         password for this console (required)
+    UI_PASSWORD         password for this console (required, unless personal login)
     UI_REVIEWER         name recorded on reviews answered here (default "web")
+    UI_PERSONAL_LOGIN   "true": each person signs in with their own API token
+                        (the gateway's LANGCLAW__CHANNELS__API__PEOPLE); the console
+                        then calls the API as them, so their reviews are recorded
+                        as theirs (api:<name>) instead of a claimed name
 """
 
 from __future__ import annotations
@@ -39,7 +43,41 @@ STATUS_ICONS = {
 # -- auth & client --------------------------------------------------------------
 
 
+def _personal_login() -> bool:
+    return os.environ.get("UI_PERSONAL_LOGIN", "").lower() in ("1", "true", "yes")
+
+
+def _check_personal_token() -> bool:
+    """Sign in with a personal API token; the gateway says whose it is."""
+    if st.session_state.get("authed"):
+        return True
+    url = os.environ.get("LANGCLAW_URL", "")
+    if not url:
+        st.error("Set LANGCLAW_URL on this service.")
+        return False
+    with st.form("login"):
+        st.title("🦀 Langclaw workflows")
+        token = st.text_input(
+            "Your API token",
+            type="password",
+            help="Given to you by whoever runs langclaw (channels.api.people).",
+        )
+        if st.form_submit_button("Sign in"):
+            client = LangclawClient(url, token)
+            try:
+                person = client.whoami()["person"]
+            except LangclawError:
+                person = ""
+            if person:
+                st.session_state.update(authed=True, client=client, person=person)
+                st.rerun()
+            st.error("That token doesn't belong to anyone.")
+    return False
+
+
 def _check_password() -> bool:
+    if _personal_login():
+        return _check_personal_token()
     expected = os.environ.get("UI_PASSWORD", "")
     if not expected:
         st.error("UI_PASSWORD is not set on this service; refusing to start without a password.")
@@ -58,6 +96,8 @@ def _check_password() -> bool:
 
 
 def _client() -> LangclawClient | None:
+    if _personal_login():
+        return st.session_state.get("client")
     url, token = os.environ.get("LANGCLAW_URL", ""), os.environ.get("LANGCLAW_API_TOKEN", "")
     if not url or not token:
         st.error("Set LANGCLAW_URL and LANGCLAW_API_TOKEN on this service.")
@@ -96,7 +136,7 @@ def _client_picker(lc: LangclawClient, tenants_on: bool) -> None:
 
 
 def _reviewer() -> str:
-    return os.environ.get("UI_REVIEWER", "web")
+    return st.session_state.get("person") or os.environ.get("UI_REVIEWER", "web")
 
 
 def _call(fn, *args: Any, **kwargs: Any) -> Any:
@@ -694,6 +734,20 @@ def page_workflow(lc: LangclawClient, name: str) -> None:
     st.caption(f"{badge} · tool `workflow_{name}`")
     if workflow.get("description"):
         st.markdown(workflow["description"])
+    if workflow.get("source") == "file" and (
+        update := editor.template_update(name, workflow.get("graph") or {})
+    ):
+        st.warning(
+            f"The **{name}** template has changed since this workflow was saved: "
+            "its fixes don't reach this copy until you apply them."
+        )
+        with st.expander("What would change"):
+            st.code(update["diff"], language="diff")
+            st.caption("Your current version stays in 🕘 Versions, so you can restore it.")
+            if st.button("⬆️ Update to the latest template", key=f"{name}:template"):
+                if _call(lc.save_workflow, name, update["graph"]) is not None:
+                    st.success("Updated.")
+                    st.rerun()
     reviews = len(_call(lc.reviews, name) or [])
     tabs = st.tabs(
         [
@@ -747,6 +801,27 @@ def page_new(lc: LangclawClient) -> None:
 def page_reviews(lc: LangclawClient) -> None:
     st.header("🙋 Review queue")
     st.caption("Every paused run, across workflows. Answers here also update Telegram.")
+    if load := _call(lc.review_load):
+        pending, answered = load["pending"], load["answered"]
+        cols = st.columns(3)
+        cols[0].metric("Waiting", pending["total"])
+        oldest = pending["oldest"]
+        cols[1].metric(
+            "Oldest (hours)",
+            oldest["hours"] if oldest else 0,
+            help=f"{oldest['workflow']} · {oldest['run_id']}" if oldest else None,
+        )
+        cols[2].metric(f"Answered, last {answered['days']} days", answered["total"])
+        if pending["by_tenant"]:
+            st.caption("Waiting per client")
+            st.dataframe(
+                [{"client": t, **g} for t, g in pending["by_tenant"].items()], hide_index=True
+            )
+        if answered["by_person"]:
+            st.caption("Answers per person (recorded as)")
+            st.dataframe(
+                [{"person": p, **v} for p, v in answered["by_person"].items()], hide_index=True
+            )
     reviews = _call(lc.reviews) or []
     if not reviews:
         st.success("Nothing waiting.")

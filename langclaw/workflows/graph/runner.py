@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from langclaw.actors import actor_scope
 from langclaw.tenants import tenant_scope
 from langclaw.workflows.graph.compile import namespace_of, resolve_path, to_jsonable
 from langclaw.workflows.graph.runs import RunIndex
@@ -216,7 +217,11 @@ class GraphWorkflowRunner:
 
         decision = {k: v for k, v in review["decision"].items() if k != "at"}
         logger.info(f"Workflow {spec.name!r} run {run_id} resumed ({decision['action']})")
-        return await self._drive(spec, run_id, Command(resume={review["interrupt_id"]: decision}))
+        # The steps after a review act for the reviewer, as their channel identified them.
+        with actor_scope(decision.get("actor", "")):
+            return await self._drive(
+                spec, run_id, Command(resume={review["interrupt_id"]: decision})
+            )
 
     async def resume(
         self, spec: WorkflowSpec, run_id: str, decision: Any, *, interrupt_id: str = ""
