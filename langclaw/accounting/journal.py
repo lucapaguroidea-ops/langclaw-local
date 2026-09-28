@@ -160,15 +160,36 @@ class Journal:
         )
         return {r["bucket_key"] for r in rows}
 
-    async def lines_between(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
-        """Every posted line with an entry date in [*date_from*, *date_to*]."""
+    async def lines_between(
+        self, date_from: date, date_to: date, *, without_year_end: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every posted line with an entry date in [*date_from*, *date_to*];
+        *without_year_end* leaves out year-end closing entries (for P&L reports)."""
         pool = await self._db()
         rows = await pool.fetch(
             f"SELECT l.account, l.debit, l.credit FROM {self._schema}.journal_lines l "
             f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
-            "WHERE e.entry_date BETWEEN $1 AND $2 ORDER BY l.id",
+            "WHERE e.entry_date BETWEEN $1 AND $2 "
+            "AND NOT ($3 AND e.bucket_key LIKE 'close/%/year-end') ORDER BY l.id",
             date_from,
             date_to,
+            without_year_end,
+        )
+        return [dict(r) for r in rows]
+
+    async def account_lines(self, account: str, date_from: date, date_to: date) -> list[dict]:
+        """Lines on *account* (and its analytics) of entries dated in
+        [*date_from*, *date_to*], in date order."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.entry_date, e.bucket_key, l.debit, l.credit, l.explanation "
+            f"FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date BETWEEN $1 AND $2 "
+            "AND (l.account = $3 OR l.account LIKE $3 || '.%') ORDER BY e.entry_date, l.id",
+            date_from,
+            date_to,
+            account,
         )
         return [dict(r) for r in rows]
 
@@ -216,6 +237,35 @@ class Journal:
             day,
         )
         return [dict(r) for r in rows]
+
+    async def balances_by_name(self, account: str, day: date) -> list[dict]:
+        """Debit − credit on *account* per entry partner name, up to *day* (e.g. the
+        advances each employee still has to settle on 542)."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT e.partner_name AS name, COALESCE(SUM(l.debit - l.credit), 0) AS balance "
+            f"FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.entry_date <= $1 AND (l.account = $2 OR l.account LIKE $2 || '.%') "
+            "GROUP BY e.partner_name ORDER BY e.partner_name",
+            day,
+            account,
+        )
+        return [dict(r) for r in rows]
+
+    async def cash_moved_with(self, partner_cui: str, day: date) -> Decimal:
+        """Cash (5311) paid to or received from *partner_cui* on *day*, across all
+        of their invoices."""
+        pool = await self._db()
+        value = await pool.fetchval(
+            f"SELECT COALESCE(SUM(l.debit + l.credit), 0) FROM {self._schema}.journal_lines l "
+            f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
+            "WHERE e.partner_cui = $1 AND e.entry_date = $2 "
+            "AND (l.account = '5311' OR l.account LIKE '5311.%')",
+            partner_cui,
+            day,
+        )
+        return Decimal(value).quantize(_CENT)
 
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""

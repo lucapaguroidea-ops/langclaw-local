@@ -96,6 +96,8 @@ def invoice_record(invoice: UblInvoice, msg: Any, *, own_cif: str) -> dict[str, 
             "supplier_reg_com": invoice.supplier.reg_com,
             "supplier_iban": invoice.supplier.iban,
             "customer_cui": invoice.customer.cui,
+            "supplier_email": invoice.supplier.email,
+            "customer_email": invoice.customer.email,
             "total_net": _s(invoice.total_net),
             "total_vat": _s(invoice.total_vat),
             "vat_breakdown": [

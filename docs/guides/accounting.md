@@ -79,16 +79,31 @@ so proposals get more consistent as the accountant approves them.
   the asset goes into service, is `value / life_months` rounded to the ban, and
   the last month takes the rounding.
 
+- **year_end**: in December, the preview of the year-end closing entry. Every
+  class 6 and class 7 account, including income tax, is brought to zero against
+  121, which then holds the year's result (credit for a profit, debit for a loss).
+  The preview already includes December's depreciation. `accounting_results`
+  ignores this entry, so the P&L still shows the year after the close.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
-depreciation and the VAT settlement, dated the last day of the month, and saves the report to
+depreciation, the VAT settlement and, in December, the year-end entry, dated the
+last day of the month, and saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.
 
+`accounting_d394(period)` gives the **D394** figures (the informative statement of
+domestic supplies and purchases). It covers the month's invoices with a partner
+tax ID. They are grouped by partner, direction (`out` supplies, `in` purchases),
+VAT rate and type (`normal` / `reverse_charge`). Each group has the invoice
+count, taxable base and VAT, and credit notes count negative. The rows are also
+saved as `reports/<period>/d394.csv` in the client's bucket.
+
 These are figures for the accountant to check and file, not the ANAF D300 XML;
-generating the declaration file (DUKIntegrator) is a later slice.
+generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
+ANAF schemas and is a later slice.
 
 ## Bank statements and payments
 
@@ -134,6 +149,10 @@ exported from the bank) and call `bank_import(key)`:
    `"bank_accounts": {"RO49…": "5121.01"}`.
 5. An unmatched debit described as a bank fee ("comision", "taxa bancara"…) is
    booked D 627 / C bank.
+6. A movement described as a cash deposit ("depunere numerar") or withdrawal
+   ("retragere numerar", "ridicare numerar", ATM) goes through 581 (cash in
+   transit): a deposit is D 581 / C 5311 and D bank / C 581, a withdrawal the
+   reverse. It shows under `cash_transfers` and leaves the unmatched list.
 
 A payment dated in a **closed** month is still applied to the invoice, but it
 isn't booked. It's listed under `not_booked` with the reason, for the
@@ -213,8 +232,126 @@ On the next run, `receivables_overdue` shows `reminders_sent` and
 `last_reminder` per invoice, and the model escalates: first notice, second
 reminder, final notice.
 
-Nothing is emailed automatically, because customer email addresses aren't
-captured yet. Send the filed text from the chat or your mail client.
+Customer emails come from the e-Factura invoices. The UBL parser reads each
+party's `cac:Contact/cbc:ElectronicMail`, and sync stores it as `customer_email`
+/ `supplier_email`. `receivables_overdue` shows the email per customer.
+
+When Gmail is connected with write access (`LANGCLAW__TOOLS__GMAIL__ENABLED=true`,
+`…__READONLY=false`), `reminders_file` also creates a **Gmail draft** per
+reminder, addressed to the customer. A person still presses send. Customers
+without an email are filed and reported with `"draft": "no email address for
+this customer"`. Without Gmail, reminders are only filed.
+
+## Cash register (raport Z)
+
+`cash_z_report(day, lines)` books a day's Z report from its gross sales per VAT
+rate, e.g. `[{"rate": 21, "gross": 1210}]`. The entry is:
+
+- D 5311 for the total;
+- C the revenue account for the net, i.e. the profile's `cash_revenue_account`
+  (707 by default, 704 for services);
+- C 4427 for the VAT, worked out per rate from the gross.
+
+Rates must be valid on the day, and a day can be booked only once. A closed
+month refuses it.
+
+The report is filed as a `z_report` document. It counts towards
+`expected_documents`, e.g. `["z_report"]`, and its VAT goes into the month's
+VAT summary (the D300 draft). It doesn't go into D394, which lists invoices
+with a partner tax ID. Cash deposited at or withdrawn from the bank is booked
+through 581 by `bank_import` (see the bank section).
+
+### Invoices paid in cash
+
+`cash_pay_invoice(bucket_key, amount, day, document)` records an invoice paid
+or collected in cash, with the chitanță or dispoziție de plată number:
+
+- a supplier invoice is booked D 401 / C 5311, and a sale D 5311 / C 4111
+  (using the partner account the invoice was booked on);
+- if `amount` is empty, it pays whatever is left, and it refuses more than
+  that;
+- the invoice's payments are updated, and `paid_on` is set once nothing is
+  left;
+- the same document can't be booked twice.
+
+If the profile sets `cash_payment_limit`, a warning is returned when the cash
+paid to or received from one partner on one day goes above it. The check adds up
+all of that partner's invoices, using their tax ID. No legal limit is built in,
+so set the one that applies to the client.
+
+### Cash receipts without an invoice (bon fiscal)
+
+`cash_receipt(day, amount, account, vat_rate, document, description,
+deduct_vat)` books a purchase paid in cash with only a receipt, such as fuel or
+small supplies:
+
+- D the cost account (6xx expense, 3xx stock or 2xx asset);
+- D 4426 for the VAT;
+- C 5311.
+
+The VAT is deducted only when the client is a VAT payer and `deduct_vat` is
+true. Set it to false when the receipt doesn't show the client's tax ID; the
+VAT then stays in the cost. The rate must be valid on the day, and a receipt
+number can be booked once.
+
+The receipt is filed as a `cash_receipt` document, and its deductible VAT goes
+into the month's VAT summary. Whether a particular receipt qualifies for
+deduction is left to the accountant.
+
+### Employee cash advances (avans de trezorerie, 542)
+
+- `cash_advance(day, amount, employee, document)` gives an employee cash:
+  D 542 / C 5311.
+- `cash_receipt(..., employee="Ana Pop")` books a receipt paid from that
+  advance: C 542 instead of 5311.
+- `cash_advance(..., returned=true)` takes back what the employee didn't spend:
+  D 5311 / C 542. It refuses more than the employee still has open.
+- `advances_open(day)` lists what each employee still has to settle.
+  - A negative figure means they spent more than they were given, so the
+    company owes them.
+
+Employees are identified by the name as written, so use the same spelling
+every time.
+
+### Cash book (registru de casă)
+
+`cash_book(period)` reads 5311 back from the journal. It gives the opening
+balance, then for each day the receipts, payments, closing balance and the
+entries behind them, and finally the month's closing balance.
+
+`problems` lists each day where:
+
+- the cash went **negative**, which usually means a receipt is missing or was
+  booked late;
+- the cash was above the profile's `cash_limit`, if one is set. Nothing is
+  checked by default.
+
+The month report (`accounting_period_report`) has a `cash` section with:
+
+- the opening and closing cash;
+- the same problems;
+- `open_advances`, the employees' unsettled 542 advances at month end.
+
+`accounting_period_close` refuses a month in which the cash went negative. Book
+the missing Z reports or receipts first. Days above `cash_limit` and open
+advances are reported but don't block the close.
+
+## Paying suppliers
+
+`payables_due(day, days=7)` lists the supplier invoices to pay: unpaid, and due
+within `days`. Overdue ones are included and flagged. The list is grouped by
+supplier and shows the IBAN from the invoice, what's left after partial
+payments, and the invoice numbers.
+
+`payables_batch(day, days)` writes those payments as a CSV in the client's bucket
+at `payments/<date>-batch.csv`, and files it as a `payment_batch` document. It
+returns a 24-hour download link. The columns are `beneficiary; tax_id; iban;
+amount; currency; details`, where the details read "Plata fact. …".
+
+Suppliers without an IBAN are left out and listed under `missing_iban`. Nothing
+is paid from langclaw. The accountant uploads the file to internet banking, or
+copies it into the bank's own import format, since each bank's format differs.
+The payments are booked when the next statement is imported.
 
 ## Results and income tax
 
@@ -271,7 +408,9 @@ The **Client overview** page shows the chosen client and month. It uses
 `GET /v1/accounting/overview`, which runs the same tools as the agent.
 
 - **Alerts:** invoices without an entry, missing documents, limits close to being
-  crossed, overdue receivables, and unmatched bank movements.
+  crossed, overdue receivables, unmatched bank movements, days with negative
+  cash (the month can't close), days above `cash_limit`, and open employee
+  advances.
 - **Close tab:** the VAT position, the expected documents and the trial balance.
 - **Outlook tab:** deadlines, limits, the bank balance, the 30-day projection
   and aging.
@@ -279,6 +418,8 @@ The **Client overview** page shows the chosen client and month. It uses
   income-tax estimate.
 - **Partners tab:** open partner balances on the month's last day.
 - **Bank tab:** the open movements.
+- **Cash tab:** opening and closing cash, the problem days, the cash book day
+  by day and the open employee advances.
 
 The page is read-only. Posting, closing a month and confirming a match happen
 in chat or in workflows.
@@ -325,3 +466,5 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 - Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
   accelerated methods, and assets bought in a closed month stay with the
   accountant.
+- The year-end entry assumes the financial year is the calendar year. The profit
+  distribution (129 / 1061 / 117) stays with the accountant.

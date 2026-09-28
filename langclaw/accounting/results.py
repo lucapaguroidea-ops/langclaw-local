@@ -76,3 +76,41 @@ def tax_estimate(pl: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
         "tax": (base * rate / 100).quantize(_CENT),
         "note": note,
     }
+
+
+RESULT_ACCOUNT = "121"
+
+
+def year_end_entry(lines: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The year-end closing entry for the year's journal *lines*: every class 6 and
+    class 7 account (income tax included) is brought to zero against 121. ``None``
+    when there's nothing to close."""
+    balances: dict[str, Decimal] = {}
+    for line in lines:
+        account = str(line["account"])
+        if account.split(".", 1)[0][:1] in ("6", "7"):
+            balances[account] = balances.get(account, Decimal(0)) + (
+                _dec(line.get("debit")) - _dec(line.get("credit"))
+            )
+    out: list[dict[str, str]] = []
+    net = Decimal(0)  # debit − credit of everything closed
+    for account, balance in sorted(balances.items()):
+        balance = balance.quantize(_CENT)
+        if not balance:
+            continue
+        net += balance
+        # a debit balance is closed with a credit, and vice versa
+        out.append({"account": account, "debit": str(-balance) if balance < 0 else "0",
+                    "credit": str(balance) if balance > 0 else "0",
+                    "explanation": "Închiderea conturilor de venituri și cheltuieli"})  # fmt: skip
+    if not out:
+        return None
+    if net:  # net > 0 → loss (debit 121); net < 0 → profit (credit 121)
+        out.append({"account": RESULT_ACCOUNT, "debit": str(net) if net > 0 else "0",
+                    "credit": str(-net) if net < 0 else "0",
+                    "explanation": "Rezultatul exercițiului"})  # fmt: skip
+    return {
+        "lines": out,
+        "reasoning": "Închiderea claselor 6 și 7 în contul 121 la sfârșitul exercițiului.",
+        "legal_basis": "OMFP 1802/2014",
+    }

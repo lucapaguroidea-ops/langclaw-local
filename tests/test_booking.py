@@ -42,3 +42,19 @@ def test_bank_fees_and_accounts() -> None:
     assert bank_account("RO49AAAA1B31007593840000", "RON", profile) == "5121.01"
     assert bank_account("RO00OTHER", "RON", profile) == "5121"
     assert bank_account("RO00OTHER", "EUR", {}) == "5124"
+
+
+def test_cash_deposits_and_withdrawals_go_through_581() -> None:
+    from langclaw.accounting.bank.booking import cash_transfer, cash_transfer_entry
+
+    assert cash_transfer("Depunere numerar casierie") == "deposit"
+    assert cash_transfer("RETRAGERE NUMERAR ATM") == "withdrawal"
+    assert cash_transfer("Plata Furnizor") is None
+    dep = cash_transfer_entry("deposit", "500.00", bank="5121")["lines"]
+    assert [(x["account"], x["debit"], x["credit"]) for x in dep] == [
+        ("581", "500.00", "0"), ("5311", "0", "500.00"),
+        ("5121", "500.00", "0"), ("581", "0", "500.00")]  # fmt: skip
+    wd = cash_transfer_entry("withdrawal", "200.00", bank="5121")["lines"]
+    assert [(x["account"], x["debit"], x["credit"]) for x in wd] == [
+        ("581", "200.00", "0"), ("5121", "0", "200.00"),
+        ("5311", "200.00", "0"), ("581", "0", "200.00")]  # fmt: skip

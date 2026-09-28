@@ -39,3 +39,19 @@ def test_tax_estimate_by_regime() -> None:
     assert "non-deductible" in profit["note"]
     loss = tax_estimate(profit_and_loss([{"account": "628", "debit": 5, "credit": 0}]), {})
     assert loss["tax"] == D("0.00")
+
+
+def test_year_end_entry_closes_classes_6_and_7_into_121() -> None:
+    from langclaw.accounting.results import year_end_entry
+
+    entry = year_end_entry(LINES)
+    lines = [(x["account"], x["debit"], x["credit"]) for x in entry["lines"]]
+    # revenue accounts debited by their credit balance, expenses credited, 121 takes the rest
+    assert ("704", "1000.00", "0") in lines and ("7588", "20.00", "0") in lines
+    assert ("709", "0", "20.00") in lines
+    assert ("628", "0", "300.00") in lines and ("691", "0", "50.00") in lines
+    total_d = sum(D(x["debit"]) for x in entry["lines"])
+    total_c = sum(D(x["credit"]) for x in entry["lines"])
+    assert total_d == total_c
+    assert ("121", "0", "550.00") in lines  # 1000 - 400 - 50 profit after tax
+    assert year_end_entry([{"account": "401", "debit": 0, "credit": 5}]) is None

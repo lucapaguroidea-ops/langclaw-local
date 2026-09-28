@@ -198,8 +198,8 @@ def overdue_receivables(
             continue
         name = row.get("receiver") or "?"
         entry = by_partner.setdefault(
-            name, {"partner": name, "cui": f.get("customer_cui", ""), "outstanding": Decimal(0),
-                   "invoices": []}
+            name, {"partner": name, "cui": f.get("customer_cui", ""),
+                   "email": f.get("customer_email", ""), "outstanding": Decimal(0), "invoices": []}
         )  # fmt: skip
         entry["outstanding"] += left
         entry["invoices"].append(
@@ -211,3 +211,34 @@ def overdue_receivables(
     for entry in by_partner.values():
         entry["invoices"].sort(key=lambda i: -i["days_overdue"])
     return sorted(by_partner.values(), key=lambda e: e["outstanding"], reverse=True)
+
+
+def payables_due(
+    invoices: list[dict[str, Any]], *, on: date, days: int = 7
+) -> list[dict[str, Any]]:
+    """Unpaid supplier invoices due by *on* + *days* (overdue ones included), grouped
+    by supplier — what to pay, to which IBAN, citing which invoices. Largest first."""
+    horizon = on.toordinal() + max(0, days)
+    by_partner: dict[str, dict[str, Any]] = {}
+    for row in sorted(invoices, key=lambda r: str((r.get("fields") or {}).get("due_date"))):
+        f = row.get("fields") or {}
+        if f.get("direction") != "in" or f.get("paid_on") or row.get("doc_type") == "credit_note":
+            continue
+        due = str(f.get("due_date") or "")[:10]
+        if not due or date.fromisoformat(due).toordinal() > horizon:
+            continue
+        left = (Decimal(str(row.get("amount") or 0)) - Decimal(str(f.get("paid_amount") or 0))
+                ).quantize(_CENT)  # fmt: skip
+        if left <= 0:
+            continue
+        name = row.get("sender") or "?"
+        entry = by_partner.setdefault(name, {
+            "partner": name, "cui": f.get("supplier_cui", ""), "iban": f.get("supplier_iban", ""),
+            "currency": row.get("currency") or "RON", "amount": Decimal(0), "numbers": [],
+            "invoices": [], "overdue": False})  # fmt: skip
+        entry["amount"] += left
+        entry["numbers"].append(f.get("invoice_number", ""))
+        entry["invoices"].append(row.get("bucket_key"))
+        entry["overdue"] = entry["overdue"] or date.fromisoformat(due) < on
+        entry["iban"] = entry["iban"] or f.get("supplier_iban", "")
+    return sorted(by_partner.values(), key=lambda e: e["amount"], reverse=True)

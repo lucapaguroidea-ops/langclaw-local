@@ -900,8 +900,8 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
     if not alerts:
         st.success("Nothing needs attention for this month.")
     report, outlook, bank = view["report"], view["outlook"], view["bank"]
-    close_tab, outlook_tab, results_tab, partners_tab, bank_tab = st.tabs(
-        ["Close", "Outlook", "Results", "Partners", "Bank"]
+    close_tab, outlook_tab, results_tab, partners_tab, bank_tab, cash_tab = st.tabs(
+        ["Close", "Outlook", "Results", "Partners", "Bank", "Cash"]
     )
     with close_tab:
         if "error" not in report:
@@ -969,6 +969,24 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
             st.dataframe(bank["movements"], hide_index=True,
                          column_order=["booked", "amount", "counterparty", "description",
                                        "matched_key", "match_kind", "key"])  # fmt: skip
+    cash_book, cash = view.get("cash") or {}, report.get("cash") or {}
+    with cash_tab:
+        if "error" not in cash_book:
+            cols = st.columns(2)
+            cols[0].metric("Opening cash (5311)", cash_book["opening"])
+            cols[1].metric("Closing cash", cash_book["closing"])
+            for problem in cash_book["problems"]:
+                st.warning(f"{problem['day']}: {problem['problem']}")
+            if cash_book["days"]:
+                st.subheader("Cash book (registru de casă)")
+                st.dataframe(cash_book["days"], hide_index=True,
+                             column_order=["day", "opening", "receipts", "payments",
+                                           "closing"])  # fmt: skip
+            else:
+                st.caption("No cash movements this month.")
+            if cash.get("open_advances"):
+                st.subheader("Open employee advances (542)")
+                st.dataframe(cash["open_advances"], hide_index=True)
 
 
 def page_clients(lc: LangclawClient) -> None:

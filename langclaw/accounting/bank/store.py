@@ -82,7 +82,11 @@ class BankBook:
         """Movements, newest first; *unmatched_only* keeps those not yet applied to an
         invoice (unmatched or only probable)."""
         pool = await self._db()
-        where = "WHERE match_kind NOT IN ('certain', 'partial', 'fee')" if unmatched_only else ""
+        where = (
+            "WHERE match_kind NOT IN ('certain', 'partial', 'fee', 'cash')"
+            if unmatched_only
+            else ""
+        )
         rows = await pool.fetch(
             f"SELECT * FROM {self._schema}.bank_transactions {where} "
             "ORDER BY booked DESC, key LIMIT $1",

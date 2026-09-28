@@ -23,15 +23,31 @@ All of them work inside the current client (tenant) only, like the document tool
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from collections.abc import Awaitable, Callable
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from langclaw.accounting.assets import FixedAssets, depreciation_entry, monthly_depreciation
-from langclaw.accounting.bank.booking import bank_account, fee_entry, is_bank_fee, payment_entry
+from langclaw.accounting.bank.booking import (
+    bank_account,
+    cash_transfer,
+    cash_transfer_entry,
+    fee_entry,
+    is_bank_fee,
+    payment_entry,
+)
 from langclaw.accounting.bank.match import match_payments, outstanding
 from langclaw.accounting.bank.parse import BankStatementError, parse_statement
 from langclaw.accounting.bank.store import BankBook
+from langclaw.accounting.cash import (
+    ADVANCE_ACCOUNT,
+    CASH_ACCOUNT,
+    advance_entry,
+    cash_expense_entry,
+    z_report_entry,
+)
+from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
@@ -42,8 +58,10 @@ from langclaw.accounting.outlook import (
     thresholds,
     trend,
 )
+from langclaw.accounting.outlook import payables_due as plan_payables
 from langclaw.accounting.period import (
     blockers,
+    d394_rows,
     document_state,
     parse_period,
     resolve_period,
@@ -52,7 +70,7 @@ from langclaw.accounting.period import (
     vat_settlement,
     vat_summary,
 )
-from langclaw.accounting.results import profit_and_loss, tax_estimate
+from langclaw.accounting.results import profit_and_loss, tax_estimate, year_end_entry
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
@@ -106,8 +124,14 @@ def build_accounting_tools(
     *,
     bus: BaseMessageBus | None = None,
     report_to: dict[str, str] | None = None,
+    mailer: Callable[[str, str, str], Awaitable[dict[str, Any]]] | None = None,
 ) -> list[BaseTool]:
-    """The accounting tools over *services* (``accounting_queue`` needs *bus*)."""
+    """The accounting tools over *services* (``accounting_queue`` needs *bus*).
+
+    *mailer* ``(to, subject, body) -> {"draft_id"...}`` makes ``reminders_file``
+    also create an email draft per reminder (the gateway passes Gmail's
+    ``draft_email`` when Gmail has write access).
+    """
     from langchain_core.tools import StructuredTool
 
     from langclaw.bus.base import InboundMessage
@@ -317,6 +341,19 @@ def build_accounting_tools(
             return {"exported": [], "skipped": batch.skipped}
         return {"key": key, "url": url, "exported": batch.exported, "skipped": batch.skipped}
 
+    async def _cash_book(journal: Journal, start: date, end: date) -> dict[str, Any]:
+        """The cash book (5311) for [*start*, *end*], limits from the profile."""
+        opening = await journal.balance_until(start - timedelta(days=1), CASH_ACCOUNT)
+        lines = await journal.account_lines(CASH_ACCOUNT, start, end)
+        limit = _profile().get("cash_limit")
+        return build_cash_book(opening, lines, limit=Decimal(str(limit)) if limit else None)
+
+    async def _open_advances(journal: Journal, day: date) -> list[dict[str, str]]:
+        """Employees' unsettled 542 advances as of *day*."""
+        rows = await journal.balances_by_name(ADVANCE_ACCOUNT, day)
+        return [{"employee": r["name"], "open": str(Decimal(r["balance"]).quantize(
+            Decimal("0.01")))} for r in rows if Decimal(r["balance"])]  # fmt: skip
+
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
         period = resolve_period(period)
         start, end = parse_period(period)
@@ -333,6 +370,10 @@ def build_accounting_tools(
             date_from=start.isoformat(), date_to=end.isoformat(), limit=200
         )
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
+        for cash_type in ("z_report", "cash_receipt"):  # cash sales / purchases carry VAT too
+            booked += await svc.store.search(
+                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
         if settles_vat(period, _profile()):
@@ -349,8 +390,17 @@ def build_accounting_tools(
             "vat": vat_summary(booked),
             "vat_settlement": settlement,
             "depreciation": depreciation_entry(await FixedAssets(svc.store).list(), period),
+            "year_end": None,
             "invoices": len(docs),
         }
+        book = await _cash_book(journal, start, end)
+        report["cash"] = {"opening": book["opening"], "closing": book["closing"],
+                          "problems": book["problems"],
+                          "open_advances": await _open_advances(journal, end)}  # fmt: skip
+        if start.month == 12:  # December: close classes 6 and 7 into 121
+            pending = (report["depreciation"] or {}).get("lines", [])
+            year = await journal.lines_between(date(start.year, 1, 1), end)
+            report["year_end"] = year_end_entry([*year, *pending])
         if len(docs) >= 200:
             report["note"] = "Over 200 invoices in the month: the report covers the first 200."
         return svc, json.loads(json.dumps(report, default=str))
@@ -371,7 +421,8 @@ def build_accounting_tools(
     async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
         are missing. Posts the month's depreciation (6811 / 28xx) and, for VAT
-        payers, the VAT settlement (4426/4427 → 4423 or 4424); saves the report in
+        payers, the VAT settlement (4426/4427 → 4423 or 4424) and, in December,
+        the year-end closing of classes 6 and 7 into 121; saves the report in
         the client's bucket; then locks the month so nothing can be posted with a
         date in it.
 
@@ -395,6 +446,11 @@ def build_accounting_tools(
                         "missing": missing}  # fmt: skip
             if not report["trial_balance"]["balanced"]:
                 return {"error": "The trial balance doesn't balance; check the journal."}
+            negative = [p for p in report["cash"]["problems"] if "negative" in p["problem"]]
+            if negative:
+                return {"error": f"Cash went negative on {len(negative)} day(s) in {period}; "
+                        "book the missing receipts (e.g. cash_z_report) first.",
+                        "problems": negative}  # fmt: skip
             depreciation = report["depreciation"]
             if depreciation:
                 _, end = parse_period(period)
@@ -418,6 +474,17 @@ def build_accounting_tools(
                     if "already posted" not in str(exc):
                         raise
                 _, report = await _period_report(period)  # with the settlement booked
+            year_end = report["year_end"]
+            if year_end:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/year-end",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(doc, year_end, approved_by=closed_by or "close")
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
+                _, report = await _period_report(period)  # after the closing entry
             key = f"reports/{period}/close.json"
             await svc.bucket.put(
                 key, json.dumps(report, indent=2).encode(), content_type="application/json"
@@ -426,7 +493,8 @@ def build_accounting_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"closed": period, "report_key": key, "vat": report["vat"],
-                "vat_settlement": settled, "depreciation": depreciation}  # fmt: skip
+                "vat_settlement": settled, "depreciation": depreciation,
+                "year_end": year_end}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -553,7 +621,8 @@ def build_accounting_tools(
     async def bank_import(key: str) -> dict:
         """Import a bank statement (MT940 or CAMT.053) from the client's bucket, match
         its movements to the invoices they pay and book them (payments: 5121 against
-        the invoice's partner account; bank fees: 627). Safe to run twice.
+        the invoice's partner account; bank fees: 627; cash deposits and withdrawals
+        through 581). Safe to run twice.
 
         Certain matches (amount plus invoice number, IBAN or partner name) mark the
         invoice paid; probable ones (amount only) are listed to confirm with
@@ -593,7 +662,7 @@ def build_accounting_tools(
             fresh = [t for t in statement.transactions if t.key in new]
             matches = match_payments(fresh, await _open_invoices(svc))
             by_key = {t.key: t for t in fresh}
-            booked, not_booked, fees = 0, [], []
+            booked, not_booked, fees, cash = 0, [], [], []
             for m in matches:
                 keys = ",".join(a["bucket_key"] for a in m["allocations"])
                 await book.set_match(m["key"], keys, m["kind"], m["because"])
@@ -609,6 +678,21 @@ def build_accounting_tools(
                         else:
                             booked += 1
             matched = {m["key"] for m in matches}
+            for t in fresh:
+                kind = cash_transfer(f"{t.counterparty} {t.description}")
+                if t.key in matched or not kind:
+                    continue
+                bank = bank_account(statement.iban, t.currency, _profile())
+                doc = {"bucket_key": f"bank/{t.key}/cash", "document_date": t.booked,
+                       "fields": {"direction": "in"}, "sender": t.counterparty}  # fmt: skip
+                entry = cash_transfer_entry(kind, str(abs(t.amount)), bank=bank)
+                why = await _book(svc, doc, entry)
+                if why:
+                    not_booked.append({"movement": t.key, "reason": why})
+                    continue
+                await book.set_match(t.key, "", "cash", kind)
+                matched.add(t.key)
+                cash.append({"key": t.key, "kind": kind, "amount": str(t.amount)})
             for t in fresh:
                 if t.key in matched or t.amount >= 0:
                     continue
@@ -635,10 +719,11 @@ def build_accounting_tools(
             "paid": [m for m in matches if m["kind"] == "certain"],
             "partial": [m for m in matches if m["kind"] == "partial"],
             "fees": fees,
+            "cash_transfers": cash,
             "booked_entries": booked,
             "not_booked": not_booked,
             "to_confirm": [m for m in matches if m["kind"] == "probable"],
-            "unmatched": len(fresh) - len(matches) - len(fees),
+            "unmatched": len(fresh) - len(matches) - len(fees) - len(cash),
         }
 
     async def bank_movements(unmatched_only: bool = True, limit: int = 50) -> dict:
@@ -732,8 +817,10 @@ def build_accounting_tools(
     async def _results(svc: DocumentServices, period: str) -> dict[str, Any]:
         start, end = parse_period(period)
         journal = Journal(svc.store)
-        month = profit_and_loss(await journal.lines_between(start, end))
-        ytd = profit_and_loss(await journal.lines_between(date(start.year, 1, 1), end))
+        month = profit_and_loss(await journal.lines_between(start, end, without_year_end=True))
+        ytd = profit_and_loss(
+            await journal.lines_between(date(start.year, 1, 1), end, without_year_end=True)
+        )
         return {
             "period": period,
             "month": month,
@@ -842,7 +929,8 @@ def build_accounting_tools(
     async def reminders_file(reminders: list[dict[str, Any]], day: str = "") -> dict:
         """File approved payment reminders: each is saved in the client's bucket as
         a ``payment_reminder`` document, and every invoice it cites gets the date
-        added to its reminder history (so the next reminder can escalate).
+        added to its reminder history (so the next reminder can escalate). With
+        Gmail connected, an email draft to the customer is created too.
 
         Args:
             reminders: [{"partner", "cui", "subject", "body", "invoices": [bucket_key, ...]}].
@@ -856,6 +944,7 @@ def build_accounting_tools(
                 await _invoices(svc, date(1900, 1, 1), on), on=on, min_days=1
             )
             by_cui = {c["cui"]: [i["bucket_key"] for i in c["invoices"]] for c in overdue}
+            emails = {c["cui"]: c.get("email", "") for c in overdue}
             filed = []
             for n, r in enumerate(reminders or [], 1):
                 if isinstance(r, str):
@@ -888,10 +977,322 @@ def build_accounting_tools(
                             }
                         },
                     )
-                filed.append({"document": key, "partner": r.get("partner", ""), "invoices": keys})
+                item = {"document": key, "partner": r.get("partner", ""), "invoices": keys}
+                to = str(r.get("email") or emails.get(cui, ""))
+                if mailer is not None:
+                    if not to:
+                        item["draft"] = "no email address for this customer"
+                    else:
+                        sent = await mailer(to, str(r.get("subject", "")), str(r.get("body", "")))
+                        item["draft"] = sent.get("error") or sent.get("draft_id", "")
+                        item["to"] = to
+                filed.append(item)
         except (*_ERRORS, json.JSONDecodeError) as exc:
             return {"error": str(exc)}
         return {"filed": filed}  # fmt: skip
+
+    async def _payables(day: str, days: int) -> tuple[DocumentServices, date, list[dict]]:
+        on = date.fromisoformat(day) if day else date.today()
+        svc = services.current()
+        rows = await _invoices(svc, date(1900, 1, 1), on.replace(year=on.year + 1))
+        return svc, on, plan_payables(rows, on=on, days=max(0, int(days)))
+
+    async def payables_due(day: str = "", days: int = 7) -> dict:
+        """Supplier invoices to pay: unpaid, due within *days* (overdue included),
+        grouped by supplier with IBAN, amount left and the invoice numbers.
+
+        Args:
+            day: The date to plan from (YYYY-MM-DD); empty: today.
+            days: How many days ahead to include.
+        """
+        try:
+            _, on, due = await _payables(day, days)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        total = sum((d["amount"] for d in due), Decimal(0))
+        return json.loads(json.dumps({"day": on.isoformat(), "total": total, "suppliers": due},
+                                     default=str))  # fmt: skip
+
+    async def payables_batch(day: str = "", days: int = 7) -> dict:
+        """Write a payment batch (CSV: beneficiary, tax ID, IBAN, amount, currency,
+        payment details) for the supplier invoices due within *days*, into the
+        client's bucket under payments/, and return a download link. Suppliers
+        without an IBAN are left out and listed.
+
+        Args:
+            day: The date to plan from (YYYY-MM-DD); empty: today.
+            days: How many days ahead to include.
+        """
+        import csv
+        import io
+
+        try:
+            svc, on, due = await _payables(day, days)
+            payable = [d for d in due if d["iban"]]
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";")
+            writer.writerow(["beneficiary", "tax_id", "iban", "amount", "currency", "details"])
+            for d in payable:
+                details = "Plata fact. " + ", ".join(n for n in d["numbers"] if n)
+                writer.writerow([d["partner"], d["cui"], d["iban"], f"{d['amount']:.2f}",
+                                 d["currency"], details[:140]])  # fmt: skip
+            key = f"payments/{on.isoformat()}-batch.csv"
+            if payable:
+                await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+                total = sum((d["amount"] for d in payable), Decimal(0))
+                cited = [k for d in payable for k in d["invoices"]]
+                await svc.store.save(
+                    key,
+                    {
+                        "doc_type": "payment_batch",
+                        "document_date": on.isoformat(),
+                        "amount": total,
+                        "status": "filed",
+                        "summary": f"{len(payable)} supplier payment(s), {total:.2f}",
+                        "fields": {"invoices": cited},
+                    },
+                )
+                url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        missing = [{"partner": d["partner"], "amount": str(d["amount"])} for d in due
+                   if not d["iban"]]  # fmt: skip
+        if not payable:
+            return {"payments": 0, "missing_iban": missing}
+        return {"key": key, "url": url, "payments": len(payable), "total": f"{total:.2f}",
+                "missing_iban": missing}  # fmt: skip
+
+    async def accounting_d394(period: str = "") -> dict:
+        """The D394 figures for a month (informative statement of domestic supplies
+        and purchases): per partner, direction and VAT rate — invoice count, taxable
+        base and VAT. Saved as a CSV in the client's bucket (reports/<period>/d394.csv)
+        for the accountant to check against the declaration software.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            svc = services.current()
+            rows = d394_rows(await _invoices(svc, start, end))
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";")
+            writer.writerow(["direction", "cui", "partner", "type", "rate", "invoices",
+                             "taxable", "vat"])  # fmt: skip
+            for r in rows:
+                writer.writerow([r["direction"], r["cui"], r["partner"], r["type"], r["rate"],
+                                 r["invoices"], r["taxable"], r["vat"]])  # fmt: skip
+            key = f"reports/{period}/d394.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps(
+            {"period": period, "key": key, "url": url, "rows": rows,
+             "note": "Draft figures, not the ANAF D394 file."}, default=str))  # fmt: skip
+
+    async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
+        """Book a day's cash register report (raport Z): D 5311 cash / C revenue
+        (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
+        it as a z_report document; a day can be booked once.
+
+        Args:
+            day: The report's date (YYYY-MM-DD).
+            lines: Gross sales per VAT rate: [{"rate": 21, "gross": 1210.00}, ...].
+        """
+        try:
+            on = date.fromisoformat(day)
+            if isinstance(lines, str):
+                lines = json.loads(lines)
+            entry = z_report_entry(
+                on, lines, revenue_account=_profile().get("cash_revenue_account") or "707"
+            )
+            svc = services.current()
+            key = f"cash/z/{on.isoformat()}"
+            breakdown = []
+            for line in lines:
+                rate = Decimal(str(line["rate"]))
+                gross = Decimal(str(line["gross"])).quantize(Decimal("0.01"))
+                vat = (gross * rate / (100 + rate)).quantize(Decimal("0.01"))
+                breakdown.append({"rate": str(rate), "taxable": str(gross - vat), "vat": str(vat)})
+            doc = {"bucket_key": key, "document_date": on.isoformat(),
+                   "fields": {"direction": "out"}}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="z_report")
+            totals = entry["totals"]
+            await svc.store.save(key, {
+                "doc_type": "z_report", "document_date": on.isoformat(),
+                "amount": totals["gross"], "status": "posted",
+                "summary": f"Raport Z {on.isoformat()}: {totals['gross']} (TVA {totals['vat']})",
+                "fields": {"direction": "out", "vat_breakdown": breakdown}})  # fmt: skip
+        except (*_ERRORS, json.JSONDecodeError) as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
+
+    async def cash_book(period: str) -> dict:
+        """The cash register book (registru de casă) for a month, read from 5311:
+        opening balance, each day's receipts and payments, closing balance, and
+        the days the cash went negative or above the profile's cash_limit.
+
+        Args:
+            period: The month as YYYY-MM.
+        """
+        try:
+            start, end = parse_period(period)
+            book = await _cash_book(Journal(services.current().store), start, end)
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        return {"period": period, **book}
+
+    async def cash_pay_invoice(
+        bucket_key: str, amount: str = "", day: str = "", document: str = ""
+    ) -> dict:
+        """Record an invoice paid (or collected) in cash: D 401 / C 5311 for a
+        supplier invoice, D 5311 / C 4111 for a sale. Marks the invoice paid once
+        nothing is left. The same payment document can be booked once.
+
+        Args:
+            bucket_key: The invoice's key.
+            amount: How much was paid; empty means what's left to pay.
+            day: The payment date (YYYY-MM-DD); empty means today.
+            document: The cash document number (chitanță / dispoziție de plată).
+        """
+        try:
+            svc = services.current()
+            row = await svc.store.get(bucket_key)
+            if not row or row.get("doc_type") not in ("invoice", "credit_note"):
+                return {"error": f"No invoice {bucket_key!r}."}
+            on = date.fromisoformat(day) if day else date.today()
+            left = outstanding(row)
+            if left <= 0:
+                return {"error": f"{bucket_key} has nothing left to pay."}
+            paid = Decimal(amount).quantize(Decimal("0.01")) if amount else left
+            if paid <= 0 or paid > left:
+                return {"error": f"Amount {paid} must be above 0 and at most {left} left to pay."}
+            tx = {"key": f"cash:{on.isoformat()}:{document or paid}", "booked": on,
+                  "reference": document}  # fmt: skip
+            doc = {**row, "bucket_key": f"cash/{tx['key'][5:]}/{bucket_key}",
+                   "document_date": on.isoformat()}  # fmt: skip
+            invoice_entry = await Journal(svc.store).get(bucket_key)
+            entry = payment_entry(row, str(paid), bank=CASH_ACCOUNT,
+                                  invoice_lines=(invoice_entry or {}).get("lines"))  # fmt: skip
+            entry["reasoning"] = entry["reasoning"].replace("extras de cont", "numerar")
+            posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
+            await _apply_payment(svc, bucket_key, paid, tx)
+        except (*_ERRORS, InvalidOperation) as exc:
+            return {"error": str(exc)}
+        warnings = []
+        limit = _profile().get("cash_payment_limit")
+        if limit:
+            f = row.get("fields") or {}
+            cui = f.get("customer_cui" if f.get("direction") == "out" else "supplier_cui", "")
+            if cui:  # every cash payment with this partner on the day, all invoices
+                total = await Journal(services.current().store).cash_moved_with(cui, on)
+            else:
+                total = paid
+            if total > Decimal(str(limit)):
+                name = row.get("receiver" if f.get("direction") == "out" else "sender") or cui
+                warnings.append(f"Cash with {name} on {on} totals {total}, above the "
+                                f"profile's cash_payment_limit of {limit}.")  # fmt: skip
+        return json.loads(json.dumps({"posted": posted, "paid": str(paid), "left": str(left - paid),
+                                      "warnings": warnings}, default=str))  # fmt: skip
+
+    async def cash_receipt(
+        day: str, amount: str, account: str, vat_rate: float = 21,
+        document: str = "", description: str = "", deduct_vat: bool = True,
+        employee: str = "",
+    ) -> dict:  # fmt: skip
+        """Book a purchase paid in cash with a receipt and no invoice (bon fiscal,
+        e.g. fuel or small supplies): D expense/stock account / D 4426 / C 5311.
+        The VAT is deducted only for a VAT payer and when deduct_vat is true (the
+        receipt must show the client's tax ID); otherwise it stays in the cost.
+
+        Args:
+            day: The receipt's date (YYYY-MM-DD).
+            amount: The gross amount paid.
+            account: Where the cost goes, e.g. 6022 fuel, 604 supplies, 6231 protocol.
+            vat_rate: The receipt's VAT rate in percent.
+            document: The receipt number; a receipt can be booked once.
+            description: What was bought.
+            deduct_vat: False when the VAT can't be deducted.
+            employee: Who paid it from a cash advance (then C 542, not 5311).
+        """
+        try:
+            on = date.fromisoformat(day)
+            deduct = deduct_vat and _profile().get("vat_payer", True) is not False
+            paid_from = ADVANCE_ACCOUNT if employee.strip() else CASH_ACCOUNT
+            entry = cash_expense_entry(on, amount, vat_rate, account, deduct_vat=deduct,
+                                       paid_from=paid_from)  # fmt: skip
+            svc = services.current()
+            key = f"cash/receipt/{on.isoformat()}/{document or amount}"
+            sender = employee.strip() or description
+            doc = {"bucket_key": key, "document_date": on.isoformat(),
+                   "fields": {"direction": "in"}, "sender": sender}  # fmt: skip
+            posted = await Journal(svc.store).post(doc, entry, approved_by="cash")
+            totals = entry["totals"]
+            breakdown = [{"rate": str(vat_rate), "taxable": str(totals["net"]),
+                          "vat": str(totals["vat"])}] if deduct else []  # fmt: skip
+            await svc.store.save(key, {
+                "doc_type": "cash_receipt", "document_date": on.isoformat(),
+                "amount": totals["gross"], "status": "posted",
+                "summary": f"Bon {document} {on.isoformat()}: {description} {totals['gross']}",
+                "fields": {"direction": "in", "vat_breakdown": breakdown}})  # fmt: skip
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"posted": posted, "totals": totals}, default=str))
+
+    async def cash_advance(
+        day: str, amount: str, employee: str, document: str = "", returned: bool = False
+    ) -> dict:
+        """Give an employee a cash advance (avans de trezorerie, D 542 / C 5311), or
+        with returned=true take back what they didn't spend (D 5311 / C 542).
+        Their receipts settle it via cash_receipt(employee=...).
+
+        Args:
+            day: The date (YYYY-MM-DD).
+            amount: The cash given or returned.
+            employee: The employee's name, as used on their receipts.
+            document: The cash document number; each is booked once.
+            returned: True for unspent cash coming back.
+        """
+        try:
+            on = date.fromisoformat(day)
+            name = employee.strip()
+            entry = advance_entry(amount, name, returned=returned)
+            journal = Journal(services.current().store)
+            opened = {r["name"]: Decimal(r["balance"])
+                      for r in await journal.balances_by_name(ADVANCE_ACCOUNT, on)}  # fmt: skip
+            owed = opened.get(name, Decimal(0)).quantize(Decimal("0.01"))
+            value = Decimal(entry["lines"][0]["debit"])
+            if returned and value > owed:
+                return {"error": f"{name} has only {owed} of advance to return."}
+            kind = "return" if returned else "advance"
+            doc = {"bucket_key": f"cash/{kind}/{on.isoformat()}/{document or name}/{value}",
+                   "document_date": on.isoformat(), "fields": {"direction": "in"},
+                   "sender": name}  # fmt: skip
+            posted = await journal.post(doc, entry, approved_by="cash")
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        left = owed - value if returned else owed + value
+        return json.loads(json.dumps({"posted": posted, "open": str(left)}, default=str))
+
+    async def advances_open(day: str = "") -> dict:
+        """Cash advances employees still have to settle (542), per employee.
+
+        Args:
+            day: As of this date (YYYY-MM-DD); empty means today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            advances = await _open_advances(Journal(services.current().store), on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        total = sum((Decimal(a["open"]) for a in advances), Decimal(0))
+        return {"day": on.isoformat(), "advances": advances, "total": str(total.quantize(
+            Decimal("0.01")))}  # fmt: skip
 
     fns = [
         accounting_context,
@@ -912,6 +1313,15 @@ def build_accounting_tools(
         partner_balances,
         receivables_overdue,
         reminders_file,
+        payables_due,
+        payables_batch,
+        accounting_d394,
+        cash_z_report,
+        cash_book,
+        cash_pay_invoice,
+        cash_receipt,
+        cash_advance,
+        advances_open,
     ]
     if bus is not None:
         fns.append(accounting_queue)

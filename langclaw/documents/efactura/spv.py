@@ -185,8 +185,13 @@ _SUPPLIERS = [
     ),
 ]
 _CUSTOMERS = [
-    Party("CLIENT DEMO UNU SRL", "RO31234567", "J40/100/2015"),
-    Party("CLIENT DEMO DOI SRL", "RO41234567", "J12/200/2019"),
+    Party("CLIENT DEMO UNU SRL", "RO31234567", "J40/100/2015", email="plati@client-unu.example"),
+    Party(
+        "CLIENT DEMO DOI SRL",
+        "RO41234567",
+        "J12/200/2019",
+        email="contabilitate@client-doi.example",
+    ),
 ]
 
 

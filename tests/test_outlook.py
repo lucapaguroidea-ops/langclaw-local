@@ -159,3 +159,32 @@ def test_overdue_invoices_carry_their_reminder_history() -> None:
     (alfa,) = overdue_receivables([a], on=date(2026, 9, 30))
     inv = alfa["invoices"][0]
     assert inv["reminders_sent"] == 2 and inv["last_reminder"] == "2026-09-15"
+
+
+def test_overdue_customers_carry_their_email() -> None:
+    from langclaw.accounting.outlook import overdue_receivables
+
+    a = _inv("s1", "out", 100, "2026-08-01", partner="Alfa")
+    a["fields"].update(customer_email="plati@alfa.ro")
+    (alfa,) = overdue_receivables([a], on=date(2026, 9, 30))
+    assert alfa["email"] == "plati@alfa.ro"
+
+
+def test_payables_due_group_by_supplier_with_iban() -> None:
+    from langclaw.accounting.outlook import payables_due
+
+    a = _inv("p1", "in", 500, "2026-10-05", partner="Furnizor A")
+    a["fields"].update(invoice_number="FA-1", supplier_iban="RO49AAAA1B31007593840000",
+                       supplier_cui="RO1", paid_amount="100.00")  # fmt: skip
+    b = _inv("p2", "in", 50, "2026-09-20", partner="Furnizor A")  # overdue: included
+    b["fields"].update(invoice_number="FA-2", supplier_iban="RO49AAAA1B31007593840000",
+                       supplier_cui="RO1")  # fmt: skip
+    later = _inv("p3", "in", 900, "2026-11-30", partner="Furnizor B")  # outside window
+    no_iban = _inv("p4", "in", 70, "2026-10-01", partner="Furnizor C")
+    sale = _inv("s1", "out", 999, "2026-10-01", partner="Client")
+    out = payables_due([a, b, later, no_iban, sale], on=date(2026, 9, 30), days=7)
+    assert [s["partner"] for s in out] == ["Furnizor A", "Furnizor C"]
+    fa = out[0]
+    assert fa["iban"] == "RO49AAAA1B31007593840000" and fa["amount"] == D("450.00")
+    assert fa["numbers"] == ["FA-2", "FA-1"] and fa["overdue"] is True
+    assert out[1]["iban"] == ""
