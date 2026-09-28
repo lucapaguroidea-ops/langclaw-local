@@ -182,8 +182,12 @@ channel, never from the model (`langclaw/actors.py`):
   sender's id as the channel reports it);
 - the steps after a workflow review act for whoever answered it: a Telegram
   button records `"telegram:<their id>"`, `/workflows approve` the chat
-  sender, and the HTTP API `"api:<name>"`: the console's shared key doesn't
-  identify a person, so that name is **self-declared**;
+  sender. Over the HTTP API it depends on the token: a **personal token**
+  (`LANGCLAW__CHANNELS__API__PEOPLE=ana:tok1,ion:tok2`) is that person, recorded
+  as `"api:ana"`; with the shared key the name a request gives is only claimed,
+  recorded as `"api-claimed:<name>"`. Set `UI_PERSONAL_LOGIN=true` on the
+  console so each person signs in with their own token and their reviews are
+  recorded as theirs;
 - code outside a turn or a review (a script, a scheduled run nobody
   answered) records `""` rather than guessing.
 

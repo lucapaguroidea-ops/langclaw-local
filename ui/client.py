@@ -37,6 +37,10 @@ class LangclawClient:
             transport=transport,
         )
 
+    def whoami(self) -> dict[str, str]:
+        """``{"person": name}`` for a personal token, ``""`` for the shared one."""
+        return self._request("GET", "/v1/whoami")
+
     # -- plumbing --------------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:

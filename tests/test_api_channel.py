@@ -361,3 +361,37 @@ async def test_tenant_routes(setup) -> None:
 
     assert (await client.delete("/v1/tenants/acme", headers=AUTH)).status == 200
     assert (await client.delete("/v1/tenants/acme", headers=AUTH)).status == 404
+
+
+async def test_personal_tokens_name_who_answers_a_review() -> None:
+    channel = ApiChannel(ApiChannelConfig(enabled=True, token=TOKEN, user_id="admin",
+                                          people={"ana": "tok-ana"}))  # fmt: skip
+    plane = ControlPlane(config=LangclawConfig(), bus=_Bus(), channels=[channel],
+                         agent_names=["default"], workflow_registry=_registry())  # fmt: skip
+    channel.set_control_plane(plane)
+    answers: list[dict] = []
+
+    async def answer_review(run_id, decision, **kw):
+        answers.append(kw)
+        return {"decision": decision}
+
+    plane.answer_review = answer_review
+    client = TestClient(TestServer(channel.build_app()))
+    await client.start_server()
+    try:
+        ana = {"Authorization": "Bearer tok-ana"}
+        assert (await (await client.get("/v1/whoami", headers=ana)).json()) == {"person": "ana"}
+        shared = {"Authorization": f"Bearer {TOKEN}"}
+        assert (await (await client.get("/v1/whoami", headers=shared)).json()) == {"person": ""}
+        bad = await client.get("/v1/whoami", headers={"Authorization": "Bearer tok-nobody"})
+        assert bad.status == 401
+
+        await client.post("/v1/runs/r1/review", json={"action": "approve", "by": "ion"},
+                          headers=ana)  # fmt: skip
+        await client.post("/v1/runs/r1/review", json={"action": "approve", "by": "ion"},
+                          headers=shared)  # fmt: skip
+    finally:
+        await client.close()
+    # A personal token decides who answered; with the shared key the name is only claimed.
+    assert (answers[0]["by"], answers[0]["actor"]) == ("ana", "api:ana")
+    assert (answers[1]["by"], answers[1]["actor"]) == ("ion", "api-claimed:ion")

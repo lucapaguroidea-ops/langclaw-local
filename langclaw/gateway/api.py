@@ -241,6 +241,7 @@ class ApiChannel(BaseChannel):
                 web.get("/v1/documents", self._list_documents),
                 web.get("/v1/accounting/overview", self._accounting_overview),
                 web.get("/v1/accounting/firm", self._accounting_firm),
+                web.get("/v1/whoami", self._whoami),
                 web.get("/v1/documents/{key:.+}", self._get_document),
                 web.get("/v1/schedules", self._list_schedules),
                 web.post("/v1/schedules", self._add_schedule),
@@ -260,14 +261,23 @@ class ApiChannel(BaseChannel):
         from aiohttp import web
 
         expected = f"Bearer {self._config.token}".encode()
+        people = {name: f"Bearer {tok}".encode() for name, tok in self._config.people.items()
+                  if name and tok}  # fmt: skip
 
         @web.middleware
         async def middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
             if request.path == "/healthz":
                 return await handler(request)
             given = request.headers.get("Authorization", "").encode()
-            if not self._config.token or not hmac.compare_digest(given, expected):
+            # Compare against every token (no early exit), so timing names no one.
+            person = ""
+            for name, token in people.items():
+                if hmac.compare_digest(given, token):
+                    person = name
+            shared = bool(self._config.token) and hmac.compare_digest(given, expected)
+            if not (shared or person):
                 return self._json({"error": "unauthorized"}, 401)
+            request["person"] = person
             return await handler(request)
 
         return middleware
@@ -484,13 +494,15 @@ class ApiChannel(BaseChannel):
         data = body.get("data") or {}
         if not isinstance(data, dict):
             raise ValueError("'data' must be an object.")
+        person = request.get("person", "")
+        claimed = str(body.get("by") or self._config.user_id)
         review = await self._require_plane().answer_review(
             request.match_info["run_id"],
             {"action": action, "data": data, "comment": str(body.get("comment") or "")},
-            by=str(body.get("by") or self._config.user_id),
+            by=person or claimed,
             via=str(body.get("via") or self.name),
-            # The shared API key doesn't identify a person: the name is self-declared.
-            actor=f"api:{body.get('by') or self._config.user_id}",
+            # A personal token is the person; with the shared key the name is only claimed.
+            actor=f"api:{person}" if person else f"api-claimed:{claimed}",
             interrupt_id=str(body.get("interrupt_id") or ""),
             fallback_target={
                 "channel": self.name,
@@ -529,6 +541,9 @@ class ApiChannel(BaseChannel):
                 tenant=query.get("tenant", ""),
             )
         )
+
+    async def _whoami(self, request: web.Request) -> web.Response:
+        return self._json({"person": request.get("person", "")})
 
     async def _accounting_firm(self, request: web.Request) -> web.Response:
         return self._json(

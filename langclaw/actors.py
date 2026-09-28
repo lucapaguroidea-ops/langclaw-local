@@ -7,8 +7,9 @@ the channel and the sender's id as the channel reports it), and the workflow
 runner sets it when a run continues after a review (the reviewer's id, as the
 channel that took the answer reports it).
 
-API answers can only name who they are for (the console's shared key doesn't
-identify a person), so they are recorded as ``"api:<name>"`` — self-declared.
+Over the HTTP API a personal token (``channels.api.people``) is the person
+(``"api:<name>"``); with the shared key the name is only claimed
+(``"api-claimed:<name>"``).
 """
 
 from __future__ import annotations

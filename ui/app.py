@@ -9,8 +9,12 @@ Talks to the langclaw control-plane API; the API token stays server-side.
 Environment:
     LANGCLAW_URL        e.g. http://langclaw.railway.internal:18790
     LANGCLAW_API_TOKEN  the gateway's LANGCLAW__CHANNELS__API__TOKEN
-    UI_PASSWORD         password for this console (required)
+    UI_PASSWORD         password for this console (required, unless personal login)
     UI_REVIEWER         name recorded on reviews answered here (default "web")
+    UI_PERSONAL_LOGIN   "true": each person signs in with their own API token
+                        (the gateway's LANGCLAW__CHANNELS__API__PEOPLE); the console
+                        then calls the API as them, so their reviews are recorded
+                        as theirs (api:<name>) instead of a claimed name
 """
 
 from __future__ import annotations
@@ -39,7 +43,41 @@ STATUS_ICONS = {
 # -- auth & client --------------------------------------------------------------
 
 
+def _personal_login() -> bool:
+    return os.environ.get("UI_PERSONAL_LOGIN", "").lower() in ("1", "true", "yes")
+
+
+def _check_personal_token() -> bool:
+    """Sign in with a personal API token; the gateway says whose it is."""
+    if st.session_state.get("authed"):
+        return True
+    url = os.environ.get("LANGCLAW_URL", "")
+    if not url:
+        st.error("Set LANGCLAW_URL on this service.")
+        return False
+    with st.form("login"):
+        st.title("🦀 Langclaw workflows")
+        token = st.text_input(
+            "Your API token",
+            type="password",
+            help="Given to you by whoever runs langclaw (channels.api.people).",
+        )
+        if st.form_submit_button("Sign in"):
+            client = LangclawClient(url, token)
+            try:
+                person = client.whoami()["person"]
+            except LangclawError:
+                person = ""
+            if person:
+                st.session_state.update(authed=True, client=client, person=person)
+                st.rerun()
+            st.error("That token doesn't belong to anyone.")
+    return False
+
+
 def _check_password() -> bool:
+    if _personal_login():
+        return _check_personal_token()
     expected = os.environ.get("UI_PASSWORD", "")
     if not expected:
         st.error("UI_PASSWORD is not set on this service; refusing to start without a password.")
@@ -58,6 +96,8 @@ def _check_password() -> bool:
 
 
 def _client() -> LangclawClient | None:
+    if _personal_login():
+        return st.session_state.get("client")
     url, token = os.environ.get("LANGCLAW_URL", ""), os.environ.get("LANGCLAW_API_TOKEN", "")
     if not url or not token:
         st.error("Set LANGCLAW_URL and LANGCLAW_API_TOKEN on this service.")
@@ -96,7 +136,7 @@ def _client_picker(lc: LangclawClient, tenants_on: bool) -> None:
 
 
 def _reviewer() -> str:
-    return os.environ.get("UI_REVIEWER", "web")
+    return st.session_state.get("person") or os.environ.get("UI_REVIEWER", "web")
 
 
 def _call(fn, *args: Any, **kwargs: Any) -> Any:

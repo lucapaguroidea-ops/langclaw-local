@@ -293,6 +293,11 @@ class ApiChannelConfig(BaseModel):
     """Identity API chat turns run as (sessions, RBAC ``user_roles``, cron ownership)."""
     user_roles: StringDict = Field(default_factory=dict)
     """Maps the API ``user_id`` to a permission role. Env format: ``api:admin``"""
+    people: StringDict = Field(default_factory=dict)
+    """Personal tokens, name → token (env format: ``ana:tok1,ion:tok2``). A request
+    made with one is *that person*: review answers are recorded as ``api:<name>``.
+    With the shared ``token`` the name a request gives is only claimed
+    (``api-claimed:<name>``)."""
     max_turns: int = 500
     """How many recent chat turns to keep in memory for polling."""
 
