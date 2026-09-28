@@ -15,13 +15,33 @@ D = Decimal
 def test_deadlines_follow_the_clients_obligations() -> None:
     vat_monthly = {"vat_payer": True, "vat_period": "monthly", "employees": 3}
     due = {d["form"]: d["due"] for d in deadlines("2026-09", vat_monthly)}
-    assert due == {"D300": "2026-10-25", "D394": "2026-10-25", "D112": "2026-10-25"}
+    # 25 Oct 2026 is a Sunday: D300 / D112 move to Monday; D394 is due on the 30th.
+    assert due == {"D300": "2026-10-26", "D394": "2026-10-30", "D112": "2026-10-26"}
 
     quarterly = {"vat_payer": True, "vat_period": "quarterly", "tax_regime": "micro"}
     assert deadlines("2026-08", quarterly) == []  # mid-quarter: nothing yet
     due = {d["form"] for d in deadlines("2026-09", quarterly)}
     assert due == {"D300", "D394", "D100"}
     assert deadlines("2026-12", {"tax_regime": "micro"})[0]["due"] == "2027-01-25"
+
+
+def test_deadlines_say_when_and_why_they_moved() -> None:
+    d300 = deadlines("2026-09", {"vat_payer": True})[0]
+    assert d300["rule"] == "25th of the following month"
+    assert d300["moved_from"] == "2026-10-25" and d300["moved_because"] == "Sunday"
+    d394 = deadlines("2026-09", {"vat_payer": True})[1]
+    assert d394["rule"] == "30th of the following month" and "moved_from" not in d394
+    # Christmas, then the weekend: 25 Dec 2026 → Monday 28 Dec.
+    xmas = deadlines("2026-11", {"vat_payer": True})[0]
+    assert xmas["due"] == "2026-12-28" and xmas["moved_because"] == "Christmas"
+
+
+def test_d394_for_january_is_due_at_the_end_of_february() -> None:
+    feb = {d["form"]: d for d in deadlines("2028-01", {"vat_payer": True})}
+    assert feb["D394"]["due"] == "2028-02-29"  # leap year, a Tuesday
+    feb = {d["form"]: d for d in deadlines("2027-01", {"vat_payer": True})}
+    assert feb["D394"]["due"] == "2027-03-01"  # 28 Feb 2027 is a Sunday
+    assert feb["D394"]["moved_from"] == "2027-02-28"
 
 
 def test_thresholds_warn_before_they_are_crossed() -> None:

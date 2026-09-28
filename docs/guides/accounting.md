@@ -307,10 +307,15 @@ Bank tab shows both tables and the overview raises an alert.
 `accounting_outlook(period, months=6)` computes, for one client, the facts to
 advise on — nothing here is written by a model:
 
-- **deadlines** — returns due after the month, all on the 25th of the next
-  month: D300 and D394 (VAT payers; at quarter end when the profile has
-  `"vat_period": "quarterly"`), D112 (profile `employees`), D100 (profile
-  `"tax_regime": "micro"`, at quarter end).
+- **deadlines** — returns due after the month: D300 and D394 (VAT payers; at
+  quarter end when the profile has `"vat_period": "quarterly"`), D112 (profile
+  `employees`), D100 (profile `"tax_regime": "micro"`, at quarter end). D300,
+  D112 and D100 are due on the 25th of the next month, D394 on the 30th (the
+  end of February for January). A date on a Saturday, Sunday or legal holiday
+  (Codul muncii art. 139, incl. Orthodox Easter and Pentecost) moves to the next
+  working day, as Codul de procedură fiscală art. 181 says; the row then carries
+  `moved_from` and `moved_because`. The holiday list is in
+  `langclaw/accounting/workdays.py` — add a row when the law changes.
 - **thresholds** — the year's net sales against the limits that would change
   the client's regime: VAT registration (395,000 RON, for `"vat_payer": false`)
   and the micro-enterprise ceiling (250,000 EUR in 2025, 100,000 EUR from 2026;
