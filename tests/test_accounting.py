@@ -1667,9 +1667,12 @@ async def test_a_customer_advance_is_booked_on_419_and_applied_to_the_invoice(ac
         await tools["journal_post"].ainvoke(
             {"bucket_key": sale["bucket_key"], "proposal": _entry_for(sale)}
         )
+        waiting = await tools["advances_partners"].ainvoke({"day": "2026-09-30"})
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
         applied = await tools["advance_apply"].ainvoke(
             {"bucket_key": sale["bucket_key"], "day": "2026-09-30"}
         )
+        done = await tools["advances_partners"].ainvoke({"day": "2026-09-30"})
         none_left = await tools["advance_apply"].ainvoke(
             {"bucket_key": sale["bucket_key"], "day": "2026-09-30"}
         )
@@ -1682,3 +1685,7 @@ async def test_a_customer_advance_is_booked_on_419_and_applied_to_the_invoice(ac
     assert "error" in none_left
     f = (await scoped.store.get(sale["bucket_key"]))["fields"]
     assert f["paid_amount"] == "333.33"
+    assert waiting["advances"] == [{"cui": cui, "partner": "Client", "received": "333.33",
+                                    "paid": "0.00"}]  # fmt: skip
+    assert report["partner_advances"] == waiting["advances"]
+    assert done["advances"] == []

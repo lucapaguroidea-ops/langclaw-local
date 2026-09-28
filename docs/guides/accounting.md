@@ -452,6 +452,11 @@ in advance, the bank movement stays unmatched after `bank_import`.
     pay on the invoice, or `amount` if given (no more than that).
   - The invoice counts as paid by it.
 
+`advances_partners(day)` lists, per partner, the advances not applied yet:
+`received` on 419 and `paid` on 409. The month report shows them as
+`partner_advances`. The console raises an alert "Partner advances not yet
+applied: N" and lists them in the Close tab.
+
 These are advances without VAT. Advance invoices (facturi de avans) with VAT
 stay with the accountant.
 

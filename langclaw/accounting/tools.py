@@ -388,6 +388,15 @@ def build_accounting_tools(
         return [{"employee": r["name"], "open": str(Decimal(r["balance"]).quantize(
             Decimal("0.01")))} for r in rows if Decimal(r["balance"])]  # fmt: skip
 
+    async def _partner_advances(journal: Journal, day: date) -> list[dict[str, str]]:
+        """Partners' advances (419 received, 409 paid) not yet applied on *day*."""
+        cent = Decimal("0.01")
+        return [{"cui": r["partner_cui"], "partner": r["name"],
+                 "received": str(Decimal(r["received"]).quantize(cent)),
+                 "paid": str(Decimal(r["paid"]).quantize(cent))}
+                for r in await journal.advance_balances(day)
+                if r["received"] or r["paid"]]  # fmt: skip
+
     async def _period_report(period: str) -> tuple[DocumentServices, dict[str, Any]]:
         period = resolve_period(period)
         start, end = parse_period(period)
@@ -429,6 +438,7 @@ def build_accounting_tools(
         }
         so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
         report["anomalies"] = balance_anomalies(so_far["accounts"])
+        report["partner_advances"] = await _partner_advances(journal, end)
         book = await _cash_book(journal, start, end)
         report["cash"] = {"opening": book["opening"], "closing": book["closing"],
                           "problems": book["problems"],
@@ -923,6 +933,20 @@ def build_accounting_tools(
         except (*_ERRORS, InvalidOperation) as exc:
             return {"error": str(exc)}
         return json.loads(json.dumps({"posted": posted, "amount": str(value)}, default=str))
+
+    async def advances_partners(day: str = "") -> dict:
+        """Advances received from customers (419) and paid to suppliers (409) that
+        aren't applied to an invoice yet, per partner (use advance_apply).
+
+        Args:
+            day: As of this date (YYYY-MM-DD); empty means today.
+        """
+        try:
+            on = date.fromisoformat(day) if day else date.today()
+            advances = await _partner_advances(Journal(services.current().store), on)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"day": on.isoformat(), "advances": advances}
 
     async def assets_add(
         name: str, account: str, value: float, in_service: str, life_months: int
@@ -1749,6 +1773,7 @@ def build_accounting_tools(
         bank_confirm_match,
         bank_book_advance,
         advance_apply,
+        advances_partners,
         assets_add,
         assets_list,
         accounting_results,
