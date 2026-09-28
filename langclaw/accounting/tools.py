@@ -51,6 +51,7 @@ from langclaw.accounting.cash import cash_book as build_cash_book
 from langclaw.accounting.checks import check_proposal
 from langclaw.accounting.export import ExportUnavailable, make_exporter
 from langclaw.accounting.journal import Journal, JournalError
+from langclaw.accounting.ledger import account_ledger
 from langclaw.accounting.outlook import (
     cash_position,
     deadlines,
@@ -1138,6 +1139,46 @@ def build_accounting_tools(
                 "debit": f"{debit:.2f}", "credit": f"{credit:.2f}",
                 "balanced": debit == credit}  # fmt: skip
 
+    async def accounting_account_ledger(account: str, period: str = "") -> dict:
+        """One account's ledger for a month (fișa contului): opening balance, each
+        posted line with a running balance, totals and closing balance (debit −
+        credit, so negative is a credit balance). Includes its analytics
+        (5121 → 5121.01). Saved as reports/<period>/fisa-<account>.csv.
+
+        Args:
+            account: The account number, e.g. 4111, 401 or 5121.01.
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            account = (account or "").strip()
+            svc = services.current()
+            journal = Journal(svc.store)
+            ledger = account_ledger(
+                account,
+                await journal.balance_until(start - timedelta(days=1), account),
+                await journal.account_lines(account, start, end),
+            )
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["date", "document", "explanation", "debit", "credit", "balance"])
+            writer.writerow(["", "", "Sold inițial", "", "", ledger["opening"]])
+            for r in ledger["lines"]:
+                writer.writerow([r["date"], r["document"], r["explanation"], r["debit"],
+                                 r["credit"], r["balance"]])  # fmt: skip
+            writer.writerow(["", "", "Total / sold final", ledger["debit"], ledger["credit"],
+                             ledger["closing"]])  # fmt: skip
+            key = f"reports/{period}/fisa-{account}.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"period": period, "key": key, "url": url, **ledger}
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1360,6 +1401,7 @@ def build_accounting_tools(
         payables_batch,
         accounting_d394,
         accounting_journal_register,
+        accounting_account_ledger,
         cash_z_report,
         cash_book,
         cash_pay_invoice,

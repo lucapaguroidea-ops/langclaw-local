@@ -1361,3 +1361,26 @@ async def test_the_journal_register_lists_every_entry_or_only_non_invoice_ones(a
     assert [r[4] for r in rows] == ["5311", "707", "4427"]
     assert rows[0][2] == f"cash/z/{period}-28" and rows[0][5] == "121.00"
     assert other["key"].endswith("registru-jurnal-other.csv") and "error" in bad
+
+
+@needs_pg
+async def test_the_account_ledger_reads_one_account_with_its_opening_balance(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        for day, gross in (("2026-08-30", 121), ("2026-09-03", 242)):
+            await tools["cash_z_report"].ainvoke(
+                {"day": day, "lines": [{"rate": 21, "gross": gross}]}
+            )
+        ledger = await tools["accounting_account_ledger"].ainvoke(
+            {"account": "4427", "period": "2026-09"}
+        )
+        bad = await tools["accounting_account_ledger"].ainvoke(
+            {"account": "x", "period": "2026-09"}
+        )
+    assert ledger["opening"] == "-21.00" and ledger["closing"] == "-63.00"
+    assert [r["document"] for r in ledger["lines"]] == ["cash/z/2026-09-03"]
+    assert ledger["key"].endswith("reports/2026-09/fisa-4427.csv") and "error" in bad

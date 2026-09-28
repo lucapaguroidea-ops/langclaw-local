@@ -455,6 +455,18 @@ close (`close/`). SAGA's invoice import doesn't carry these, so the accountant
 enters them in SAGA as *note contabile*. There is no direct SAGA import for them
 yet, because the note-contabile import format wasn't available.
 
+### Account ledger (fișa contului)
+
+`accounting_account_ledger(account, period)` shows one account for the month.
+It covers the account's analytic sub-accounts too, so 5121 includes 5121.01.
+
+- It gives the opening balance, then each posted line with a running balance,
+  then the totals and the closing balance.
+- Balances are debit minus credit, so a negative figure is a credit balance,
+  as usual for 401 or 4427. `side` says which it is.
+- The ledger is saved as a CSV at `reports/<period>/fisa-<account>.csv`, with a
+  24-hour link.
+
 Targets live in one registry (`langclaw/accounting/export/__init__.py:EXPORTERS`);
 a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 
