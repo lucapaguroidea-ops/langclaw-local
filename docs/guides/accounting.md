@@ -87,8 +87,16 @@ depreciation and the VAT settlement, dated the last day of the month, and saves 
 client's schema). There's no reopen tool yet — reopening is a database change
 on purpose.
 
+`accounting_d394(period)` gives the **D394** figures (the informative statement of
+domestic supplies and purchases). It covers the month's invoices with a partner
+tax ID. They are grouped by partner, direction (`out` supplies, `in` purchases),
+VAT rate and type (`normal` / `reverse_charge`). Each group has the invoice
+count, taxable base and VAT, and credit notes count negative. The rows are also
+saved as `reports/<period>/d394.csv` in the client's bucket.
+
 These are figures for the accountant to check and file, not the ANAF D300 XML;
-generating the declaration file (DUKIntegrator) is a later slice.
+generating the declaration files (D300 / D394 XML for DUKIntegrator) needs the
+ANAF schemas and is a later slice.
 
 ## Bank statements and payments
 

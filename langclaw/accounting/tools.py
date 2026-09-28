@@ -46,6 +46,7 @@ from langclaw.accounting.outlook import (
 from langclaw.accounting.outlook import payables_due as plan_payables
 from langclaw.accounting.period import (
     blockers,
+    d394_rows,
     document_state,
     parse_period,
     resolve_period,
@@ -983,6 +984,39 @@ def build_accounting_tools(
         return {"key": key, "url": url, "payments": len(payable), "total": f"{total:.2f}",
                 "missing_iban": missing}  # fmt: skip
 
+    async def accounting_d394(period: str = "") -> dict:
+        """The D394 figures for a month (informative statement of domestic supplies
+        and purchases): per partner, direction and VAT rate — invoice count, taxable
+        base and VAT. Saved as a CSV in the client's bucket (reports/<period>/d394.csv)
+        for the accountant to check against the declaration software.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            svc = services.current()
+            rows = d394_rows(await _invoices(svc, start, end))
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";")
+            writer.writerow(["direction", "cui", "partner", "type", "rate", "invoices",
+                             "taxable", "vat"])  # fmt: skip
+            for r in rows:
+                writer.writerow([r["direction"], r["cui"], r["partner"], r["type"], r["rate"],
+                                 r["invoices"], r["taxable"], r["vat"]])  # fmt: skip
+            key = f"reports/{period}/d394.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps(
+            {"period": period, "key": key, "url": url, "rows": rows,
+             "note": "Draft figures, not the ANAF D394 file."}, default=str))  # fmt: skip
+
     fns = [
         accounting_context,
         accounting_check,
@@ -1004,6 +1038,7 @@ def build_accounting_tools(
         reminders_file,
         payables_due,
         payables_batch,
+        accounting_d394,
     ]
     if bus is not None:
         fns.append(accounting_queue)

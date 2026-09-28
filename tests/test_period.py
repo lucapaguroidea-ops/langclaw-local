@@ -135,3 +135,32 @@ def test_settlement_is_due_monthly_or_at_quarter_end_for_vat_payers() -> None:
     assert settles_vat("2026-09", {"vat_payer": True, "vat_period": "quarterly"})
     assert not settles_vat("2026-09", {"vat_payer": False})
     assert not settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})
+
+
+def test_d394_groups_by_partner_direction_and_rate() -> None:
+    from langclaw.accounting.period import d394_rows
+
+    def inv(direction, cui, name, rate, taxable, vat, doc_type="invoice", category="S"):
+        partner = "receiver" if direction == "out" else "sender"
+        return {"doc_type": doc_type, partner: name, "fields": {
+            "direction": direction, "customer_cui" if direction == "out" else "supplier_cui": cui,
+            "vat_breakdown": [{"category": category, "rate": rate, "taxable": taxable,
+                               "vat": vat}]}}  # fmt: skip
+
+    rows = d394_rows(
+        [
+            inv("out", "RO1", "Alfa", "21.00", "100.00", "21.00"),
+            inv("out", "RO1", "Alfa", "21.00", "50.00", "10.50"),
+            inv("out", "RO1", "Alfa", "21.00", "20.00", "4.20", doc_type="credit_note"),
+            inv("out", "RO1", "Alfa", "11.00", "10.00", "1.10"),
+            inv("in", "RO2", "Furnizor", "21.00", "300.00", "63.00"),
+            inv("in", "RO3", "Import", "21.00", "80.00", "0", category="AE"),
+            inv("in", "", "Fara CUI", "21.00", "5.00", "1.05"),  # no tax ID: not reportable
+        ]
+    )
+    by = {(r["direction"], r["cui"], r["rate"], r["type"]): r for r in rows}
+    alfa = by[("out", "RO1", "21", "normal")]
+    assert (alfa["invoices"], alfa["taxable"], alfa["vat"]) == (3, D("130.00"), D("27.30"))
+    assert by[("out", "RO1", "11", "normal")]["vat"] == D("1.10")
+    assert by[("in", "RO3", "21", "reverse_charge")]["vat"] == D("16.80")
+    assert not any(r["cui"] == "" for r in rows)

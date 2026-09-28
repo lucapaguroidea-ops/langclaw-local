@@ -1007,3 +1007,25 @@ async def test_payables_batch_writes_a_csv_for_suppliers_due(acme) -> None:
     with_iban = [s for s in due["suppliers"] if s["iban"]]
     assert out["payments"] == len(with_iban) and all(r[2] for r in rows[1:])
     assert (await scoped.store.get(out["key"]))["doc_type"] == "payment_batch"
+
+
+@needs_pg
+async def test_d394_figures_match_the_months_invoices(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    rows = await scoped.store.search(doc_type="invoice", limit=20)
+    period = max(str(r["document_date"])[:7] for r in rows)
+    month = [r for r in rows if str(r["document_date"]).startswith(period)]
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        out = await tools["accounting_d394"].ainvoke({"period": period})
+    sales_vat = sum(Decimal(r["fields"]["total_vat"]) for r in month
+                    if r["fields"]["direction"] == "out")  # fmt: skip
+    got = sum(Decimal(r["vat"]) for r in out["rows"] if r["direction"] == "out")
+    assert got == sales_vat and out["key"] == f"reports/{period}/d394.csv"
+    data, _ = await scoped.bucket.get(out["key"])
+    assert data.decode().splitlines()[0].startswith("direction;cui;partner")

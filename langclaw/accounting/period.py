@@ -211,3 +211,35 @@ def vat_settlement(*, deductible: Decimal, collected: Decimal) -> dict[str, Any]
         "reasoning": f"Regularizare TVA: colectată {c}, deductibilă {d}.",
         "legal_basis": "OMFP 1802/2014; Codul fiscal art. 316",
     }
+
+
+def d394_rows(invoices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The D394 figures: per partner (with a tax ID), direction (``out`` supplies /
+    ``in`` purchases), VAT rate and type (``normal`` / ``reverse_charge``) — invoice
+    count, taxable base and VAT. Credit notes count negative. A draft for the
+    accountant, not the ANAF declaration file."""
+    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in invoices:
+        f = row.get("fields") or {}
+        direction = f.get("direction", "in")
+        cui = str(f.get("customer_cui" if direction == "out" else "supplier_cui") or "")
+        if not cui:
+            continue
+        name = row.get("receiver" if direction == "out" else "sender") or ""
+        sign = -1 if row.get("doc_type") == "credit_note" else 1
+        for v in f.get("vat_breakdown") or []:
+            rate, taxable, vat = _dec(v.get("rate")), _dec(v.get("taxable")), _dec(v.get("vat"))
+            kind = "normal"
+            if direction == "in" and str(v.get("category", "")).upper() == "AE":
+                kind, vat = "reverse_charge", (taxable * rate / 100).quantize(_CENT)
+            key = (direction, cui, _rate(rate), kind)
+            g = groups.setdefault(key, {"direction": direction, "cui": cui, "partner": name,
+                                        "rate": _rate(rate), "type": kind, "invoices": 0,
+                                        "taxable": Decimal(0), "vat": Decimal(0)})  # fmt: skip
+            g["invoices"] += 1
+            g["taxable"] += sign * abs(taxable)
+            g["vat"] += sign * abs(vat)
+    rows = sorted(groups.values(), key=lambda g: (g["direction"], g["cui"], g["rate"]))
+    for g in rows:
+        g["taxable"], g["vat"] = g["taxable"].quantize(_CENT), g["vat"].quantize(_CENT)
+    return rows
