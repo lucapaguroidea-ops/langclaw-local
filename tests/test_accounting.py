@@ -2013,3 +2013,55 @@ async def test_vat_to_recover_and_last_years_result_carry_into_the_new_period(ac
         too_much = await tools["accounting_result_carry"].ainvoke({"day": "2026-06-01"})
         assert "error" in too_much
     assert await Journal(scoped.store).balance_until(date(2026, 6, 1), "117") == Decimal("-3750.00")
+
+
+@needs_pg
+async def test_a_closed_month_can_be_reopened_latest_first_with_a_reason(acme) -> None:
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678", profile={"vat_payer": True})
+    journal = Journal(scoped.store)
+    with tenant_scope(client):
+        await tools["accounting_opening_balances"].ainvoke(
+            {"day": "2026-01-31", "balances": {"4426": 100, "5121": 900, "1012": -1000}}
+        )
+        jan = await tools["accounting_period_close"].ainvoke(
+            {"period": "2026-01", "closed_by": "ana"}
+        )
+        assert jan["closed"] == "2026-01" and jan["vat_settlement"]
+        await tools["accounting_period_close"].ainvoke({"period": "2026-02", "closed_by": "ana"})
+
+        no_reason = await tools["accounting_period_reopen"].ainvoke({"period": "2026-02"})
+        assert "reason" in no_reason["error"]
+        early = await tools["accounting_period_reopen"].ainvoke(
+            {"period": "2026-01", "reason": "missed invoice", "reopened_by": "ana"}
+        )
+        assert "2026-02" in early["error"]  # later months first: their balances build on it
+
+        feb = await tools["accounting_period_reopen"].ainvoke(
+            {"period": "2026-02", "reason": "bank fee", "reopened_by": "ana"}
+        )
+        assert feb["reopened"] == "2026-02"
+        out = await tools["accounting_period_reopen"].ainvoke(
+            {"period": "2026-01", "reason": "missed invoice", "reopened_by": "ana"}
+        )
+        assert out["reopened"] == "2026-01"
+        assert out["removed_entries"] == ["close/2026-01/vat-settlement"]
+        assert await journal.balance_until(date(2026, 1, 31), "4424") == Decimal("0.00")
+        assert await journal.balance_until(date(2026, 1, 31), "4426") == Decimal("100.00")
+
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-01"})
+        assert report["closed"] is None
+        assert [(h["action"], h["by"]) for h in report["history"]] == [
+            ("closed", "ana"), ("reopened", "ana")]  # fmt: skip
+        assert report["history"][1]["reason"] == "missed invoice"
+        again = await tools["accounting_period_close"].ainvoke({"period": "2026-01"})
+        assert again["closed"] == "2026-01" and again["vat_settlement"]  # reposted afresh
+        not_closed = await tools["accounting_period_reopen"].ainvoke(
+            {"period": "2026-03", "reason": "x"}
+        )
+        assert "isn't closed" in not_closed["error"]

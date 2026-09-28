@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS {schema}.closed_periods (
     closed_by  TEXT NOT NULL DEFAULT '',
     closed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS {schema}.period_log (
+    id      BIGSERIAL PRIMARY KEY,
+    period  TEXT NOT NULL,
+    action  TEXT NOT NULL,
+    by_whom TEXT NOT NULL DEFAULT '',
+    reason  TEXT NOT NULL DEFAULT '',
+    at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE INDEX IF NOT EXISTS journal_partner_idx ON {schema}.journal_entries (partner_cui);
 """
 
@@ -364,13 +372,73 @@ class Journal:
     async def close_period(self, period: str, *, closed_by: str = "") -> bool:
         """Lock *period* (``YYYY-MM``); False when it was already closed."""
         pool = await self._db()
-        done = await pool.fetchval(
-            f"INSERT INTO {self._schema}.closed_periods (period, closed_by) VALUES ($1, $2) "
-            "ON CONFLICT DO NOTHING RETURNING 1",
-            period,
-            closed_by,
-        )
+        async with pool.acquire() as conn, conn.transaction():
+            done = await conn.fetchval(
+                f"INSERT INTO {self._schema}.closed_periods (period, closed_by) VALUES ($1, $2) "
+                "ON CONFLICT DO NOTHING RETURNING 1",
+                period,
+                closed_by,
+            )
+            if done:
+                await conn.execute(
+                    f"INSERT INTO {self._schema}.period_log (period, action, by_whom) "
+                    "VALUES ($1, 'closed', $2)",
+                    period,
+                    closed_by,
+                )
         return bool(done)
+
+    async def reopen_period(self, period: str, *, reason: str, reopened_by: str = "") -> list[str]:
+        """Unlock *period* so entries can be posted in it again, and remove the
+        entries its close posted (``close/<period>/...``: depreciation, VAT
+        settlement, year end), which the next close posts afresh. Later closed
+        months must be reopened first, since their balances build on this one.
+
+        Returns:
+            The keys of the removed closing entries.
+
+        Raises:
+            JournalError: no reason, the period isn't closed, or a later one is.
+        """
+        if not reason.strip():
+            raise JournalError("Say why the period is reopened (reason): it's kept in its history.")
+        pool = await self._db()
+        async with pool.acquire() as conn, conn.transaction():
+            closed = [r["period"] for r in await conn.fetch(
+                f"SELECT period FROM {self._schema}.closed_periods ORDER BY period")]  # fmt: skip
+            if period not in closed:
+                raise JournalError(f"Period {period} isn't closed.")
+            later = [p for p in closed if p > period]
+            if later:
+                raise JournalError(f"Reopen {later[-1]} first (and every month after "
+                                   f"{period}): their balances build on {period}.")  # fmt: skip
+            removed = await conn.fetch(
+                f"DELETE FROM {self._schema}.journal_entries WHERE bucket_key LIKE $1 "
+                "RETURNING bucket_key",
+                f"close/{period}/%",
+            )
+            await conn.execute(
+                f"DELETE FROM {self._schema}.closed_periods WHERE period = $1", period
+            )
+            await conn.execute(
+                f"INSERT INTO {self._schema}.period_log (period, action, by_whom, reason) "
+                "VALUES ($1, 'reopened', $2, $3)",
+                period,
+                reopened_by,
+                reason.strip(),
+            )
+        return sorted(r["bucket_key"] for r in removed)
+
+    async def period_history(self, period: str) -> list[dict[str, Any]]:
+        """Every close and reopen of *period*, oldest first."""
+        pool = await self._db()
+        rows = await pool.fetch(
+            f"SELECT action, by_whom, reason, at FROM {self._schema}.period_log "
+            "WHERE period = $1 ORDER BY id",
+            period,
+        )
+        return [{"action": r["action"], "by": r["by_whom"], "reason": r["reason"],
+                 "at": r["at"].isoformat()} for r in rows]  # fmt: skip
 
     async def closed_periods(self) -> list[dict[str, Any]]:
         pool = await self._db()

@@ -475,6 +475,7 @@ def build_accounting_tools(
         report = {
             "period": period,
             "closed": closed.get(period),
+            "history": await journal.period_history(period),
             "blockers": blockers(docs),
             "documents": document_state(month, _profile().get("expected_documents")),
             "trial_balance": trial_balance(await journal.lines_between(start, end)),
@@ -649,6 +650,28 @@ def build_accounting_tools(
         return {"closed": period, "report_key": key, "registers": registers,
                 "vat": report["vat"], "vat_settlement": settled,
                 "depreciation": depreciation, "year_end": year_end}  # fmt: skip
+
+    async def accounting_period_reopen(
+        period: str, reason: str = "", reopened_by: str = ""
+    ) -> dict:
+        """Reopen a closed month to correct it: entries can be posted in it again,
+        and the entries its close posted (depreciation, VAT settlement, year end)
+        are removed, to be posted afresh when it's closed again. Later closed
+        months must be reopened first. The reason is kept in the month's history.
+
+        Args:
+            period: The month, as YYYY-MM.
+            reason: Why it's reopened (required).
+            reopened_by: Who reopened it.
+        """
+        try:
+            period = resolve_period(period)
+            removed = await Journal(services.current().store).reopen_period(
+                period, reason=reason, reopened_by=reopened_by
+            )
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return {"reopened": period, "removed_entries": removed, "reason": reason.strip()}
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -1954,6 +1977,7 @@ def build_accounting_tools(
         accounting_trial_balance,
         accounting_opening_balances,
         accounting_result_carry,
+        accounting_period_reopen,
         accounting_reports,
         cash_z_report,
         cash_book,

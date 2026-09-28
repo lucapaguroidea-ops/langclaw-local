@@ -132,8 +132,15 @@ The two registers include the closing entries, and their keys come back under
 `registers`. If either register can't be written, the month stays open.
 Finally it **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
-client's schema). There's no reopen tool yet — reopening is a database change
-on purpose.
+client's schema).
+
+To correct a closed month, `accounting_period_reopen(period, reason, reopened_by)`
+unlocks it. The reason is required. Later closed months must be reopened
+first, since their balances build on this one. The entries its close posted
+(`close/<period>/...`: depreciation, VAT settlement, year end) are removed, and
+the next `accounting_period_close` posts them afresh from the corrected month.
+Every close and reopen is kept in the month's `history` (`period_log` table),
+which the month report returns and the console's Close tab shows.
 
 `accounting_d394(period)` gives the **D394** figures (the informative statement of
 domestic supplies and purchases). It covers the month's invoices with a partner

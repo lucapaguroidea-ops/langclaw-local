@@ -916,6 +916,9 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
         if "error" not in report:
             if report.get("closed"):
                 st.info(f"Closed by {report['closed'].get('closed_by') or '—'}.")
+            for h in report.get("history") or []:
+                st.caption(f"{h['at'][:16]} · {h['action']} by {h['by'] or '—'}"
+                           + (f" — {h['reason']}" if h.get("reason") else ""))  # fmt: skip
             vat = report["vat"]
             cols = st.columns(3)
             cols[0].metric("VAT collected", vat["collected"])
