@@ -41,6 +41,7 @@ Management (see :class:`~langclaw.gateway.control.ControlPlane`)::
     GET    /v1/runs/{run_id}             status, reviews, state, and each step's result
     POST   /v1/runs/{run_id}/cancel
     GET    /v1/reviews [?workflow=]      reviews waiting for an answer
+    GET    /v1/reviews/load [?days=30]   pending by client / workflow; answers per person
     POST   /v1/runs/{run_id}/review      {"action": "approve"|"edit"|"reject",
                                           "data"?, "comment"?, "interrupt_id"?, "by"?, "via"?}
     GET    /v1/schedules                 POST /v1/schedules   DELETE /v1/schedules/{id}
@@ -234,6 +235,7 @@ class ApiChannel(BaseChannel):
                 web.post("/v1/runs/{run_id}/cancel", self._cancel_run),
                 web.post("/v1/runs/{run_id}/review", self._answer_review),
                 web.get("/v1/reviews", self._list_reviews),
+                web.get("/v1/reviews/load", self._review_load),
                 web.get("/v1/tenants", self._list_tenants),
                 web.get("/v1/tenants/{tenant_id}", self._get_tenant),
                 web.put("/v1/tenants/{tenant_id}", self._save_tenant),
@@ -485,6 +487,10 @@ class ApiChannel(BaseChannel):
     async def _list_reviews(self, request: web.Request) -> web.Response:
         reviews = await self._require_plane().list_reviews(request.query.get("workflow", ""))
         return self._json({"reviews": reviews})
+
+    async def _review_load(self, request: web.Request) -> web.Response:
+        days = _parse_int(request.query.get("days"), default=30, name="days")
+        return self._json(await self._require_plane().review_load(days=days))
 
     async def _answer_review(self, request: web.Request) -> web.Response:
         body = await self._body(request)

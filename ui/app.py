@@ -801,6 +801,27 @@ def page_new(lc: LangclawClient) -> None:
 def page_reviews(lc: LangclawClient) -> None:
     st.header("🙋 Review queue")
     st.caption("Every paused run, across workflows. Answers here also update Telegram.")
+    if load := _call(lc.review_load):
+        pending, answered = load["pending"], load["answered"]
+        cols = st.columns(3)
+        cols[0].metric("Waiting", pending["total"])
+        oldest = pending["oldest"]
+        cols[1].metric(
+            "Oldest (hours)",
+            oldest["hours"] if oldest else 0,
+            help=f"{oldest['workflow']} · {oldest['run_id']}" if oldest else None,
+        )
+        cols[2].metric(f"Answered, last {answered['days']} days", answered["total"])
+        if pending["by_tenant"]:
+            st.caption("Waiting per client")
+            st.dataframe(
+                [{"client": t, **g} for t, g in pending["by_tenant"].items()], hide_index=True
+            )
+        if answered["by_person"]:
+            st.caption("Answers per person (recorded as)")
+            st.dataframe(
+                [{"person": p, **v} for p, v in answered["by_person"].items()], hide_index=True
+            )
     reviews = _call(lc.reviews) or []
     if not reviews:
         st.success("Nothing waiting.")

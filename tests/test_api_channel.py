@@ -395,3 +395,14 @@ async def test_personal_tokens_name_who_answers_a_review() -> None:
     # A personal token decides who answered; with the shared key the name is only claimed.
     assert (answers[0]["by"], answers[0]["actor"]) == ("ana", "api:ana")
     assert (answers[1]["by"], answers[1]["actor"]) == ("ion", "api-claimed:ion")
+
+
+async def test_review_load_route(setup) -> None:
+    channel, _bus, client, _cron, _router = setup
+
+    async def load(*, days=30):
+        return {"pending": {"total": 0}, "answered": {"days": days}}
+
+    channel._plane.review_load = load
+    resp = await client.get("/v1/reviews/load", params={"days": "7"}, headers=AUTH)
+    assert (await resp.json())["answered"]["days"] == 7

@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from langclaw.bus.base import InboundMessage
+from langclaw.workflows.graph.runs import review_load
 
 if TYPE_CHECKING:
     import asyncio
@@ -589,6 +590,15 @@ class ControlPlane:
         if graph is None:
             return []
         return await graph.index.pending_reviews(workflow=workflow)
+
+    async def review_load(self, *, days: int = 30) -> dict[str, Any]:
+        """Pending reviews by client / workflow (with the oldest) and answers of
+        the last *days* per person (``runs.review_load``)."""
+        self.require_workflows()
+        graph = self._graph_runner()
+        if graph is None:
+            return review_load([], days=days)
+        return await graph.index.review_load(days=days)
 
     async def answer_review(
         self,

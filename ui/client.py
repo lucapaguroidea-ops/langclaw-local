@@ -173,6 +173,10 @@ class LangclawClient:
         params = {"workflow": workflow} if workflow else None
         return self._request("GET", "/v1/reviews", params=params)["reviews"]
 
+    def review_load(self, days: int = 30) -> dict[str, Any]:
+        """``{"pending", "answered"}`` — see ``GET /v1/reviews/load``."""
+        return self._request("GET", "/v1/reviews/load", params={"days": days})
+
     def answer_review(
         self,
         run_id: str,
