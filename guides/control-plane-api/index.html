@@ -1533,7 +1533,7 @@ so chat returns a <strong>turn</strong> you poll:</p>
 </tr>
 <tr>
 <td><code>GET /v1/accounting/firm?period=YYYY-MM</code></td>
-<td>Every client's month on one line (clients on): <code>{"period", "clients": [{"client", "name", "closed", "ready_to_close", "blockers", "missing", "bank_agrees", "unmatched", "anomalies", "vat_to_pay", "vat_to_recover", "result_to_carry", "error"}]}</code> from each client's <code>accounting_period_report</code> and unmatched <code>bank_movements</code>. The console's <strong>All clients</strong> page. Needs accounting on</td>
+<td>Every client's month on one line (clients on): <code>{"period", "clients": [{"client", "name", "closed", "ready_to_close", "blockers", "missing", "bank_agrees", "unmatched", "anomalies", "vat_to_pay", "vat_to_recover", "result_to_carry", "error"}]}</code> from each client's <code>accounting_period_report</code> and unmatched <code>bank_movements</code>. Up to 6 clients are checked at once (the documents pool holds 8 connections). The console's <strong>All clients</strong> page. Needs accounting on</td>
 </tr>
 <tr>
 <td><code>GET /v1/tenants</code> · <code>GET /v1/tenants/{id}</code></td>
