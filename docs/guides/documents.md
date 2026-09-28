@@ -159,3 +159,6 @@ so scanned runs know where to report.
   by scanning every embedded row. That's fast up to tens of thousands of documents;
   beyond that, a pgvector index is the next step. Changing `EMBEDDING_MODEL` means
   old vectors don't match new ones: clear the column and run `documents_reindex`.
+
+
+`DocumentStore.search` returns at most 200 rows, for chat and the API. Code that must see every document (the accounting totals, aging, bank matching, reminders) uses `DocumentStore.search_all`, which has no row limit.

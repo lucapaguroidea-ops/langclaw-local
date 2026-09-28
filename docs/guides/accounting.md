@@ -518,7 +518,6 @@ lists them in the Close tab.
 
 The offset entry appears in the journal register's non-invoice file. The
 signed confirmation (proces-verbal de compensare) stays with the accountant.
-Only the first 200 invoices of each kind are searched.
 
 ## In the console
 

@@ -298,7 +298,7 @@ def build_accounting_tools(
             waiting = [
                 r
                 for doc_type in _INVOICE_TYPES
-                for r in await svc.store.search(doc_type=doc_type, status="filed", limit=500)
+                for r in await svc.store.search_all(doc_type=doc_type, status="filed")
             ]
             done = await Journal(svc.store).posted_keys([r["bucket_key"] for r in waiting])
         except _ERRORS as exc:
@@ -349,12 +349,8 @@ def build_accounting_tools(
                 r
                 for status in (("posted", "exported") if again else ("posted",))
                 for doc_type in _INVOICE_TYPES
-                for r in await svc.store.search(
-                    doc_type=doc_type,
-                    status=status,
-                    date_from=date_from,
-                    date_to=date_to,
-                    limit=200,
+                for r in await svc.store.search_all(
+                    doc_type=doc_type, status=status, date_from=date_from, date_to=date_to
                 )
             ]
             batch = exporter.build(rows, own_cif=own_cif)  # an unavailable target fails here
@@ -405,17 +401,15 @@ def build_accounting_tools(
         docs = [
             r
             for doc_type in _INVOICE_TYPES
-            for r in await svc.store.search(
-                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            for r in await svc.store.search_all(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         ]
-        month = await svc.store.search(
-            date_from=start.isoformat(), date_to=end.isoformat(), limit=200
-        )
+        month = await svc.store.search_all(date_from=start.isoformat(), date_to=end.isoformat())
         booked = [d for d in docs if d.get("status") in ("posted", "exported")]
         for cash_type in ("z_report", "cash_receipt"):  # cash sales / purchases carry VAT too
-            booked += await svc.store.search(
-                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            booked += await svc.store.search_all(
+                doc_type=cash_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         closed = {p["period"]: p for p in await journal.closed_periods()}
         settlement = None
@@ -479,8 +473,6 @@ def build_accounting_tools(
             pending = (report["depreciation"] or {}).get("lines", [])
             year = await journal.lines_between(date(start.year, 1, 1), end)
             report["year_end"] = year_end_entry([*year, *pending])
-        if len(docs) >= 200:
-            report["note"] = "Over 200 invoices in the month: the report covers the first 200."
         return svc, json.loads(json.dumps(report, default=str))
 
     async def accounting_period_report(period: str = "") -> dict:
@@ -587,8 +579,8 @@ def build_accounting_tools(
         return [
             r
             for doc_type in _INVOICE_TYPES
-            for r in await svc.store.search(
-                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat(), limit=200
+            for r in await svc.store.search_all(
+                doc_type=doc_type, date_from=start.isoformat(), date_to=end.isoformat()
             )
         ]
 
@@ -654,15 +646,13 @@ def build_accounting_tools(
                 "tax_estimate": results["tax_estimate"],
             },
         }
-        if len(year_docs) >= 200:
-            facts["note"] = "Over 200 invoices this year: revenue covers the first 200 per type."
         return json.loads(json.dumps(facts, default=str))
 
     async def _open_invoices(svc: DocumentServices) -> list[dict[str, Any]]:
         return [
             r
             for status in ("filed", "posted", "exported")
-            for r in await svc.store.search(doc_type="invoice", status=status, limit=200)
+            for r in await svc.store.search_all(doc_type="invoice", status=status)
             if not (r.get("fields") or {}).get("paid_on")
         ]
 

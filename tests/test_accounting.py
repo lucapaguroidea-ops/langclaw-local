@@ -1838,3 +1838,40 @@ async def test_closing_december_in_the_monthly_loop_files_balance_confirmations(
     assert [p["period"] for p in await Journal(scoped.store).closed_periods()] == ["2027-12"]
     run = await runner.get_run(spec, "month:12")
     assert run["state"]["data"]["confirmations"]["day"] == "2027-12-31"
+
+
+@needs_pg
+async def test_no_invoice_cap_old_unpaid_invoices_stay_visible_behind_many_newer(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    base = {
+        k: v for k, v in sale.items() if k not in ("id", "bucket_key", "fields", "document_date")
+    }
+    old = {
+        **sale["fields"],
+        "invoice_number": "OLD-1",
+        "due_date": "2025-01-31",
+        "customer_cui": "RO999",
+    }
+    await scoped.store.save("inbox/old.xml", {**base, "document_date": "2025-01-01", "fields": old})
+    for i in range(250):  # newer, already paid
+        f = {
+            **sale["fields"],
+            "invoice_number": f"N-{i}",
+            "paid_on": "2026-09-01",
+            "paid_amount": str(sale["amount"]),
+        }
+        await scoped.store.save(
+            f"inbox/n{i}.xml", {**base, "document_date": "2026-09-01", "fields": f}
+        )
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        overdue = await tools["receivables_overdue"].ainvoke({"day": "2026-09-30"})
+        month = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    keys = [i["bucket_key"] for c in overdue["customers"] for i in c["invoices"]]
+    assert "inbox/old.xml" in keys
+    assert month["invoices"] >= 250 and "note" not in month

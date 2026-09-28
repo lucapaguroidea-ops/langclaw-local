@@ -222,6 +222,29 @@ class DocumentStore:
         pool = await self._db()
         return [_row(r) for r in await pool.fetch(sql, *args)]
 
+    async def search_all(
+        self,
+        *,
+        doc_type: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        status: str = "",
+        fields: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every matching document, newest first, with no row limit — for code that
+        must see all of a client's documents (accounting totals, aging, matching),
+        unlike :meth:`search`, which is capped for chat and API use."""
+        where, args = _filters(
+            text="", sender="", receiver="", doc_type=doc_type, date_from=date_from,
+            date_to=date_to, status=status, fields=fields,
+        )  # fmt: skip
+        sql = f"SELECT * FROM {self._table}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY document_date DESC NULLS LAST, id DESC"
+        pool = await self._db()
+        return [_row(r) for r in await pool.fetch(sql, *args)]
+
     async def set_embedding(self, bucket_key: str, vector: list[float]) -> None:
         pool = await self._db()
         await pool.execute(
