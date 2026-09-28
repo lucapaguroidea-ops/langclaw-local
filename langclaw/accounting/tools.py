@@ -68,6 +68,7 @@ from langclaw.accounting.period import (
     resolve_period,
     settles_vat,
     trial_balance,
+    trial_balance_sheet,
     vat_settlement,
     vat_summary,
 )
@@ -1181,6 +1182,47 @@ def build_accounting_tools(
             return {"error": str(exc)}
         return {"period": period, "key": key, "url": url, **ledger}
 
+    async def accounting_trial_balance(period: str = "") -> dict:
+        """The month's trial balance (balanța de verificare) with its five column
+        pairs per account: opening balance at the start of the year, earlier
+        turnover this year, the month's turnover, total sums and closing balance.
+        Saved as reports/<period>/balanta.csv.
+
+        Args:
+            period: The month, as YYYY-MM (empty: last month).
+        """
+        import csv
+        import io
+
+        try:
+            period = resolve_period(period)
+            start, end = parse_period(period)
+            year = date(start.year, 1, 1)
+            svc = services.current()
+            journal = Journal(svc.store)
+            sheet = trial_balance_sheet(
+                await journal.lines_between(date(1900, 1, 1), year - timedelta(days=1)),
+                await journal.lines_between(year, start - timedelta(days=1))
+                if start > year
+                else [],
+                await journal.lines_between(start, end),
+            )
+            columns = [f"{p}_{side}" for p in ("opening", "previous", "month", "total", "closing")
+                       for side in ("debit", "credit")]  # fmt: skip
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=";", lineterminator="\n")
+            writer.writerow(["account", *columns])
+            for r in sheet["accounts"]:
+                writer.writerow([r["account"], *(r[c] for c in columns)])
+            writer.writerow(["TOTAL", *(sheet["totals"].get(c, "0.00") for c in columns)])
+            key = f"reports/{period}/balanta.csv"
+            await svc.bucket.put(key, buf.getvalue().encode("utf-8"), content_type="text/csv")
+            url = await svc.bucket.link(key, expires_s=86400)
+        except _ERRORS as exc:
+            return {"error": str(exc)}
+        return json.loads(json.dumps({"period": period, "key": key, "url": url, **sheet},
+                                     default=str))  # fmt: skip
+
     async def cash_z_report(day: str, lines: list[dict[str, Any]]) -> dict:
         """Book a day's cash register report (raport Z): D 5311 cash / C revenue
         (profile cash_revenue_account, default 707) / C 4427 VAT per rate. Files
@@ -1404,6 +1446,7 @@ def build_accounting_tools(
         accounting_d394,
         accounting_journal_register,
         accounting_account_ledger,
+        accounting_trial_balance,
         cash_z_report,
         cash_book,
         cash_pay_invoice,

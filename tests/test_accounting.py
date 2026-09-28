@@ -1385,3 +1385,23 @@ async def test_the_account_ledger_reads_one_account_with_its_opening_balance(acm
     assert [r["document"] for r in ledger["lines"]] == ["cash/z/2026-09-03"]
     assert ledger["lines"][0]["counterpart"] == "5311"
     assert ledger["key"].endswith("reports/2026-09/fisa-4427.csv") and "error" in bad
+
+
+@needs_pg
+async def test_the_trial_balance_tool_splits_opening_previous_and_month(acme) -> None:
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    z = tools["cash_z_report"]
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        await z.ainvoke({"day": "2025-12-15", "lines": [{"rate": 0, "gross": 100}]})
+        await z.ainvoke({"day": "2026-02-10", "lines": [{"rate": 0, "gross": 40}]})
+        await z.ainvoke({"day": "2026-03-10", "lines": [{"rate": 0, "gross": 5}]})
+        sheet = await tools["accounting_trial_balance"].ainvoke({"period": "2026-03"})
+    cash = next(r for r in sheet["accounts"] if r["account"] == "5311")
+    assert (cash["opening_debit"], cash["previous_debit"], cash["month_debit"]) == (
+        "100.00", "40.00", "5.00")  # fmt: skip
+    assert cash["closing_debit"] == "145.00" and sheet["balanced"]
+    assert sheet["key"].endswith("reports/2026-03/balanta.csv")

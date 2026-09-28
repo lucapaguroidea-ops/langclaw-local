@@ -455,6 +455,26 @@ close (`close/`). SAGA's invoice import doesn't carry these, so the accountant
 enters them in SAGA as *note contabile*. There is no direct SAGA import for them
 yet, because the note-contabile import format wasn't available.
 
+### Trial balance (balanța de verificare)
+
+`accounting_trial_balance(period)` gives each account's five column pairs, each
+split into debit and credit:
+
+- the opening balance at 1 January;
+- turnover earlier in the year;
+- the month's turnover;
+- total sums;
+- the closing balance.
+
+Balances go on their debit or credit side. `balanced` checks that every pair's
+debit and credit totals agree. The sheet is saved as a CSV at
+`reports/<period>/balanta.csv`, with a 24-hour link. The month report's
+`trial_balance` still gives only the month's turnover.
+
+The opening balance comes from everything posted before 1 January. That is
+only complete if the client's earlier years, or an opening entry, are in the
+journal.
+
 ### Account ledger (fișa contului)
 
 `accounting_account_ledger(account, period)` shows one account for the month.

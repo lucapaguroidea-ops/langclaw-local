@@ -76,6 +76,48 @@ def trial_balance(lines: list[dict[str, Any]]) -> dict[str, Any]:
     return {"accounts": accounts, "debit": debit, "credit": credit, "balanced": debit == credit}
 
 
+_SHEET_PAIRS = ("opening", "previous", "month", "total", "closing")
+
+
+def trial_balance_sheet(
+    before_year: list[dict[str, Any]],
+    earlier: list[dict[str, Any]],
+    month: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """The trial balance (balanța de verificare) with its five column pairs:
+    opening balance at the start of the year (from *before_year* lines), earlier
+    turnover this year (*earlier*), the *month*'s turnover, total sums, and the
+    closing balance. Each balance goes on its debit or credit side.
+    """
+    rows: dict[str, dict[str, Decimal]] = {}
+
+    def row(account: str) -> dict[str, Decimal]:
+        return rows.setdefault(account, {f"{p}_{s}": Decimal(0) for p in _SHEET_PAIRS
+                                         for s in ("debit", "credit")})  # fmt: skip
+
+    for line in before_year:
+        r = row(str(line["account"]))
+        r["opening_debit"] += _dec(line.get("debit")) - _dec(line.get("credit"))
+    for pair, lines in (("previous", earlier), ("month", month)):
+        for line in lines:
+            r = row(str(line["account"]))
+            r[f"{pair}_debit"] += _dec(line.get("debit"))
+            r[f"{pair}_credit"] += _dec(line.get("credit"))
+    accounts = []
+    for account, r in sorted(rows.items()):
+        net = r["opening_debit"]
+        r["opening_debit"], r["opening_credit"] = max(net, Decimal(0)), max(-net, Decimal(0))
+        for side in ("debit", "credit"):
+            r[f"total_{side}"] = r[f"opening_{side}"] + r[f"previous_{side}"] + r[f"month_{side}"]
+        net = r["total_debit"] - r["total_credit"]
+        r["closing_debit"], r["closing_credit"] = max(net, Decimal(0)), max(-net, Decimal(0))
+        accounts.append({"account": account, **{k: v.quantize(_CENT) for k, v in r.items()}})
+    totals = {k: sum((a[k] for a in accounts), Decimal(0)).quantize(_CENT)
+              for k in accounts[0] if k != "account"} if accounts else {}  # fmt: skip
+    balanced = all(totals.get(f"{p}_debit") == totals.get(f"{p}_credit") for p in _SHEET_PAIRS)
+    return {"accounts": accounts, "totals": totals, "balanced": balanced}
+
+
 def _rate(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
