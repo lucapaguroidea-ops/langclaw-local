@@ -1568,3 +1568,36 @@ async def test_a_posted_entry_can_be_reversed_and_posted_again(acme) -> None:
     journal = Journal(scoped.store)
     assert (await journal.get(key))["lines"][0]["account"] == "628"
     assert (await scoped.store.get(key))["status"] == "posted"
+
+
+@needs_pg
+async def test_vat_on_collection_becomes_due_as_the_customer_pays(acme) -> None:
+    from decimal import Decimal
+
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    sale = next(r for r in await scoped.store.search(doc_type="invoice", limit=20)
+                if r["fields"]["direction"] == "out")  # fmt: skip
+    number, gross = sale["fields"]["invoice_number"], float(sale["amount"])
+    vat = Decimal(str(sale["fields"]["total_vat"]))
+    entry = _entry_for(sale)
+    entry["lines"][2]["account"] = "4428"
+    half = round(gross / 2, 2)
+    await scoped.bucket.put("bank/v1.sta", _mt940(("C", half, f"avans {number}")))
+    client = Tenant(id="acme", name="ACME", tax_id="RO12345678",
+                    profile={"vat_payer": True, "vat_on_collection": True})  # fmt: skip
+    with tenant_scope(client):
+        posted = await tools["journal_post"].ainvoke(
+            {"bucket_key": sale["bucket_key"], "proposal": entry}
+        )
+        await tools["bank_import"].ainvoke({"key": "bank/v1.sta"})
+        report = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
+    assert "error" not in posted
+    share = (vat * Decimal(str(half)) / Decimal(str(gross))).quantize(Decimal("0.01"))
+    accounts = {a["account"]: a for a in report["trial_balance"]["accounts"]}
+    assert Decimal(accounts["4427"]["balance"]) == -share
+    assert Decimal(accounts["4428"]["balance"]) == -(vat - share)
+    assert report["vat_settlement"] is not None

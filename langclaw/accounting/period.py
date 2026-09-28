@@ -284,9 +284,10 @@ def document_state(documents: list[dict[str, Any]], expected: list[Any] | None) 
 
 def settles_vat(period: str, profile: dict[str, Any]) -> bool:
     """Whether the month's close settles VAT: VAT payers, monthly or at quarter end
-    (``vat_period: quarterly``). Not for VAT on collection — the 4428 → 4427
-    transfer depends on payments and stays with the accountant."""
-    if not profile.get("vat_payer") or profile.get("vat_on_collection"):
+    (``vat_period: quarterly``). With VAT on collection the payments move the paid
+    share of 4428 into 4426/4427 as they're booked, so what's settled is only
+    the VAT that became due; what's unpaid stays on 4428."""
+    if not profile.get("vat_payer"):
         return False
     _, end = parse_period(period)
     return profile.get("vat_period") != "quarterly" or end.month % 3 == 0

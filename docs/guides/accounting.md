@@ -66,9 +66,15 @@ so proposals get more consistent as the accountant approves them.
   payers (monthly, or at quarter end with `"vat_period": "quarterly"`). The
   balances of 4426 and 4427 up to the month's last day are cleared into
   4423 (payable) or 4424 (refundable):
-  4427 = 4426 + 4423, or 4427 + 4424 = 4426. It's skipped under VAT on
-  collection, where the 4428 → 4427 transfer depends on payments and stays
-  with the accountant.
+  4427 = 4426 + 4423, or 4427 + 4424 = 4426.
+  - **VAT on collection** (`"vat_on_collection": true`): invoices book their VAT
+    on 4428. Each payment booked from a bank statement or with
+    `cash_pay_invoice` moves the paid share of the invoice's VAT:
+    D 4428 / C 4427 for a sale, D 4426 / C 4428 for a purchase. The settlement
+    then clears only the VAT that became due, and unpaid VAT stays on 4428.
+  - The VAT summary (D300 draft) still counts invoices by their date, not by
+    payment. For these clients, check it against 4426 and 4427.
+  - A partner offset doesn't move 4428 yet.
 
 - **depreciation** — the month's depreciation entry for the client's fixed
   assets, previewed here and posted at close: D 6811 / C the

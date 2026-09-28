@@ -58,3 +58,19 @@ def test_cash_deposits_and_withdrawals_go_through_581() -> None:
     assert [(x["account"], x["debit"], x["credit"]) for x in wd] == [
         ("581", "200.00", "0"), ("5121", "0", "200.00"),
         ("5311", "200.00", "0"), ("581", "0", "200.00")]  # fmt: skip
+
+
+def test_vat_on_collection_moves_the_paid_share_out_of_4428() -> None:
+    sale = {"amount": "1210.00", "fields": {"direction": "out", "invoice_number": "F1",
+                                            "total_vat": "210.00"}}  # fmt: skip
+    lines = payment_entry(sale, "605.00", invoice_lines=None, bank="5121",
+                          vat_on_collection=True)["lines"]  # fmt: skip
+    assert [(x["account"], x["debit"], x["credit"]) for x in lines[2:]] == [
+        ("4428", "105.00", "0"), ("4427", "0", "105.00")]  # fmt: skip
+    bill = {"amount": "121.00", "fields": {"direction": "in", "total_vat": "21.00"}}
+    lines = payment_entry(bill, "121.00", invoice_lines=None, bank="5311",
+                          vat_on_collection=True)["lines"]  # fmt: skip
+    assert [(x["account"], x["debit"], x["credit"]) for x in lines[2:]] == [
+        ("4426", "21.00", "0"), ("4428", "0", "21.00")]  # fmt: skip
+    plain = payment_entry(bill, "121.00", invoice_lines=None, bank="5121")["lines"]
+    assert len(plain) == 2

@@ -657,7 +657,11 @@ def build_accounting_tools(
         doc = {**row, "bucket_key": f"bank/{tx['key']}/{bucket_key}",
                "document_date": str(tx["booked"])}  # fmt: skip
         entry = payment_entry(
-            row, str(amount), invoice_lines=(invoice_entry or {}).get("lines"), bank=bank
+            row,
+            str(amount),
+            invoice_lines=(invoice_entry or {}).get("lines"),
+            bank=bank,
+            vat_on_collection=bool(_profile().get("vat_on_collection")),
         )
         return await _book(svc, doc, entry)
 
@@ -1498,6 +1502,7 @@ def build_accounting_tools(
                    "document_date": on.isoformat()}  # fmt: skip
             invoice_entry = await Journal(svc.store).get(bucket_key)
             entry = payment_entry(row, str(paid), bank=CASH_ACCOUNT,
+                                  vat_on_collection=bool(_profile().get("vat_on_collection")),
                                   invoice_lines=(invoice_entry or {}).get("lines"))  # fmt: skip
             entry["reasoning"] = entry["reasoning"].replace("extras de cont", "numerar")
             posted = await Journal(svc.store).post(doc, entry, approved_by="cash")

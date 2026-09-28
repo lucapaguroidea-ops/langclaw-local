@@ -134,7 +134,7 @@ def test_settlement_is_due_monthly_or_at_quarter_end_for_vat_payers() -> None:
     assert not settles_vat("2026-08", {"vat_payer": True, "vat_period": "quarterly"})
     assert settles_vat("2026-09", {"vat_payer": True, "vat_period": "quarterly"})
     assert not settles_vat("2026-09", {"vat_payer": False})
-    assert not settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})
+    assert settles_vat("2026-09", {"vat_payer": True, "vat_on_collection": True})
 
 
 def test_d394_groups_by_partner_direction_and_rate() -> None:
