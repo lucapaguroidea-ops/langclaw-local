@@ -212,3 +212,8 @@ def test_overview_alerts_count_open_partner_advances() -> None:
     report = {"partner_advances": [{"cui": "RO1", "partner": "A", "received": "10.00",
                                     "paid": "0.00"}]}  # fmt: skip
     assert "Partner advances not yet applied: 1" in editor.overview_alerts({"report": report})
+
+
+def test_overview_alerts_count_possible_offsets() -> None:
+    report = {"offsets_possible": [{"cui": "RO1", "partner": "A", "amount": "5.00"}]}
+    assert "Partners to offset (compensare): 1" in editor.overview_alerts({"report": report})

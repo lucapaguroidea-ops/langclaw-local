@@ -1493,7 +1493,9 @@ async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
             await tools["journal_post"].ainvoke(
                 {"bucket_key": row["bucket_key"], "proposal": _entry_for(row)}
             )
+        before = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
         out = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
+        after = await tools["accounting_period_report"].ainvoke({"period": "2026-09"})
         again = await tools["partner_offset"].ainvoke({"partner_cui": cui, "day": "2026-09-30"})
         nobody = await tools["partner_offset"].ainvoke({"partner_cui": "RO1", "day": "2026-09-30"})
         balances = await tools["partner_balances"].ainvoke({"day": "2026-09-30"})
@@ -1501,6 +1503,8 @@ async def test_a_partner_who_buys_and_sells_can_be_offset(acme) -> None:
     assert [(x["account"], x["debit"] > 0) for x in out["posted"]["lines"]] == [
         ("401", True), ("4111", False)]  # fmt: skip
     assert "error" in again and "nothing to offset" in nobody["error"]
+    assert [(o["cui"], o["amount"]) for o in before["offsets_possible"]] == [(cui, out["amount"])]
+    assert after["offsets_possible"] == []
     mine = next(p for p in balances["partners"] if p["cui"] == cui)
     assert "0.00" in (mine["receivable"], mine["payable"])
     for key in (sale["bucket_key"], "inbox/from-customer.xml"):

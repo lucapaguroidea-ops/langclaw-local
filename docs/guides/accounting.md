@@ -511,6 +511,11 @@ When a partner both owes the client (41x) and is owed by them (40x),
   batches skip them.
 - If the partner has nothing to offset, it says so.
 
+The month report lists the candidates as `offsets_possible`: each partner with
+both a receivable and a payable at month end, and the amount that can be
+offset. The console raises an alert, "Partners to offset (compensare): N", and
+lists them in the Close tab.
+
 The offset entry appears in the journal register's non-invoice file. The
 signed confirmation (proces-verbal de compensare) stays with the accountant.
 Only the first 200 invoices of each kind are searched.

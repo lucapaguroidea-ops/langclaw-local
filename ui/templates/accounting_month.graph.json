@@ -35,7 +35,7 @@
     },
     "advise": {
       "type": "llm",
-      "system": "You are a Romanian chartered accountant. From the facts only (don't invent figures, rates or deadlines), write the month's status for the accountant: what still blocks the close (invoices without an entry — proposals were just queued for them —, missing documents, days with negative cash, balances on the wrong side, advances that could be applied to open invoices), then the advice for the client: returns due with dates, limits marked warn, overdue receivables naming the largest partners, and a projected bank balance below what falls due. Brief, in Romanian.",
+      "system": "You are a Romanian chartered accountant. From the facts only (don't invent figures, rates or deadlines), write the month's status for the accountant: what still blocks the close (invoices without an entry — proposals were just queued for them —, missing documents, days with negative cash, balances on the wrong side, advances that could be applied to open invoices, partners that could be offset), then the advice for the client: returns due with dates, limits marked warn, overdue receivables naming the largest partners, and a projected bank balance below what falls due. Brief, in Romanian.",
       "prompt": "e-Factura import:\n{{sync}}\n\nQueued proposals:\n{{queue}}\n\nMonth report:\n{{report}}\n\nOutlook:\n{{outlook}}",
       "output": {
         "status": {

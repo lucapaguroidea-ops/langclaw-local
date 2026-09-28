@@ -349,6 +349,8 @@ def overview_alerts(view: dict[str, Any]) -> list[str]:
         alerts.append(f"Balances on the wrong side: {accounts}")
     if advances := report.get("partner_advances"):
         alerts.append(f"Partner advances not yet applied: {len(advances)}")
+    if offsets := report.get("offsets_possible"):
+        alerts.append(f"Partners to offset (compensare): {len(offsets)}")
     cash = report.get("cash") or {}
     problems = [p.get("problem", "") for p in cash.get("problems") or []]
     if negative := sum("negative" in p for p in problems):

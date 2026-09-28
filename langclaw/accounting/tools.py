@@ -439,6 +439,13 @@ def build_accounting_tools(
         so_far = trial_balance(await journal.lines_between(date(1900, 1, 1), end))
         report["anomalies"] = balance_anomalies(so_far["accounts"])
         report["partner_advances"] = await _partner_advances(journal, end)
+        cent = Decimal("0.01")
+        report["offsets_possible"] = [  # partners who owe and are owed: compensare
+            {"cui": r["partner_cui"], "partner": r["name"],
+             "amount": str(min(Decimal(r["rec"]), Decimal(r["pay"])).quantize(cent))}
+            for r in await journal.partner_balances(end)
+            if Decimal(r["rec"]) > 0 and Decimal(r["pay"]) > 0
+        ]  # fmt: skip
         report["advances_to_apply"] = []  # open invoices of partners holding an advance
         if report["partner_advances"]:
             held = {a["cui"]: a for a in report["partner_advances"]}

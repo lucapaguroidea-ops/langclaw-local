@@ -922,6 +922,9 @@ def page_overview(lc: LangclawClient, tenants_on: bool = False) -> None:
             if report.get("partner_advances"):
                 st.subheader("Partner advances not yet applied")
                 st.dataframe(report["partner_advances"], hide_index=True)
+            if report.get("offsets_possible"):
+                st.subheader("Partners to offset (compensare)")
+                st.dataframe(report["offsets_possible"], hide_index=True)
             st.subheader("Trial balance")
             st.dataframe(report["trial_balance"]["accounts"], hide_index=True)
     with outlook_tab:
