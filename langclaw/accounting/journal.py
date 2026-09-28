@@ -160,15 +160,20 @@ class Journal:
         )
         return {r["bucket_key"] for r in rows}
 
-    async def lines_between(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
-        """Every posted line with an entry date in [*date_from*, *date_to*]."""
+    async def lines_between(
+        self, date_from: date, date_to: date, *, without_year_end: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every posted line with an entry date in [*date_from*, *date_to*];
+        *without_year_end* leaves out year-end closing entries (for P&L reports)."""
         pool = await self._db()
         rows = await pool.fetch(
             f"SELECT l.account, l.debit, l.credit FROM {self._schema}.journal_lines l "
             f"JOIN {self._schema}.journal_entries e ON e.id = l.entry_id "
-            "WHERE e.entry_date BETWEEN $1 AND $2 ORDER BY l.id",
+            "WHERE e.entry_date BETWEEN $1 AND $2 "
+            "AND NOT ($3 AND e.bucket_key LIKE 'close/%/year-end') ORDER BY l.id",
             date_from,
             date_to,
+            without_year_end,
         )
         return [dict(r) for r in rows]
 

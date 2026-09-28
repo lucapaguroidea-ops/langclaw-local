@@ -1029,3 +1029,39 @@ async def test_d394_figures_match_the_months_invoices(acme) -> None:
     assert got == sales_vat and out["key"] == f"reports/{period}/d394.csv"
     data, _ = await scoped.bucket.get(out["key"])
     assert data.decode().splitlines()[0].startswith("direction;cui;partner")
+
+
+@needs_pg
+async def test_closing_december_posts_the_year_end_entry(acme) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from langclaw.accounting.journal import Journal
+    from langclaw.accounting.tools import build_accounting_tools
+    from langclaw.tenants import Tenant, tenant_scope
+
+    services, scoped = acme
+    tools = {t.name: t for t in build_accounting_tools(services)}
+    journal = Journal(scoped.store)
+
+    def entry(debit: str, credit: str, amount: int) -> dict:
+        return {"lines": [{"account": debit, "debit": amount, "credit": 0},
+                          {"account": credit, "debit": 0, "credit": amount}]}  # fmt: skip
+
+    def doc(key: str, day: str, direction: str) -> dict:
+        return {"bucket_key": key, "document_date": day, "fields": {"direction": direction}}
+
+    await journal.post(doc("manual/dec-sale", "2026-12-10", "out"), entry("4111", "704", 1000))
+    await journal.post(doc("manual/dec-cost", "2026-12-12", "in"), entry("628", "401", 300))
+    with tenant_scope(Tenant(id="acme", name="ACME", tax_id="RO12345678")):
+        preview = await tools["accounting_period_report"].ainvoke({"period": "2026-12"})
+        closed = await tools["accounting_period_close"].ainvoke({"period": "2026-12"})
+        results = await tools["accounting_results"].ainvoke({"period": "2026-12"})
+    assert preview["year_end"] and closed["year_end"] == preview["year_end"]
+    end = date(2026, 12, 31)
+    assert await journal.balance_until(end, "704") == Decimal("0.00")
+    assert await journal.balance_until(end, "628") == Decimal("0.00")
+    assert await journal.balance_until(end, "121") == -(
+        Decimal(results["year_to_date"]["result"])
+    )  # a profit sits on the credit side of 121
+    assert Decimal(results["month"]["revenue"]) == Decimal("1000.00")  # P&L ignores the close

@@ -79,9 +79,16 @@ so proposals get more consistent as the accountant approves them.
   the asset goes into service, is `value / life_months` rounded to the ban, and
   the last month takes the rounding.
 
+- **year_end**: in December, the preview of the year-end closing entry. Every
+  class 6 and class 7 account, including income tax, is brought to zero against
+  121, which then holds the year's result (credit for a profit, debit for a loss).
+  The preview already includes December's depreciation. `accounting_results`
+  ignores this entry, so the P&L still shows the year after the close.
+
 `accounting_period_close(period, closed_by=)` refuses while there are blockers,
 expected documents are missing, or the balance is off. Otherwise it posts the
-depreciation and the VAT settlement, dated the last day of the month, and saves the report to
+depreciation, the VAT settlement and, in December, the year-end entry, dated the
+last day of the month, and saves the report to
 `reports/<period>/close.json` in the client's bucket and **locks** the month:
 `journal_post` refuses any entry dated in it (`closed_periods` table in the
 client's schema). There's no reopen tool yet — reopening is a database change
@@ -357,3 +364,5 @@ a new one is a class with `name` and `build(rows, own_cif) -> ExportBatch`.
 - Fixed assets depreciate linearly only. Disposals, revaluations, degressive or
   accelerated methods, and assets bought in a closed month stay with the
   accountant.
+- The year-end entry assumes the financial year is the calendar year. The profit
+  distribution (129 / 1061 / 117) stays with the accountant.

@@ -55,7 +55,7 @@ from langclaw.accounting.period import (
     vat_settlement,
     vat_summary,
 )
-from langclaw.accounting.results import profit_and_loss, tax_estimate
+from langclaw.accounting.results import profit_and_loss, tax_estimate, year_end_entry
 from langclaw.accounting.vat import allowed_vat_rates
 from langclaw.documents.bucket import BucketError
 from langclaw.documents.store import DocumentStoreError
@@ -358,8 +358,13 @@ def build_accounting_tools(
             "vat": vat_summary(booked),
             "vat_settlement": settlement,
             "depreciation": depreciation_entry(await FixedAssets(svc.store).list(), period),
+            "year_end": None,
             "invoices": len(docs),
         }
+        if start.month == 12:  # December: close classes 6 and 7 into 121
+            pending = (report["depreciation"] or {}).get("lines", [])
+            year = await journal.lines_between(date(start.year, 1, 1), end)
+            report["year_end"] = year_end_entry([*year, *pending])
         if len(docs) >= 200:
             report["note"] = "Over 200 invoices in the month: the report covers the first 200."
         return svc, json.loads(json.dumps(report, default=str))
@@ -380,7 +385,8 @@ def build_accounting_tools(
     async def accounting_period_close(period: str = "", closed_by: str = "") -> dict:
         """Close a month: refused while invoices lack an entry or expected documents
         are missing. Posts the month's depreciation (6811 / 28xx) and, for VAT
-        payers, the VAT settlement (4426/4427 → 4423 or 4424); saves the report in
+        payers, the VAT settlement (4426/4427 → 4423 or 4424) and, in December,
+        the year-end closing of classes 6 and 7 into 121; saves the report in
         the client's bucket; then locks the month so nothing can be posted with a
         date in it.
 
@@ -427,6 +433,17 @@ def build_accounting_tools(
                     if "already posted" not in str(exc):
                         raise
                 _, report = await _period_report(period)  # with the settlement booked
+            year_end = report["year_end"]
+            if year_end:
+                _, end = parse_period(period)
+                doc = {"bucket_key": f"close/{period}/year-end",
+                       "document_date": end.isoformat(), "fields": {"direction": "in"}}  # fmt: skip
+                try:
+                    await Journal(svc.store).post(doc, year_end, approved_by=closed_by or "close")
+                except JournalError as exc:
+                    if "already posted" not in str(exc):
+                        raise
+                _, report = await _period_report(period)  # after the closing entry
             key = f"reports/{period}/close.json"
             await svc.bucket.put(
                 key, json.dumps(report, indent=2).encode(), content_type="application/json"
@@ -435,7 +452,8 @@ def build_accounting_tools(
         except _ERRORS as exc:
             return {"error": str(exc)}
         return {"closed": period, "report_key": key, "vat": report["vat"],
-                "vat_settlement": settled, "depreciation": depreciation}  # fmt: skip
+                "vat_settlement": settled, "depreciation": depreciation,
+                "year_end": year_end}  # fmt: skip
 
     async def _invoices(svc: DocumentServices, start: date, end: date) -> list[dict[str, Any]]:
         return [
@@ -741,8 +759,10 @@ def build_accounting_tools(
     async def _results(svc: DocumentServices, period: str) -> dict[str, Any]:
         start, end = parse_period(period)
         journal = Journal(svc.store)
-        month = profit_and_loss(await journal.lines_between(start, end))
-        ytd = profit_and_loss(await journal.lines_between(date(start.year, 1, 1), end))
+        month = profit_and_loss(await journal.lines_between(start, end, without_year_end=True))
+        ytd = profit_and_loss(
+            await journal.lines_between(date(start.year, 1, 1), end, without_year_end=True)
+        )
         return {
             "period": period,
             "month": month,
