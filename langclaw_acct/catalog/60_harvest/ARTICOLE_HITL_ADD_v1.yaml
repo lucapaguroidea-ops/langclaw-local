@@ -1,0 +1,59 @@
+# Additive HITL kinds. Parent ARTICOLE_HITL_v1.yaml already has explained_rule, patch_maps, v2_close.
+# Harvest H-05 decision menu; J-07 premise flip; B-09 receipt.
+
+file_schema: "1"
+catalog: ArticoleHITL
+status: draft
+mode: additive
+
+kinds:
+
+  - kind: decision_menu
+    schema_version: "1"
+    graph_ids: [ingest_source_doc, monthly_close, reconcile_sink]
+    actor: accountant
+    resume_schema:
+      option: str
+      note: str|null
+    server_stamps:
+      confirmer: session_actor
+      at: node_clock
+    effects: [record_decision]
+    cannot: [write_saga, clear_material, client_set_confirmer, client_set_at]
+    note: "Client sends option only. confirmer and at are stamped server-side."
+
+  - kind: codit_premise
+    schema_version: "1"
+    graph_ids: [monthly_close, folder_triage]
+    actor: accountant
+    resume_schema:
+      axis: str
+      value: str
+      as_of: date
+      source: str
+      certainty: confirmed|de_confirmat|contested
+    effects: [codit_axes]
+    cannot: [silent_default_tva_platitor, write_saga]
+
+  - kind: filing_receipt
+    schema_version: "1"
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema:
+      filing_id: slug
+      period: str
+      receipt_bucket_key: str
+      submitted_by: str
+    effects: [close_due_item]
+    cannot: [submit_anaf, regenerate_filed_period]
+
+  - kind: control_disposition
+    schema_version: "1"
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema:
+      control_id: slug
+      disposition: explained_rule|reopen|hold
+      rule_id: slug|null
+    effects: [tag_sink_lines, set_v2_action]
+    cannot: [clear_blocking_without_rule]

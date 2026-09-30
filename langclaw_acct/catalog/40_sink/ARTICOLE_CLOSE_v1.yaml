@@ -1,0 +1,93 @@
+# ARTICOLE_CLOSE_v1.yaml
+# Lane B draft. CloseRun is not a Job.
+# graph_id: monthly_close. Locks the recon window, then V2, then V4.
+
+file_schema: "1"
+catalog: ArticoleClose
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  close_kind: [close_standard, close_tva_incasare]
+  close_status:
+    [opened, locked, sink_pulled, v2_ready, hold, filed, v4_done]
+  v2_bucket: [expected, explained_sink_only, unexplained]
+  v2_action: [file, hold, patch_maps, reopen]
+
+row_schema:
+  close_kind: slug
+  articol_id: ArticoleFlux id on monthly_close
+  require / forbid: axes
+  watched_extra: [account]
+  due_from: derived.due
+  recon_flux: ArticoleReconcile articol_id
+  v4: bool
+
+kinds:
+
+  - close_kind: close_standard
+    schema_version: "1"
+    status: draft
+    articol_id: close_standard
+    graph_id: monthly_close
+    require:
+      tva: [tva_platitor, tva_neplatitor, tva_scutire_mici, tva_091]
+    forbid:
+      exig: [tva_la_incasare]
+    watched_extra: []
+    recon_flux: recon_post_standard
+    v4: true
+    hitl: always
+
+  - close_kind: close_tva_incasare
+    schema_version: "1"
+    status: draft
+    articol_id: close_tva_incasare
+    graph_id: monthly_close
+    require:
+      tva: [tva_platitor]
+      exig: [tva_la_incasare]
+    forbid: {}
+    watched_extra: ["4428"]
+    recon_flux: recon_post_tva_incasare
+    v4: true
+    hitl: always
+
+close_run:
+  unique: [tenant_cui, period]
+  thread: "close:{tenant_cui}:{period}"
+  fields:
+    - close_id
+    - close_kind
+    - articol_id
+    - client_type_hash
+    - snapshot_id          # optional SagaEye; RJ export suffices v1
+    - export_ids           # 80_sink files
+    - period_diff
+    - v2_action
+    - v4_proposal
+    - status
+
+nodes:
+  - lock_expected_set      # jobs acked|already_in_sink in period
+  - invoke_recon_post      # reconcile_sink window lock
+  - pull_cm                # Cartea Mare → solduri watched
+  - period_diff            # three buckets + synthetic_delta
+  - v2_gate
+  - v4_codit               # only after file | explicit patch
+  - end
+
+v2:
+  material_if:
+    - unexplained inbound docs
+    - synthetic_delta != "0.00" on watched
+    - recon how_mismatch unresolved
+  file_forbidden_if_material: true
+  explained_rules_catalog: explained_rules   # still Lane A
+
+v4:
+  may_patch: [auto, saf_t, exig]
+  seed_next_period_on: [impozit, tva]
+  never_rewrite_acked_jobs: true
+
+not_a_job: true

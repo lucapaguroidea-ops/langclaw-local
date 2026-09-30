@@ -1,0 +1,158 @@
+# ARTICOLE_WRITE_MODULE_v1.yaml
+# Lane B draft. Flux names module_id; this catalog is the SAGA mouth.
+# No FDB INSERT. saga_path ∈ {import_xml, import_dbf, ui_agent}.
+# Approve only after green import on COPY firm.
+# Bidirectional check: every Flux.write_modules id must appear in that
+# module's used_by_flux, and every used_by_flux id must list the module.
+# Flux.write_modules is the walk. used_by_flux is the index. Loader rejects drift.
+
+file_schema: "1"
+catalog: ArticoleWriteModule
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  saga_path: [import_xml, import_dbf, ui_agent]
+  validare: [n_a, human, agent]
+  backup: [none, before_batch, before_each]
+  hitl: [never, first_n, always]
+
+row_schema:
+  module_id: slug
+  schema_version: "1"
+  saga_path: enum
+  validare: enum
+  backup: enum
+  hitl: enum
+  first_n: int|null
+  max_docs_per_run: int
+  fixture: path|null
+  used_by_flux: [articol_id]
+
+modules:
+
+  - module_id: parteneri_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: n_a
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 50
+    fixture: fixtures/saga/parteneri.xml
+    used_by_flux: [ro_efactura_inbound, ro_efactura_outbound, foreign_invoice_inbound, foreign_invoice_outbound, foreign_rc_neplatitor]
+
+  - module_id: articole_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: n_a
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 50
+    fixture: fixtures/saga/articole.xml
+    used_by_flux: [ro_efactura_inbound, ro_efactura_outbound, foreign_invoice_inbound, foreign_invoice_outbound]
+
+  - module_id: intrare_factura_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 20
+    fixture: fixtures/saga/intrare.xml
+    used_by_flux: [ro_efactura_inbound, foreign_invoice_inbound]
+
+  - module_id: iesire_factura_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 20
+    fixture: fixtures/saga/iesire.xml
+    used_by_flux: [ro_efactura_outbound, foreign_invoice_outbound]
+
+  - module_id: storno_intrare_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_each
+    hitl: always
+    first_n: null
+    max_docs_per_run: 5
+    fixture: fixtures/saga/storno_intrare.xml
+    used_by_flux: [storno_intrare]
+
+  - module_id: storno_iesire_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_each
+    hitl: always
+    first_n: null
+    max_docs_per_run: 5
+    fixture: fixtures/saga/storno_iesire.xml
+    used_by_flux: [storno_iesire]
+
+  - module_id: incasare_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 20
+    fixture: fixtures/saga/incasare.xml
+    used_by_flux: [extras_statement]
+
+  - module_id: plata_xml
+    schema_version: "1"
+    status: draft
+    saga_path: import_xml
+    validare: human
+    backup: before_batch
+    hitl: first_n
+    first_n: 5
+    max_docs_per_run: 20
+    fixture: fixtures/saga/plata.xml
+    used_by_flux: [extras_statement]
+
+  - module_id: nota_nc_dbf
+    schema_version: "1"
+    status: draft
+    saga_path: import_dbf
+    validare: human
+    backup: before_each
+    hitl: always
+    first_n: null
+    max_docs_per_run: 5
+    fixture: fixtures/saga/NC_sample.dbf
+    used_by_flux: [foreign_rc_neplatitor]
+
+  - module_id: bon_via_nota
+    schema_version: "1"
+    status: draft
+    saga_path: import_dbf
+    validare: human
+    backup: before_each
+    hitl: always
+    first_n: null
+    max_docs_per_run: 10
+    fixture: fixtures/saga/bon_nota.dbf
+    used_by_flux: [bon_cu_cui, bon_fara_cui]
+    note: "Until a proven bon XML exists on copy firm."
+
+forbidden:
+  - saga_path: fdb_insert
+  - validare skip on posting modules
+  - approve without copy-firm fixture green

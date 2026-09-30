@@ -1,0 +1,194 @@
+# ARTICOLE_JOBS_v1.yaml
+# Lane B draft.
+# A Job is a runtime instance of one job_kind.
+# Emit picks job_kind from ArticoleSourceDoc.fiscal_class + our_role + flags.
+# Bind then picks ArticoleFlux.articol_id ∈ this kind's allowed_flux.
+# Close is NOT a Job (CloseRun). Batches are NOT Jobs.
+
+file_schema: "1"
+catalog: ArticoleJobs
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  job_kind: slug
+  thread_prefix: [job]
+  status:
+    - ingested
+    - extracted
+    - bound
+    - reconcile_pre
+    - approved
+    - packaged
+    - wait_validare
+    - acked
+    - already_in_sink
+    - rejected
+    - failed
+    - needs_human
+    - reopened
+
+row_schema:
+  job_kind: slug
+  schema_version: "1"
+  graph_id: ingest_source_doc
+  thread_prefix: job
+  source_doc_ids: [ArticoleSourceDoc.source_doc_id]
+  allowed_flux: [ArticoleFlux.articol_id]
+  required_fields: [field]
+  optional_fields: [field]
+  status_machine: [from -> to]
+  reconcile:
+    pre: bool
+    post: bool
+  hitl_kinds: [kind]
+  unique_key: [tenant_cui, source_hash]
+  note: str
+
+status_edges_default:
+  - ingested -> extracted
+  - extracted -> bound
+  - bound -> reconcile_pre
+  - reconcile_pre -> approved          # absent
+  - reconcile_pre -> already_in_sink   # posted
+  - reconcile_pre -> needs_human       # ambiguous
+  - approved -> packaged
+  - packaged -> wait_validare
+  - wait_validare -> acked
+  - acked -> reopened              # after human Devalidare
+  - wait_validare -> reopened      # after Anulează importul + retry
+  - reopened -> packaged           # new package after compensation
+  - "* -> rejected"
+  - "* -> failed"
+  - "* -> needs_human"
+
+# ---------------------------------------------------------------------------
+jobs:
+
+  - job_kind: job_ro_efactura
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    thread_prefix: job
+    source_doc_ids: [ro_efactura_ubl]
+    allowed_flux:
+      - ro_efactura_inbound
+      - ro_efactura_outbound
+      - storno_intrare
+      - storno_iesire
+    required_fields:
+      - tenant_cui
+      - period
+      - source_hash
+      - number
+      - date
+      - our_role
+      - counterparty_id
+      - client_type_hash
+    optional_fields: [spv_stare, currency]
+    reconcile: {pre: true, post: true}
+    hitl_kinds: [v3_approve, define_articol, wait_validare, request_devalidare, reconcile_pre]
+    unique_key: [tenant_cui, source_hash]
+    note: "Primary hash is UBL. PDF additional does not mint a second job."
+
+  - job_kind: job_foreign_invoice
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    thread_prefix: job
+    source_doc_ids: [foreign_invoice]
+    allowed_flux:
+      - foreign_invoice_inbound
+      - foreign_invoice_outbound
+      - foreign_rc_neplatitor
+    required_fields:
+      - tenant_cui
+      - period
+      - source_hash
+      - number
+      - date
+      - our_role
+      - client_type_hash
+    optional_fields: [counterparty_id, currency]
+    reconcile: {pre: true, post: true}
+    hitl_kinds: [v3_approve, define_articol, wait_validare, request_devalidare, reconcile_pre, no_counterparty]
+    unique_key: [tenant_cui, source_hash]
+
+  - job_kind: job_bon
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    thread_prefix: job
+    source_doc_ids: [bon_fiscal]
+    allowed_flux: [bon_cu_cui, bon_fara_cui]
+    required_fields:
+      - tenant_cui
+      - period
+      - source_hash
+      - date
+      - client_type_hash
+      - bon.our_cui_on_doc
+    optional_fields:
+      - number
+      - totals.gross
+      - bon.nature_code
+      - bon.A_band
+      - bon.articol_id
+    matrix: ArticolBon
+    reconcile: {pre: true, post: true}
+    hitl_kinds: [articol_bon, v3_approve, wait_validare, reconcile_pre]
+    unique_key: [tenant_cui, source_hash]
+    note: "bon.articol_id is ArticolBon, not ArticoleFlux."
+
+  - job_kind: job_extras
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    thread_prefix: job
+    source_doc_ids: [extras, extras_pdf]
+    allowed_flux: [extras_statement]
+    required_fields:
+      - tenant_cui
+      - period
+      - source_hash
+      - client_type_hash
+    optional_fields: [iban]
+    reconcile: {pre: true, post: true}
+    hitl_kinds: [v3_approve, wait_validare, reconcile_pre]
+    unique_key: [tenant_cui, source_hash]
+    note: "v1: one job per statement pack. Line-jobs later = new job_kind."
+
+  - job_kind: job_storno
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    thread_prefix: job
+    source_doc_ids: [ro_efactura_ubl]
+    allowed_flux: [storno_intrare, storno_iesire]
+    required_fields:
+      - tenant_cui
+      - period
+      - source_hash
+      - number
+      - date
+      - our_role
+      - reverses_job_id
+    optional_fields: [counterparty_id]
+    reconcile: {pre: true, post: true}
+    hitl_kinds: [v3_approve, wait_validare, request_devalidare, reconcile_pre]
+    unique_key: [tenant_cui, source_hash]
+    note: "is_storno=true on MatchContext. Prefer this kind when SPV stare=stornat or user flags storno."
+
+# Not job kinds (do not emit):
+#   instructions, recon_vendor, workings, sink_rj, ro_efactura_pdf, unknown
+#   monthly_close → CloseRun
+#   folder_triage → Batch
+
+emit_rule:
+  job_kind :=
+    storno if pack.is_storno
+    job_ro_efactura if source_doc_id=ro_efactura_ubl
+    job_foreign_invoice if source_doc_id=foreign_invoice
+    job_bon if source_doc_id=bon_fiscal
+    job_extras if source_doc_id in [extras, extras_pdf]
+    else no_job

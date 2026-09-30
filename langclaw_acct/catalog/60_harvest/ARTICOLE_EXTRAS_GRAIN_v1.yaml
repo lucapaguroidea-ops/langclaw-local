@@ -1,0 +1,24 @@
+# ARTICOLE_EXTRAS_GRAIN_v1.yaml
+# Design lock for WP-13. Not implemented in WP-00–12.
+# Harvest C-F10 / lens C-10: statements arrive as PDF. date+gross on one Job cannot key many lines.
+
+file_schema: "1"
+catalog: ArticoleExtrasGrain
+status: draft
+valid_from: "2026-01-01"
+
+grain:
+  pack: extras_statement_pdf          # SourceDoc ADD
+  pack_key: [tenant_cui, statement_date, iban_or_label]
+  job_unit: movement_line             # not the statement total
+  job_key: [statement_id, seq]
+  match_keys: [date, amount, side]    # per line against 5121 and 5311 only — not 5124
+  identity: tenant must be known before any line Job is emitted
+
+forbidden_v1:
+  - one Job whose match is statement date + statement gross
+  - MT940 as the default path
+  - watching 5124 without a watched-list amendment
+
+wp: WP-13
+note: "folder_triage may place the PDF. ingest must not emit a statement-total Job."

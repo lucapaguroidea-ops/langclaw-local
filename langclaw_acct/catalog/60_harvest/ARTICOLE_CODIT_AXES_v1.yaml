@@ -1,0 +1,63 @@
+# ARTICOLE_CODIT_AXES_v1.yaml
+# Additive axes from harvest J-01. Does not replace T* / F*.
+# CO.DiT write order remains: defaults → T* → F* → F7/A* → derive().
+# New axes default null. Hard pairs for new axes go here only when closed.
+
+file_schema: "1"
+catalog: ArticoleCoDitAxes
+status: draft
+valid_from: "2026-01-01"
+source: "harvest J-01, J-07, D-10, I-02, I-07"
+
+# Existing axes (already in T*/F*, listed so nothing is lost)
+existing_axes:
+  forma: [srl, sa, pfa, ong, sucursala, prof]
+  impozit: [micro_1, profit_16, pfa_norma, pfa_real, ong_scutit]
+  tva: [tva_platitor, tva_neplatitor, tva_scutire_mici, tva_091]
+  exig: [tva_exig_livrare, tva_la_incasare, null]
+
+# New axes. All optional in v1. Seed null.
+new_axes:
+  book_of_record:
+    values: [saga_c]
+    default: saga_c
+    note: "Locked. No second book."
+  fx_currencies:
+    values: [none, EUR, USD, mixed]
+    default: none
+    note: "Witness per currency. Never compare EUR statement to RON ledger."
+  oss:
+    values: [none, oss_b2c, oss_mixed]
+    default: none
+    note: "Threshold is a date switch, not a year band. E-09."
+  cross_border:
+    values: [none, inbound_eu_services, outbound_b2c, outbound_b2b, mixed]
+    default: none
+  employees:
+    values: [none, has]
+    default: none
+  engagement:
+    values: [going_concern, catch_up, takeover, migration, year_end]
+    default: catch_up
+    note: "Portfolio is not the going-concern SME L0 assumed."
+  marketplace:
+    values: [none, yes]
+    default: none
+
+certainty_on_every_axis:
+  fields: [value, as_of, source, certainty]
+  certainty: [confirmed, de_confirmat, contested]
+  note: "Premises flip mid-period (J-07, C1). A period CO.DiT is not a sticky tenant flag."
+
+soft_hitl:
+  - id: A_FLIP
+    if: "axis value changes inside an open period"
+    kind: codit_premise
+  - id: A_CONTESTED
+    if: "certainty=contested"
+    kind: codit_premise
+
+never:
+  - default tva_platitor when profile is empty
+  - copy last year's axes onto a new period without seed+pins
+  - store a second book_of_record

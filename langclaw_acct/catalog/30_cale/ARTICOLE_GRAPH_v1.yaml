@@ -1,0 +1,131 @@
+# ARTICOLE_GRAPH_v1.yaml
+# Lane B draft. App selects graph_id; does not MatchContext-bind graphs.
+# Four compiled machines. Runtime glue = Mongo ids, not nested compile of ingest⊃reconcile.
+
+file_schema: "1"
+catalog: ArticoleGraph
+status: draft
+valid_from: "2026-01-01"
+
+row_schema:
+  graph_id: slug
+  schema_version: "1"
+  thread_prefix: batch|job|recon|close
+  state_schema: TypedDict name
+  checkpointer: AsyncPostgresSaver
+  allowed_flux: [ArticoleFlux.articol_id]
+  entry: node
+  allowed_hitl: [kind]
+  invokes:
+    after: { graph_id, when }
+  note: str
+
+graphs:
+
+  - graph_id: folder_triage
+    schema_version: "1"
+    status: draft
+    thread_prefix: batch
+    state_schema: BatchState
+    allowed_flux:
+      - triage_place
+      - triage_pair_efactura
+      - triage_bon_fork
+      - triage_extras
+    entry: ingest_dump
+    allowed_hitl:
+      - which_cui
+      - name_ambiguous
+      - stmt_no_identity
+      - xml_pdf_pair
+      - bon_cui_unclear
+      - define_class
+      - need_rj_export
+    invokes:
+      after_emit: ingest_source_doc
+    note: "Shoebox → packs. Emit reads ArticoleSourceDoc + ArticoleJobs."
+
+  - graph_id: ingest_source_doc
+    schema_version: "1"
+    status: draft
+    thread_prefix: job
+    state_schema: DocState
+    allowed_flux:
+      - ro_efactura_inbound
+      - ro_efactura_outbound
+      - foreign_invoice_inbound
+      - foreign_invoice_outbound
+      - bon_cu_cui
+      - bon_fara_cui
+      - extras_statement
+      - storno_intrare
+      - storno_iesire
+    entry: extract
+    allowed_hitl:
+      - define_articol
+      - v3_approve
+      - articol_bon
+      - wait_validare
+      - request_devalidare
+      - no_counterparty
+    invokes:
+      before_package: reconcile_sink   # flux recon_pre_*
+      after_acked: reconcile_sink      # flux recon_post_*
+    note: "Does not own RJ matching. Enqueues job onto recon window."
+
+  - graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    thread_prefix: recon
+    state_schema: ReconState
+    allowed_flux:
+      - recon_pre_standard
+      - recon_pre_bon
+      - recon_pre_extras
+      - recon_post_standard
+      - recon_post_bon
+      - recon_post_tva_incasare
+    entry: load_window
+    allowed_hitl:
+      - need_rj_export
+      - recon_ambiguous
+      - recon_review_contest
+      - recon_how_mismatch
+    invokes: {}
+    subgraphs:
+      - det_match
+      - llm_review
+    window:
+      key: [tenant_cui, period]
+      until: close_lock | now
+    note: "Sliding window. det then independent LLM review. No SAGA write."
+
+  - graph_id: monthly_close
+    schema_version: "1"
+    status: draft
+    thread_prefix: close
+    state_schema: CloseState
+    allowed_flux:
+      - close_standard
+      - close_tva_incasare
+    entry: lock_expected_set
+    allowed_hitl:
+      - v2_close
+      - patch_maps
+      - explained_rule
+      - v4_codit
+    invokes:
+      before_v2: reconcile_sink      # recon_post_* on locked window
+      after_file: null               # V4 is a node here, not a graph
+    note: "Closes the recon window. V2 three buckets. V4 patches CO.DiT."
+
+thread_ids:
+  batch: "batch:{batch_id}"
+  job: "job:{job_id}"
+  recon: "recon:{tenant_cui}:{period}"
+  close: "close:{tenant_cui}:{period}"
+
+forbidden:
+  - compile ingest with reconcile as StateGraph.add_node(compiled)
+  - "resume job: thread from recon: prefix"
+  - LLM as primary SinkLine matcher

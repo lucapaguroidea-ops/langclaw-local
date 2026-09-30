@@ -2,8 +2,11 @@
 Forward-looking facts — what's coming for a client, computed, not guessed.
 
 - :func:`deadlines`: the returns due after a month (D300 / D394 for VAT payers,
-  D112 with employees, D100 for micro-enterprises), all on the 25th of the
-  following month, monthly or at quarter end per the client's profile.
+  D112 with employees, D100 for micro-enterprises), monthly or at quarter end
+  per the client's profile. D300 / D112 / D100 are due on the 25th of the
+  following month, D394 on the 30th (end of February for January); a due date
+  on a weekend or legal holiday moves to the next working day
+  (:mod:`~langclaw.accounting.workdays`).
 - :func:`thresholds`: how close the year's revenue is to a limit that changes
   the client's regime (VAT registration for non-payers, the micro-enterprise
   revenue ceiling).
@@ -17,12 +20,14 @@ law changes.
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from langclaw.accounting.period import parse_period
+from langclaw.accounting.workdays import day_off, next_working_day
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,26 +54,37 @@ WARN_AT = Decimal(80)
 _CENT = Decimal("0.01")
 
 
-def _next_25th(end: date) -> str:
+def _due(form: str, what: str, end: date, day: int) -> dict[str, str]:
+    """*form* due on *day* of the month after *end* (capped at that month's last
+    day), moved to the next working day when it falls on a day off."""
     year, month = (end.year + 1, 1) if end.month == 12 else (end.year, end.month + 1)
-    return date(year, month, 25).isoformat()
+    nominal = date(year, month, min(day, calendar.monthrange(year, month)[1]))
+    due = next_working_day(nominal)
+    out = {"form": form, "what": what, "due": due.isoformat(),
+           "rule": f"{day}th of the following month"}  # fmt: skip
+    if due != nominal:
+        out["moved_from"] = nominal.isoformat()
+        out["moved_because"] = day_off(nominal) or ""
+    return out
 
 
 def deadlines(period: str, profile: dict[str, Any]) -> list[dict[str, str]]:
     """Returns due for *period* (``YYYY-MM``) given the client's *profile*
-    (``vat_payer``, ``vat_period`` monthly/quarterly, ``employees``, ``tax_regime``)."""
+    (``vat_payer``, ``vat_period`` monthly/quarterly, ``employees``, ``tax_regime``).
+
+    Each has ``due`` (the working day it's actually due), ``rule``, and — when
+    the nominal date was a weekend or holiday — ``moved_from`` / ``moved_because``.
+    """
     _, end = parse_period(period)
     quarter_end = end.month % 3 == 0
-    due = _next_25th(end)
     out: list[dict[str, str]] = []
     if profile.get("vat_payer") and (profile.get("vat_period") != "quarterly" or quarter_end):
-        out.append({"form": "D300", "what": "VAT return and payment", "due": due})
-        out.append({"form": "D394", "what": "Informative statement of domestic supplies",
-                    "due": due})  # fmt: skip
+        out.append(_due("D300", "VAT return and payment", end, 25))
+        out.append(_due("D394", "Informative statement of domestic supplies", end, 30))
     if profile.get("employees"):
-        out.append({"form": "D112", "what": "Payroll contributions and income tax", "due": due})
+        out.append(_due("D112", "Payroll contributions and income tax", end, 25))
     if profile.get("tax_regime") == "micro" and quarter_end:
-        out.append({"form": "D100", "what": "Micro-enterprise income tax", "due": due})
+        out.append(_due("D100", "Micro-enterprise income tax", end, 25))
     return out
 
 

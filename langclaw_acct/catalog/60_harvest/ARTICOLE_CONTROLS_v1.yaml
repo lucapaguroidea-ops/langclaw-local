@@ -1,0 +1,171 @@
+# ARTICOLE_CONTROLS_v1.yaml
+# Layer 1 named poartă rows. Harvest D-01 / F-01 restated for SagaEye + expected set.
+# Not a second ledger. Left operand = expected set + explained_rules + SinkDoc.
+# hard_failures > 0 ⇒ WriteModule must not package; V2 must not file.
+
+file_schema: "1"
+catalog: ArticoleControls
+status: draft
+valid_from: "2026-01-01"
+source: "harvest D-01, D-02, D-09, I-03; architecture v1.3 §10"
+
+enums:
+  severity: [blocking, advisory]
+  layer: [prefile, v2, both]
+  status: [draft, active, yanked]
+
+row_schema:
+  control_id: slug
+  check: str
+  layer: enum
+  severity: enum
+  watched: [account]
+  epsilon: money
+  on_fail: [no_package, no_file, hitl]
+
+controls:
+
+  - control_id: C0_synthetic_parity
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "For each watched synthetic account, |expected_plus_explained - sink| < epsilon"
+    watched: ["401", "4111", "4426", "4427", "4428", "5121", "5311"]
+    epsilon: "0.01"
+    on_fail: [no_file]
+    note: "Never plug. Unexplained remainder is a bucket row, not an adjusting post."
+
+  - control_id: C1_outbound_complete
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "Every expected Job in {acked, already_in_sink} or listed as outbound_hole"
+    watched: []
+    epsilon: "0.00"
+    on_fail: [no_file]
+    note: "Balanced sink is not complete. I-03."
+
+  - control_id: C2_unexplained_empty
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "inbound bucket unexplained is empty"
+    watched: []
+    epsilon: "0.00"
+    on_fail: [no_file]
+
+  - control_id: M1_1_payables_tie
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "Σ analytic under 401 == synthetic 401, after maps exist"
+    watched: ["401"]
+    epsilon: "0.01"
+    on_fail: [no_file]
+    note: "v1 watched list is the seven accounts in 00_LAW. 403/404/408/409 are advisory M1_1_trade_ext, not an amendment."
+
+  - control_id: M1_1_trade_ext
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: advisory
+    check: "Σ analytic 403/404/408/409 == parent, after maps exist"
+    watched: ["403", "404", "408", "409"]
+    epsilon: "0.01"
+    on_fail: [hitl]
+    note: "Not v1 Layer 1. Requires watched-list amendment to become blocking."
+
+  - control_id: M1_2_receivables_tie
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "Σ analytic under 4111 == synthetic 4111, after maps exist"
+    watched: ["4111"]
+    epsilon: "0.01"
+    on_fail: [no_file]
+
+  - control_id: M1_2_trade_ext
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: advisory
+    check: "Σ analytic 411/413/418/419 == parent, after maps exist"
+    watched: ["411", "413", "418", "419"]
+    epsilon: "0.01"
+    on_fail: [hitl]
+    note: "Not v1 Layer 1. Requires watched-list amendment to become blocking."
+
+  - control_id: M1_8_4428_open
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "Σ 4428 on open TVA-la-încasare documents == bal(4428) when exig=tva_la_incasare"
+    watched: ["4428"]
+    epsilon: "0.01"
+    on_fail: [no_file]
+    require:
+      exig: [tva_la_incasare]
+
+  - control_id: M1_9_4424_watched
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: advisory
+    check: "4424 movement has explained_rule or expected settlement"
+    watched: ["4424"]
+    epsilon: "0.01"
+    on_fail: [hitl]
+    note: "Layers by origin year are SAGA's. We only refuse silent 4424 on neplătitor."
+
+  - control_id: T_regime_4428
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: blocking
+    check: "If CO.DiT.tva != tva_platitor then unexplained sink 4428 is material"
+    watched: ["4428"]
+    epsilon: "0.01"
+    on_fail: [no_file]
+    note: "4428 is on the v1 watched list. Non-payer + 4428 is I-01."
+
+  - control_id: T_regime_442x
+    schema_version: "1"
+    status: draft
+    layer: v2
+    severity: advisory
+    check: "If CO.DiT.tva != tva_platitor then sink 4423/4424 unexplained is HITL"
+    watched: ["4423", "4424"]
+    epsilon: "0.01"
+    on_fail: [hitl]
+    note: "4423/4424 are not on the v1 watched list. Blocking requires amendment. Articol foreign_rc_neplatitor + decision WP-D3 on 4423 vs 446x."
+
+  - control_id: P_prefile_duplicate
+    schema_version: "1"
+    status: draft
+    layer: prefile
+    severity: blocking
+    check: "PRE recon verdict is not already_posted; source_hash unique"
+    watched: []
+    epsilon: "0.00"
+    on_fail: [no_package]
+
+  - control_id: P_prefile_hard_failures
+    schema_version: "1"
+    status: draft
+    layer: prefile
+    severity: blocking
+    check: "count(blocking FAIL on this batch) == 0 before WriteModule package"
+    watched: []
+    epsilon: "0.00"
+    on_fail: [no_package]
+
+forbidden:
+  - plugging a delta with a generated notă in this system
+  - clearing material because Jev is optimistic
+  - running controls against an internal Journal instead of SagaEye

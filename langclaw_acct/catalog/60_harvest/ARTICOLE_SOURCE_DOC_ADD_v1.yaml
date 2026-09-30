@@ -1,0 +1,60 @@
+# Additive SourceDoc rows. Do not delete rows in ARTICOLE_SOURCE_DOC_v1.yaml.
+# Harvest C-F10: banks arrive as PDF, not MT940. MT940 row in the parent catalog stays.
+
+file_schema: "1"
+catalog: ArticoleSourceDoc
+status: draft
+valid_from: "2026-01-01"
+mode: additive
+
+rows:
+
+  - source_doc_id: extras_statement_pdf
+    schema_version: "1"
+    status: draft
+    fiscal_class: extras
+    aisle: "40_extras/{cui}/{period}/"
+    our_role_default: n/a
+    posting_eligible: true
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [pdf]
+      companions_are: additional
+      missing_aisle: "40_extras/_incomplete/"
+    pairing:
+      with: []
+      key: [date]
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: true
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: [extras_statement]
+    note: "Portfolio statements are PDF. MT940 parser remains for the rare file. Do not emit without identity_ok."
+
+  - source_doc_id: spv_register
+    schema_version: "1"
+    status: draft
+    fiscal_class: recon
+    aisle: "80_sink/spv/{cui}/{period}/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [xlsx, csv]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: [number, date, cui]
+    extract:
+      backend: none
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: true
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "Feeds expected set and PRE recon. Not a WriteModule source."

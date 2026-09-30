@@ -1,0 +1,114 @@
+# ARTICOLE_FILING_v1.yaml
+# Obligation × books × receipt. Harvest B-09, E-1, E-2, H-11.
+# This system does not submit to ANAF. file on V2 means books_support_declaration.
+# A due item closes when a receipt artefact is stored, not when the calendar date passes.
+
+file_schema: "1"
+catalog: ArticoleFiling
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  form: [D300, D301, D390, D394, D100, D101, D106, D112, D205, D406, SF, OSS]
+  closer: [receipt, n_a]
+  certainty: [confirmed, de_confirmat]
+
+row_schema:
+  filing_id: slug
+  form: enum
+  require: {axis: [values]}
+  forbid: {axis: [values]}
+  due_from: pins_or_derive
+  closer: enum
+  books_gate: control_ids
+  certainty: enum
+
+filings:
+
+  - filing_id: d300_platitor
+    form: D300
+    require: {tva: [tva_platitor]}
+    forbid: {}
+    due_from: derive
+    closer: receipt
+    books_gate: [C0_synthetic_parity, C1_outbound_complete, C2_unexplained_empty, T_regime_442x]
+    certainty: de_confirmat
+    note: "SAGA produces the declaration. We only gate."
+
+  - filing_id: d394_platitor
+    form: D394
+    require: {tva: [tva_platitor]}
+    forbid: {}
+    due_from: derive
+    closer: receipt
+    books_gate: [C1_outbound_complete, C2_unexplained_empty]
+    certainty: de_confirmat
+
+  - filing_id: d301_neplatitor_rc
+    form: D301
+    require:
+      tva: [tva_neplatitor, tva_scutire_mici]
+      cross_border: [inbound_eu_services, mixed]
+    forbid: {}
+    due_from: derive
+    closer: receipt
+    books_gate: [T_regime_442x]
+    certainty: de_confirmat
+    note: "Not every non-payer. Only when CO.DiT.cross_border says inbound EU services. Not D300."
+
+  - filing_id: d390_rc
+    form: D390
+    require:
+      cross_border: [inbound_eu_services, outbound_b2b, outbound_b2c, mixed]
+    forbid:
+      cross_border: [none]
+    due_from: derive
+    closer: receipt
+    books_gate: []
+    certainty: de_confirmat
+    note: "No item if cross_border is none or unset."
+
+  - filing_id: d406_saft
+    form: D406
+    require: {}
+    forbid: {}
+    due_from: derive
+    closer: receipt
+    books_gate: [C0_synthetic_parity]
+    certainty: de_confirmat
+    note: "SAGA C emits D406. This system never builds the XML."
+
+  - filing_id: d100_profit
+    form: D100
+    require: {impozit: [profit_16]}
+    forbid: {forma: [pfa]}
+    due_from: derive
+    closer: receipt
+    books_gate: []
+    certainty: de_confirmat
+
+  - filing_id: d100_micro
+    form: D100
+    require: {impozit: [micro_1]}
+    forbid: {}
+    due_from: derive
+    closer: receipt
+    books_gate: []
+    certainty: de_confirmat
+
+  - filing_id: d112_payroll
+    form: D112
+    require:
+      employees: [has]
+    forbid:
+      employees: [none]
+    due_from: derive
+    closer: receipt
+    books_gate: []
+    certainty: de_confirmat
+    note: "No item if employees is none or unset. Usually explained_sink_only in SAGA."
+
+never:
+  - submit_anaf_from_this_system
+  - close_due_item_by_calendar_date_alone
+  - regenerate_packages_for_a_period_with_receipt
