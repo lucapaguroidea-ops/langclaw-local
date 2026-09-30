@@ -1,0 +1,45 @@
+# ARTICOLE_PINS_v1.yaml
+# Lane B draft. Year-level law facts. COPIED onto CO.DiT at seed.
+# Emit and Test A read CoDit.pins, not this catalog live.
+# Law change = new pins row + new periods only.
+
+file_schema: "1"
+catalog: ArticolePins
+status: draft
+
+pins:
+  - pins_id: pins_ro_2026
+    schema_version: "1"
+    status: draft
+    year: 2026
+    valid_from: "2026-01-01"
+    valid_to: "2026-12-31"
+    tva:
+      standard_pct: "21"
+      redus_pct: "11"
+      super_redus_pct: "5"
+    micro:
+      rate_pct: "1"
+    plafoane_ron:
+      tva_scutire: "395000"
+      tva_incasare: "5000000"
+    bon:
+      simplificat_eur: "100"
+      simplificat_upper_eur: "400"    # HITL / MF order
+    fx_policy: BNR_exigibilitate
+    provenance:
+      source: "pins_ro_2026 draft — confirm against official MF/ANAF before active"
+      as_of: "2026-01-01"
+      certainty: de_confirmat
+    used_by:
+      - CoDit.seed
+      - Test_A.A_band
+      - derive.due (rates only; forms from axes)
+
+copy_on_seed:
+  dest: CoDit.pins
+  overwrite_existing_period: false
+
+amendment:
+  bump: schema_version or new pins_id
+  old_periods: untouched

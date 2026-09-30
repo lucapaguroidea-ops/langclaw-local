@@ -1,0 +1,400 @@
+# ARTICOL_BON_v1.yaml
+# Lane B draft. Lookup AFTER ArticoleFlux bon_cu_cui | bon_fara_cui
+# and AFTER Test A (A_band) + nature_bind.
+# Job freezes bon.articol_id + bon.articol_version.
+# matches(ctx): filters exact + extra_filters exact
+#   + require ⊆ ctx.axes + forbid ∩ ctx.axes = ∅
+# Empty cell → interrupt articol_bon. Never default tva_deducere=full.
+
+file_schema: "1"
+catalog: ArticolBon
+status: draft
+valid_from: "2026-01-01"
+pins_ref: pins_ro_2026
+test_A:
+  source: pins.bon_simplificat_eur   # "100"
+  fx: pins.fx_policy                 # BNR_exigibilitate
+  bands: [le_100, bt_100_400, gt_400, n/a]
+  note: "A_band computed in graph, not in this file. bt_100_400 → HITL unless MF order on file."
+
+enums:
+  nature_code:
+    - combustibil
+    - protocol
+    - cazare
+    - transport
+    - materiale
+    - reparatie
+    - parcare
+    - peco_shop
+    - restaurant
+    - it_consumabile
+    - altele
+  A_band: [le_100, bt_100_400, gt_400, n/a]
+  fiscal_cheltuiala: [full, none, partial_50, hitl]
+  tva_deducere: [full, none, partial_50, blocked_no_cui, hitl]
+
+row_schema:
+  articol_id: slug
+  schema_version: "1"
+  status: draft|active|deprecated|yanked
+  valid_from: date
+  valid_to: date|null
+  filters: "{nature_code?, A_band?}"
+  extra_filters: {our_cui_on_doc: bool}
+  require: {axis: [values]}
+  forbid: {axis: [values]}
+  test_A_required: bool
+  fiscal_cheltuiala: enum
+  tva_deducere: enum
+  cont_cheltuiala: str|null
+  tva_cont: str|null
+  write_module: WriteModule.module_id
+  law_pin: str|null
+  hitl_note: str|null
+
+# ---------------------------------------------------------------------------
+rows:
+
+  # ----- precondition fail: no CUI on bon -----
+  - articol_id: bon_tva_blocked_fara_cui
+    schema_version: "1"
+    status: draft
+    valid_from: "2026-01-01"
+    filters: {}
+    extra_filters:
+      our_cui_on_doc: false
+    require: {}
+    forbid: {}
+    test_A_required: false
+    fiscal_cheltuiala: hitl
+    tva_deducere: blocked_no_cui
+    cont_cheltuiala: null
+    tva_cont: null
+    write_module: bon_via_nota
+    law_pin: "NM 69(6) / art. 299 — fără CUI beneficiar nu e factură simplificată"
+    hitl_note: "Cheltuiala poate fi deductibilă dacă e în interesul activității (art. 25 / micro)."
+
+  # ----- materiale -----
+  - articol_id: bon_materiale_tva_full
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: materiale
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: full
+    tva_deducere: full
+    cont_cheltuiala: "6028"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    law_pin: "art. 319 alin. (12)+(21) factură simplificată + art. 25 activitate"
+
+  - articol_id: bon_materiale_neplatitor
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: materiale
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_neplatitor, tva_scutire_mici]
+    forbid: {}
+    test_A_required: false
+    fiscal_cheltuiala: full
+    tva_deducere: none
+    cont_cheltuiala: "6028"
+    tva_cont: null
+    write_module: bon_via_nota
+
+  - articol_id: bon_materiale_doc_fail
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: materiale
+      A_band: gt_400
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: none
+    cont_cheltuiala: "6028"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Peste 400 EUR: cereți e-Factura pentru TVA. Cheltuiala — decont + NIR."
+
+  - articol_id: bon_materiale_100_400
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: materiale
+      A_band: bt_100_400
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: "6028"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "100–400 EUR: factură simplificată doar cu ordin MF pe emitent."
+
+  # ----- combustibil -----
+  - articol_id: bon_combustibil_100
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+      auto: [auto_economic_100]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: full
+    tva_deducere: full
+    cont_cheltuiala: "6022"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    law_pin: "art. 298 exclusiv economic + factură simplificată ≤100 EUR"
+
+  - articol_id: bon_combustibil_50
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+      auto: [auto_mixed_50]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: partial_50
+    tva_deducere: partial_50
+    cont_cheltuiala: "6022"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    law_pin: "art. 298 mix 50%"
+
+  - articol_id: bon_combustibil_neplatitor_100
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_neplatitor, tva_scutire_mici]
+      auto: [auto_economic_100]
+    forbid: {}
+    test_A_required: false
+    fiscal_cheltuiala: full
+    tva_deducere: none
+    cont_cheltuiala: "6022"
+    tva_cont: null
+    write_module: bon_via_nota
+
+  - articol_id: bon_combustibil_neplatitor_50
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_neplatitor, tva_scutire_mici]
+      auto: [auto_mixed_50]
+    forbid: {}
+    test_A_required: false
+    fiscal_cheltuiala: partial_50
+    tva_deducere: none
+    cont_cheltuiala: "6022"
+    tva_cont: null
+    write_module: bon_via_nota
+
+  - articol_id: bon_combustibil_auto_unknown
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      auto: [auto_unknown]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: "6022"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Setați CO.DiT.axes.auto (V4 / dosar vehicule) înainte de verdict."
+
+  - articol_id: bon_combustibil_doc_fail
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: combustibil
+      A_band: gt_400
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid:
+      auto: [auto_unknown]
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: none
+    cont_cheltuiala: "6022"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Peste 400 EUR: bonul nu duce TVA; decont + factură."
+
+  # ----- protocol / restaurant -----
+  - articol_id: bon_protocol
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: protocol
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: partial_50
+    tva_deducere: partial_50
+    cont_cheltuiala: "623"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    law_pin: "protocol 50% tipic — confirmați vs diurnă / personal"
+    hitl_note: "Confirmați protocol vs deplasare vs personal."
+
+  - articol_id: bon_restaurant_hitl
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: restaurant
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: "623"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Recastați nature_code → protocol | cazare/diurnă | personal."
+
+  # ----- cazare / parcare / peco / IT -----
+  - articol_id: bon_cazare_le_100
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: cazare
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: full
+    cont_cheltuiala: "625"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    hitl_note: "Doar cu decont deplasare."
+
+  - articol_id: bon_parcare_follows_auto
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: parcare
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+      auto: [auto_economic_100, auto_mixed_50]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: "628"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+    hitl_note: "Aplicați același % ca axa auto (100 sau 50)."
+
+  - articol_id: bon_peco_shop
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: peco_shop
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: "658"
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Nu e combustibil. Apă/snacks — adesea personal / nedeductibil."
+
+  - articol_id: bon_it_consumabile
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: it_consumabile
+      A_band: le_100
+    extra_filters:
+      our_cui_on_doc: true
+    require:
+      tva: [tva_platitor]
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: full
+    tva_deducere: full
+    cont_cheltuiala: "6028"
+    tva_cont: "4426"
+    write_module: bon_via_nota
+
+  # ----- catch-all -----
+  - articol_id: bon_altele
+    schema_version: "1"
+    status: draft
+    filters:
+      nature_code: altele
+    extra_filters:
+      our_cui_on_doc: true
+    require: {}
+    forbid: {}
+    test_A_required: true
+    fiscal_cheltuiala: hitl
+    tva_deducere: hitl
+    cont_cheltuiala: null
+    tva_cont: null
+    write_module: bon_via_nota
+    hitl_note: "Alegeți nature_code real sau aprobați conturi manual."
+
+# After matrix bind, reconcile_pre.expect_accounts :=
+#   [cont_cheltuiala] + ([tva_cont] if tva_deducere in [full, partial_50])

@@ -1,0 +1,56 @@
+# ARTICOLE_CODIT_T_v1.yaml
+# TVA × exig (+ TVA registration sanity).
+# Same CoDit.write pipeline as F*: after defaults, before F*, before derive().
+# T1–T3 hard. T4–T5 impossible-by-schema. T6 = F7.7 (soft, other file).
+
+file_schema: "1"
+catalog: ArticoleCoDitT
+status: draft
+valid_from: "2026-01-01"
+
+defaults_before_T:
+  # Fill only an omitted exig. Never wipe a value the writer set.
+  - tva=tva_platitor and exig omitted → exig=tva_exig_livrare
+  - tva!=tva_platitor and exig omitted → exig=null
+  # tva!=platitor AND exig=tva_la_incasare is left intact so T1 raises ValidationError.
+
+hard:
+  - id: T1
+    code: exig_requires_platitor
+    if: {exig: tva_la_incasare}
+    and: {tva_ne: tva_platitor}
+    error: ValidationError
+    hitl_repair: "exig=null or tva=tva_platitor"
+  - id: T2
+    code: exig_forbidden_for_tva
+    if: {tva_in: [tva_neplatitor, tva_scutire_mici, tva_091]}
+    and: {exig_ne: null}
+    fix: "exig=null"
+  - id: T3
+    code: exig_required_for_platitor
+    if: {tva: tva_platitor}
+    and: {exig: null}          # after defaults
+    fix: "exig=livrare|incasare"
+
+schema_not_pairs:
+  - id: T4
+    note: "tva is a single enum — cannot be platitor AND scutire_mici"
+  - id: T5
+    note: "tva_091 is instead of full platitor, not stacked"
+
+soft_lives_in_F7:
+  - T6: saft + tva_scutire_mici → F7.7
+
+order_on_write:
+  - defaults_before_T
+  - T1 (more specific than T2 on incasare+neplatitor)
+  - T2
+  - T3
+  - F5 F6 F1 F2 F4 F3
+  - F7 A* R1
+  - derive()
+
+never:
+  - silent drop of tva_la_incasare
+  - Flux.forbid as substitute for T1–T3
+  - close_tva_incasare matching an illegal CoDit

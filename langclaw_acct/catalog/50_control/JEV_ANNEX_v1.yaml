@@ -1,0 +1,123 @@
+# JEV_ANNEX_v1.yaml
+# Not ArticoleJev. Closed choice sets at classify nodes.
+# Jev proposes an id that MUST already exist in the parent catalog.
+# Off-list or low confidence → HITL (define_class | define_articol | articol_bon).
+# Jev never writes CO.DiT axes, never emit, never SAGA.
+
+file_schema: "1"
+catalog: JevAnnex
+status: draft
+valid_from: "2026-01-01"
+
+policy:
+  closed_world: true
+  invent_row: false
+  invent_kind: false
+  set_axes: false
+  confidence_below: interrupt
+  off_list: interrupt
+  independent_of: recon.llm_review     # other model / other prompt_hash
+
+# Each decision: parent catalog + field Jev fills + allowed values
+decisions:
+
+  - decision_id: jev_source_doc
+    node: folder_triage.sniff
+    parent: ArticoleSourceDoc
+    fills: source_doc_id
+    allowed_from: rows.status==active
+    # synthesized from ARTICOLE_SOURCE_DOC_v1
+    allowed:
+      - ro_efactura_ubl
+      - ro_efactura_pdf
+      - foreign_invoice
+      - bon_fiscal
+      - extras
+      - extras_pdf
+      - instructions
+      - recon_vendor
+      - workings
+      - sink_rj
+      - unknown
+    on_unknown: define_class
+    cannot: [set_posting_eligible, make_pdf_primary]
+
+  - decision_id: jev_our_role
+    node: folder_triage.after_source_doc
+    parent: ArticoleSourceDoc.our_role_default
+    fills: our_role
+    allowed: [inbound, outbound, n/a]
+    only_if:
+      source_doc_id_in: [ro_efactura_ubl, foreign_invoice]
+    on_unclear: HITL which_cui | role_hitl
+
+  - decision_id: jev_bon_cui_present
+    node: folder_triage.bon_fork
+    parent: ArticoleSourceDoc.bon_fiscal.identity.bon_cui_fork
+    fills: bon.our_cui_on_doc
+    allowed: [true, false, unclear]
+    unclear: bon_cui_unclear
+    cannot: [set_tva_deducere]
+
+  - decision_id: jev_flux
+    node: ingest.bind_articol
+    parent: ArticoleFlux
+    fills: articol_id
+    allowed_from: |
+      flux where graph_id==ingest_source_doc
+      AND matches(MatchContext) AND status==active
+    # Jev does NOT pick from the full flux file — only match survivors
+    if_zero_matches: define_articol
+    if_one_match: bind, jev skipped
+    if_n_matches: jev may rank ONLY those ids; still HITL if n>1 v1
+    cannot: [pick_recon_flux, pick_close_flux]
+
+  - decision_id: jev_nature
+    node: ingest.nature_bind
+    parent: ArticolBon.enums.nature_code
+    fills: bon.nature_code
+    allowed:
+      - combustibil
+      - protocol
+      - cazare
+      - transport
+      - materiale
+      - reparatie
+      - parcare
+      - peco_shop
+      - restaurant
+      - it_consumabile
+      - altele
+    on_altele_or_low: articol_bon
+    cannot: [pick_articol_bon_id_directly]
+
+  - decision_id: jev_bon_cell
+    node: ingest.articol_bon_lookup
+    parent: ArticolBon
+    fills: bon.articol_id
+    allowed_from: rows that match(ctx) after nature + A_band + axes
+    if_zero: articol_bon
+    if_one: bind, jev skipped
+    if_n: HITL articol_bon (jev may order the list)
+    cannot: [override_blocked_no_cui]
+
+  - decision_id: jev_recon_review
+    node: reconcile_sink.llm_review
+    parent: ArticoleHITL + ArticoleReconcile.verdict_review
+    fills: verdict_review
+    allowed: [confirm, contest, abstain]
+    cannot: [already_posted_if_det_absent, write_saga]
+    note: "Different prompt_hash than sniff. Not a classifier of source_doc."
+
+forbidden_decisions:
+  - jev_impozit
+  - jev_exig
+  - jev_emit
+  - jev_hitl_kind          # kind comes from node, not jev
+  - jev_write_module
+  - jev_pins
+
+prompt_binding:
+  each decision_id has prompt_hash + model pinned on the Job/Batch
+  annex change (allowed list) = bump annex schema_version
+  old runs keep frozen allowed[] on the checkpoint

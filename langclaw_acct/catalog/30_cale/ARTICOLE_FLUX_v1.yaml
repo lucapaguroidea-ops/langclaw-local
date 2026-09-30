@@ -1,0 +1,381 @@
+# ARTICOLE_FLUX_v1.yaml
+# Lane B draft. Bind freezes articol_id + schema_version on the Job.
+# matches(ctx): status=active AND date in range AND graph_id
+#   AND filters exact AND extra_filters exact
+#   AND require ⊆ ctx.axes AND forbid ∩ ctx.axes = ∅
+# Tie-break: more filters > narrower require > latest valid_from; else HITL.
+
+file_schema: "1"
+catalog: ArticoleFlux
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  graph_id: [folder_triage, ingest_source_doc, monthly_close]
+  fiscal_class:
+    [ro_efactura, foreign_invoice, bon, extras, instructions, recon, workings, unknown]
+  our_role: [inbound, outbound, n/a]
+  hitl: [never_if_risk_low, first_n, always]
+  route_key: [place, pair, standard, foreign, bon_then_matrix, bon_fara_cui, extras, storno, close, close_4428]
+
+row_schema:
+  articol_id: slug
+  schema_version: "1"
+  status: draft|active|deprecated|yanked
+  graph_id: enum
+  valid_from: date
+  valid_to: date|null
+  filters: "{fiscal_class?, our_role?}"
+  extra_filters: "{our_cui_on_doc?, is_storno?}"
+  require: {axis: [values]}
+  forbid: {axis: [values]}
+  route_key: enum
+  write_modules: [WriteModule.module_id]
+  maps_profile: slug|null
+  hitl: enum
+  first_n: int|null
+  reconcile:
+    match_keys: [number|date|partner|gross]
+    expect_accounts: [str]
+    tolerance: money
+    require_all_accounts: bool
+  note: str|null
+
+# ---------------------------------------------------------------------------
+flux:
+
+  # ===== folder_triage =====
+  - articol_id: triage_place
+    schema_version: "1"
+    status: draft
+    graph_id: folder_triage
+    filters: {}
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    route_key: place
+    write_modules: []
+    maps_profile: null
+    hitl: never_if_risk_low
+    first_n: null
+    reconcile: null
+    note: "Sniff + aisle. No emit."
+
+  - articol_id: triage_pair_efactura
+    schema_version: "1"
+    status: draft
+    graph_id: folder_triage
+    filters:
+      fiscal_class: ro_efactura
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    route_key: pair
+    write_modules: []
+    hitl: always
+    reconcile: null
+    note: "UBL primary + PDF additional."
+
+  - articol_id: triage_bon_fork
+    schema_version: "1"
+    status: draft
+    graph_id: folder_triage
+    filters:
+      fiscal_class: bon
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    route_key: place
+    write_modules: []
+    hitl: always
+    reconcile: null
+    note: "Split cu_cui / fara_cui only. No deductibility."
+
+  - articol_id: triage_extras
+    schema_version: "1"
+    status: draft
+    graph_id: folder_triage
+    filters:
+      fiscal_class: extras
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    route_key: extras
+    write_modules: []
+    hitl: never_if_risk_low
+    reconcile: null
+
+  # ===== ingest — RO e-Factura =====
+  - articol_id: ro_efactura_inbound
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: ro_efactura
+      our_role: inbound
+    extra_filters:
+      is_storno: false
+    require: {}
+    forbid:
+      rol: [mandat_contabil]
+    route_key: standard
+    write_modules: [parteneri_xml, articole_xml, intrare_factura_xml]
+    maps_profile: achizitie_implicita
+    hitl: first_n
+    first_n: 5
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["401", "4426"]
+      tolerance: "0.05"
+      require_all_accounts: false
+    note: "TVA 4426 only if platitor — reconcile HITL if 4426 missing on neplatitor."
+
+  - articol_id: ro_efactura_outbound
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: ro_efactura
+      our_role: outbound
+    extra_filters:
+      is_storno: false
+    require: {}
+    forbid:
+      rol: [mandat_contabil]
+    route_key: standard
+    write_modules: [parteneri_xml, articole_xml, iesire_factura_xml]
+    maps_profile: vanzare_implicita
+    hitl: first_n
+    first_n: 5
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["4111", "4427"]
+      tolerance: "0.05"
+      require_all_accounts: false
+
+  # ===== ingest — foreign =====
+  - articol_id: foreign_invoice_inbound
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: foreign_invoice
+      our_role: inbound
+    extra_filters:
+      is_storno: false
+    require: {}
+    forbid: {}
+    route_key: foreign
+    write_modules: [parteneri_xml, articole_xml, intrare_factura_xml]
+    maps_profile: achizitie_ue_sau_ext
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["401"]
+      tolerance: "0.05"
+      require_all_accounts: false
+
+  # Articol de cale for non-payer reverse charge. Mouth/accounts [de confirmat].
+  # WP-D3 must choose 4423 vs 446x on a copy-firm note before expect_accounts is certain.
+  - articol_id: foreign_rc_neplatitor
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: foreign_invoice
+      our_role: inbound
+    extra_filters:
+      is_storno: false
+    require:
+      tva: [tva_neplatitor, tva_scutire_mici]
+      cross_border: [inbound_eu_services, mixed]
+    forbid:
+      tva: [tva_platitor]
+      supply: [goods]                 # invoice-level; period mixed is not enough
+    # supply omitted → still matches, HITL always. Extract must set supply=services|goods.
+    route_key: foreign
+    write_modules: [parteneri_xml, nota_nc_dbf]
+    maps_profile: rc_neplatitor
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: []          # WP-D3: 401 + 4426/4427 + 635 + 446x or 4423 — not locked
+      expect_accounts_certainty: de_confirmat
+      tolerance: "0.05"
+      require_all_accounts: false
+    note: "Own articol. Goods vs services is per invoice, not per period. forbid supply=goods. Omitted supply stays HITL. Do not use payer settlement. PreFile after WP-D3 + copy-firm green."
+
+  - articol_id: foreign_invoice_outbound
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: foreign_invoice
+      our_role: outbound
+    extra_filters:
+      is_storno: false
+    require: {}
+    forbid: {}
+    route_key: foreign
+    write_modules: [parteneri_xml, articole_xml, iesire_factura_xml]
+    maps_profile: vanzare_export
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["4111"]
+      tolerance: "0.05"
+      require_all_accounts: false
+
+  # ===== ingest — bon (matrix ArticolBon after this) =====
+  - articol_id: bon_cu_cui
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: bon
+    extra_filters:
+      our_cui_on_doc: true
+      is_storno: false
+    require: {}
+    forbid: {}
+    route_key: bon_then_matrix
+    write_modules: [bon_via_nota]
+    maps_profile: null
+    hitl: always
+    reconcile:
+      match_keys: [date, gross]
+      expect_accounts: []
+      tolerance: "0.05"
+      require_all_accounts: false
+    note: "expect_accounts overwritten from ArticolBon.cont_* after matrix."
+
+  - articol_id: bon_fara_cui
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: bon
+    extra_filters:
+      our_cui_on_doc: false
+      is_storno: false
+    require: {}
+    forbid: {}
+    route_key: bon_fara_cui
+    write_modules: [bon_via_nota]
+    maps_profile: null
+    hitl: always
+    reconcile:
+      match_keys: [date, gross]
+      expect_accounts: ["6"]
+      tolerance: "0.05"
+      require_all_accounts: false
+    note: "TVA blocked. Expense may still post. ArticolBon row bon_tva_blocked_fara_cui."
+
+  # ===== ingest — extras =====
+  - articol_id: extras_statement
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: extras
+    extra_filters:
+      is_storno: false
+    require: {}
+    forbid: {}
+    route_key: extras
+    write_modules: [incasare_xml, plata_xml]
+    maps_profile: banca
+    hitl: first_n
+    first_n: 3
+    reconcile:
+      match_keys: [date, gross]
+      expect_accounts: ["5121", "5311"]
+      tolerance: "0.05"
+      require_all_accounts: false
+    note: "One job per statement pack; line matching is a later slice."
+
+  # ===== ingest — storno =====
+  - articol_id: storno_intrare
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: ro_efactura
+      our_role: inbound
+    extra_filters:
+      is_storno: true
+    require: {}
+    forbid: {}
+    route_key: storno
+    write_modules: [storno_intrare_xml]
+    maps_profile: achizitie_implicita
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["401"]
+      tolerance: "0.05"
+      require_all_accounts: false
+
+  - articol_id: storno_iesire
+    schema_version: "1"
+    status: draft
+    graph_id: ingest_source_doc
+    filters:
+      fiscal_class: ro_efactura
+      our_role: outbound
+    extra_filters:
+      is_storno: true
+    require: {}
+    forbid: {}
+    route_key: storno
+    write_modules: [storno_iesire_xml]
+    maps_profile: vanzare_implicita
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["4111"]
+      tolerance: "0.05"
+      require_all_accounts: false
+
+  # ===== monthly_close =====
+  - articol_id: close_standard
+    schema_version: "1"
+    status: draft
+    graph_id: monthly_close
+    filters: {}
+    extra_filters: {}
+    require:
+      tva: [tva_platitor, tva_neplatitor, tva_scutire_mici, tva_091]
+    forbid:
+      exig: [tva_la_incasare]
+    route_key: close
+    write_modules: []
+    maps_profile: null
+    hitl: always
+    first_n: null
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: []
+      tolerance: "0.00"
+      require_all_accounts: false
+    note: "V2 uses CO.DiT.watched_accounts. RJ/CM export on 80_sink."
+
+  - articol_id: close_tva_incasare
+    schema_version: "1"
+    status: draft
+    graph_id: monthly_close
+    filters: {}
+    extra_filters: {}
+    require:
+      tva: [tva_platitor]
+      exig: [tva_la_incasare]
+    forbid: {}
+    route_key: close_4428
+    write_modules: []
+    maps_profile: null
+    hitl: always
+    reconcile:
+      match_keys: [number, date]
+      expect_accounts: ["4428"]
+      tolerance: "0.00"
+      require_all_accounts: false

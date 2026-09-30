@@ -1,0 +1,178 @@
+# ARTICOLE_HITL_v1.yaml
+# Lane B draft. interrupt.kind MUST be a row here.
+# Resume body MUST validate as the row's resume_schema (Pydantic extra=forbid).
+# Graph.allowed_hitl ⊆ this catalog. Unknown kind → fail closed.
+
+file_schema: "1"
+catalog: ArticoleHITL
+status: draft
+valid_from: "2026-01-01"
+
+row_schema:
+  kind: slug
+  schema_version: "1"
+  graph_ids: [ArticoleGraph.graph_id]
+  actor: accountant | saga_agent | ops
+  resume_schema: {fields}
+  effects: [state patches allowed]
+  cannot: [forbidden effects]
+
+kinds:
+
+  # ----- folder_triage -----
+  - kind: which_cui
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {tenant_cui: cui, reject: bool}
+    effects: [set_batch_cui, drop_file]
+    cannot: [emit, write_saga]
+
+  - kind: name_ambiguous
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {cui: cui, add_alias: bool}
+    effects: [name_to_cui_row]
+    cannot: [emit]
+
+  - kind: stmt_no_identity
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {accept_tenant: bool, iban: str|null}
+    effects: [identity_ok, iban_to_cui]
+    cannot: [emit_if_identity_false]
+
+  - kind: xml_pdf_pair
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {same: bool, split: bool}
+    effects: [pack_merge_or_split]
+    cannot: [make_pdf_primary]
+
+  - kind: bon_cui_unclear
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {cu_cui: bool, fara_cui: bool}
+    effects: [aisle_bon_fork]
+    cannot: [set_tva_deducere]
+
+  - kind: define_class
+    graph_ids: [folder_triage]
+    actor: accountant
+    resume_schema: {source_doc_id: slug}
+    effects: [rewrite_aisle]
+    cannot: [emit_unknown]
+
+  # ----- ingest -----
+  - kind: define_articol
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {articol_id: slug}
+    effects: [bind_flux]
+    cannot: [invent_articol_id]
+
+  - kind: define_module
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {module_id: slug}
+    effects: [activate_write_module]
+    cannot: [fdb_insert]
+
+  - kind: articol_bon
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {articol_id: slug, nature_code: slug|null, axes_auto: slug|null}
+    effects: [bind_bon, optional_codit_auto]
+    cannot: [write_saga]
+
+  - kind: v3_approve
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {decision: approve|reject|edit, edit: object|null}
+    effects: [status_approved_or_rejected, patch_canonical]
+    cannot: [skip_recon_pre]
+
+  - kind: no_counterparty
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {counterparty_id: cui}
+    effects: [set_counterparty]
+    cannot: [emit_without_id_on_ro_efactura]
+
+  - kind: wait_validare
+    graph_ids: [ingest_source_doc]
+    actor: saga_agent
+    resume_schema: {validated: bool, saga_doc_key: str|null}
+    effects: [status_acked]
+    cannot: [ack_without_key]
+
+  - kind: request_devalidare
+    graph_ids: [ingest_source_doc]
+    actor: accountant
+    resume_schema: {done: bool}
+    effects: [allow_retry_package]
+    cannot: [silent_second_xml]
+
+  # ----- reconcile_sink -----
+  - kind: need_rj_export
+    graph_ids: [reconcile_sink, folder_triage]
+    actor: accountant
+    resume_schema: {export_id: slug}
+    effects: [load_sink_lines]
+    cannot: [verdict_absent_without_file]
+
+  - kind: recon_ambiguous
+    graph_ids: [reconcile_sink]
+    actor: accountant
+    resume_schema: {action: already_posted|override_absent, sink_line_ids: [int]}
+    effects: [recon_pre_verdict]
+    cannot: [write_saga]
+
+  - kind: recon_review_contest
+    graph_ids: [reconcile_sink]
+    actor: accountant
+    resume_schema: {action: already_posted|override_absent|how_ok|ack_mismatch}
+    effects: [override_review]
+    cannot: [llm_flip_without_this]
+
+  - kind: recon_how_mismatch
+    graph_ids: [reconcile_sink]
+    actor: accountant
+    resume_schema: {ack_mismatch: bool, open_storno: bool}
+    effects: [flag_material, flag_storno_job]
+    cannot: [auto_storno_xml]
+
+  # ----- close / CO.DiT -----
+  - kind: v2_close
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema: {action: file|hold|patch_maps|reopen, explained_rule: slug|null}
+    effects: [v2_action]
+    cannot: [file_if_material]
+
+  - kind: explained_rule
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema: {rule_id: slug}
+    effects: [tag_sink_lines]
+    cannot: [hide_unexplained_without_rule]
+
+  - kind: patch_maps
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema: {partner_cui: cui, analytic: str}
+    effects: [maps_row]
+    cannot: [rewrite_acked_intent]
+
+  - kind: v4_codit
+    graph_ids: [monthly_close]
+    actor: accountant
+    resume_schema: {accept: bool, skip: bool, edit: object|null, seed_next: object|null}
+    effects: [codit_revision, seed_next_period]
+    cannot: [rewrite_acked_job_hash, write_saga]
+
+  - kind: codit_combo
+    graph_ids: [folder_triage, monthly_close]
+    actor: accountant
+    resume_schema: {forma: slug|null, impozit: slug|null, tva: slug|null, exig: slug|null}
+    effects: [codit_axes]
+    cannot: [silent_remap_F_star]

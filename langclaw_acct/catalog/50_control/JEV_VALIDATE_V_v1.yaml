@@ -1,0 +1,93 @@
+# JEV_VALIDATE_V_v1.yaml
+# Gates on JevOut before any pack/job field is written.
+# Not Articole*. Pair with JEV_ANNEX_v1. Stop at first failure.
+
+file_schema: "1"
+catalog: JevValidateV
+status: draft
+valid_from: "2026-01-01"
+
+policy:
+  first_failure_wins: true
+  unknown_gate: reject
+  v8_only_if: decision.matches_ids
+
+gates:
+  - id: V0
+    code: shape
+    reads: raw JSON
+    rule: "JevOut extra=forbid strict; confidence float 0..1"
+    on_fail: reject
+    fail_code: v0_shape
+
+  - id: V1
+    code: annex_pin
+    reads: out.prompt_hash, batch.jev_annex_hash
+    rule: "hashes equal"
+    on_fail: reject
+    fail_code: v1_hash
+
+  - id: V2
+    code: decision_node
+    reads: out.decision_id, current_node, annex, forbidden_decisions
+    rule: "decision in annex AND annex.node==current AND not forbidden"
+    on_fail: reject
+    fail_code: v2_unknown_decision | v2_wrong_node
+
+  - id: V4
+    code: only_if
+    reads: annex.only_if, ctx
+    rule: "predicate true or absent"
+    on_fail: reject
+    fail_code: v4_only_if
+    note: "Before V3 so a wrong-context call is wiring, not classification HITL."
+
+  - id: V3
+    code: closed_list
+    reads: out.choice_id, annex.choices
+    rule: "choice_id exact in choices"
+    on_fail: hitl
+    hitl_kind_from: annex.hitl_kind
+    fail_code: v3_off_list
+
+  - id: V6
+    code: parent_active
+    reads: parent[choice_id].status
+    rule: "active (prod) or active|draft (Lane B)"
+    on_fail: hitl
+    hitl_kind_from: annex.hitl_kind
+    fail_code: v6_parent
+
+  - id: V5
+    code: threshold
+    reads: out.confidence, annex.threshold, annex.hitl_if
+    rule: |
+      confidence >= threshold
+      AND choice_id not in {unknown, unclear, altele} if those tokens in hitl_if
+    on_fail: hitl
+    hitl_kind_from: annex.hitl_kind
+    fail_code: v5_confidence | v5_abstain_label
+
+  - id: V7
+    code: forbidden_outputs
+    reads: extra keys / payload
+    rule: "v1: no extra keys (covered by V0). optional payload stripped."
+    on_fail: reject
+    fail_code: v7_extras
+
+  - id: V8
+    code: matches_cands
+    reads: out.choice_id, ctx.cands
+    rule: "choice_id ∈ cands; missing cands ≡ ∅"
+    applies: annex.matches_ids set
+    on_fail: hitl
+    hitl_kind_from: annex.hitl_kind
+    fail_code: v8_not_in_cands
+
+order: [V0, V1, V2, V4, V3, V6, V5, V7, V8]
+
+never:
+  - invent_row_on_v3
+  - auto_bind_on_v8_fail
+  - use_threshold_as_matches
+  - run_v8_on_source_doc_or_nature

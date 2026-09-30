@@ -1,0 +1,95 @@
+{
+  "schema": "json-logic+paths/1",
+  "pack": "langclaw-semantic-architecture",
+  "note": "Rules mirror catalogs. Paths are zip-internal. Evaluate against a Pack/Job ctx.",
+  "tree": {
+    "00_handbook": ["HANDBOOK_PROIECT.md", "HANDBOOK_CATALOAGE.md", "LANGCLAW_CODE_CONTRACT.md"],
+    "10_lege_firma": ["ARTICOLE_PINS_v1.yaml", "ARTICOLE_CODIT_T_v1.yaml", "ARTICOLE_CODIT_PAIRS_v1.yaml"],
+    "20_document": ["ARTICOLE_SOURCE_DOC_v1.yaml", "ARTICOLE_JOBS_v1.yaml"],
+    "30_masini/graph": ["ARTICOLE_GRAPH_v1.yaml"],
+    "30_masini/flux": ["ARTICOLE_FLUX_v1.yaml"],
+    "30_masini/bon": ["ARTICOL_BON_v1.yaml"],
+    "30_masini/write": ["ARTICOLE_WRITE_MODULE_v1.yaml"],
+    "40_sink": ["ARTICOLE_RECONCILE_v1.yaml", "ARTICOLE_CLOSE_v1.yaml"],
+    "50_control/hitl": ["ARTICOLE_HITL_v1.yaml"],
+    "50_control/jev": ["JEV_ANNEX_v1.yaml", "JEV_VALIDATE_V_v1.yaml"],
+    "90_archive": ["LANGCLAW_CATALOG_v1.yaml"]
+  },
+  "rules": {
+    "class_gate": {
+      "var": "source_doc.posting_eligible"
+    },
+    "primary_gate_ro": {
+      "or": [
+        {"==": [{"var": "source_doc_id"}, "ro_efactura_ubl"]},
+        {"and": [
+          {"==": [{"var": "fiscal_class"}, "ro_efactura"]},
+          {"==": [{"var": "primary_kind"}, "ubl_spv"]}
+        ]}
+      ]
+    },
+    "emit": {
+      "and": [
+        {"var": "source_doc.posting_eligible"},
+        {"!==": [{"var": "source_doc_id"}, "ro_efactura_pdf"]},
+        {"!==": [{"var": "source_doc_id"}, "unknown"]},
+        {"or": [
+          {"!==": [{"var": "fiscal_class"}, "extras"]},
+          {"var": "identity_ok"}
+        ]}
+      ]
+    },
+    "bon_fork_cu_cui": {
+      "and": [
+        {"==": [{"var": "source_doc_id"}, "bon_fiscal"]},
+        {"==": [{"var": "bon.our_cui_on_doc"}, true]}
+      ]
+    },
+    "t1_exig_requires_platitor": {
+      "and": [
+        {"==": [{"var": "exig"}, "tva_la_incasare"]},
+        {"!==": [{"var": "tva"}, "tva_platitor"]}
+      ]
+    },
+    "f3_micro_needs_company": {
+      "and": [
+        {"==": [{"var": "impozit"}, "micro_1"]},
+        {"!": {"in": [{"var": "forma"}, ["srl", "sa"]]}}
+      ]
+    },
+    "jev_v8": {
+      "in": [{"var": "jev.choice_id"}, {"var": "cands"}]
+    },
+    "recon_pre_already_posted": {
+      "==": [{"var": "recon.pre.verdict"}, "already_posted"]
+    },
+    "v2_file_forbidden": {
+      "or": [
+        {"var": "period_diff.material"},
+        {">": [{"var": "how_mismatch_open"}, 0]}
+      ]
+    }
+  },
+  "route_aisle": {
+    "if": [
+      {"==": [{"var": "source_doc_id"}, "ro_efactura_ubl"]},
+      "10_ro_efactura/{role}/{cui}/",
+      {"==": [{"var": "source_doc_id"}, "ro_efactura_pdf"]},
+      "10_ro_efactura/_incomplete_spv/",
+      {"==": [{"var": "source_doc_id"}, "foreign_invoice"]},
+      "20_foreign_invoice/{role}/{id}/",
+      {"and": [
+        {"==": [{"var": "source_doc_id"}, "bon_fiscal"]},
+        {"==": [{"var": "bon.our_cui_on_doc"}, true]}
+      ]},
+      "30_bon/cu_cui/",
+      {"==": [{"var": "source_doc_id"}, "bon_fiscal"]},
+      "30_bon/fara_cui/",
+      {"in": [{"var": "source_doc_id"}, ["extras", "extras_pdf"]]},
+      "40_extras/{period}/",
+      {"==": [{"var": "source_doc_id"}, "sink_rj"]},
+      "80_sink/",
+      "90_unknown/"
+    ]
+  }
+}

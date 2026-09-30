@@ -1,0 +1,206 @@
+# ARTICOLE_RECONCILE_v1.yaml
+# Lane B draft. Lives on graph reconcile_sink.
+# Two stages (pre/post) × two checks (det then llm_review).
+# Profiles imported by flux recon_*; accounts may be filled from ArticolBon after matrix.
+
+file_schema: "1"
+catalog: ArticoleReconcile
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  stage: [pre, post]
+  verdict_det: [absent, already_posted, how_ok, how_mismatch, ambiguous]
+  verdict_review: [confirm, contest, abstain]
+  sink_source: [registru_jurnal, cartea_mare]
+
+# --- flux rows for reconcile_sink (also listed in ArticoleGraph.allowed_flux) ---
+flux:
+  - articol_id: recon_pre_standard
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: pre
+    filters: {}
+    extra_filters: {is_storno: false}
+    require: {}
+    forbid: {}
+    profile_id: pre_doc_nr_date
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+  - articol_id: recon_pre_bon
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: pre
+    filters: {fiscal_class: bon}
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    profile_id: pre_bon_date_gross
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+  - articol_id: recon_pre_extras
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: pre
+    filters: {fiscal_class: extras}
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    profile_id: pre_extras_date_gross
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+  - articol_id: recon_post_standard
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: post
+    filters: {}
+    extra_filters: {}
+    require: {}
+    forbid:
+      exig: [tva_la_incasare]
+    profile_id: post_doc_how
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+  - articol_id: recon_post_bon
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: post
+    filters: {fiscal_class: bon}
+    extra_filters: {}
+    require: {}
+    forbid: {}
+    profile_id: post_bon_how
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+  - articol_id: recon_post_tva_incasare
+    graph_id: reconcile_sink
+    schema_version: "1"
+    status: draft
+    stage: post
+    filters: {}
+    extra_filters: {}
+    require:
+      tva: [tva_platitor]
+      exig: [tva_la_incasare]
+    forbid: {}
+    profile_id: post_how_4428
+    hitl: on_contest_or_ambiguous
+    write_modules: []
+
+# --- deterministic profiles ---
+profiles:
+  - profile_id: pre_doc_nr_date
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [number, date]
+    expect_accounts_from: flux_or_job
+    fallback_accounts: ["401", "4111"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+
+  - profile_id: pre_bon_date_gross
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [date, gross]
+    expect_accounts_from: articol_bon
+    fallback_accounts: ["6"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+
+  - profile_id: pre_extras_date_gross
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [date, gross]
+    expect_accounts_from: flux
+    fallback_accounts: ["5121", "5311"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+
+  - profile_id: post_doc_how
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [number, date]
+    expect_accounts_from: flux_or_job
+    fallback_accounts: ["401", "4111", "4426", "4427"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+    how: true
+
+  - profile_id: post_bon_how
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [date, gross]
+    expect_accounts_from: articol_bon
+    fallback_accounts: ["6", "4426"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+    how: true
+
+  - profile_id: post_how_4428
+    schema_version: "1"
+    status: draft
+    sink_source: registru_jurnal
+    match_keys: [number, date]
+    expect_accounts_from: flux
+    fallback_accounts: ["4428"]
+    tolerance: "0.05"
+    require_all_accounts: false
+    llm_review: true
+    how: true
+
+# --- subgraphs inside reconcile_sink ---
+subgraphs:
+  det_match:
+    input: [job_slice, sink_lines, profile]
+    output: {verdict_det, hit_idxs, expect_accounts}
+    llm: false
+  llm_review:
+    input: [verdict_det, "hits[≤20]", canonical_excerpt, profile]
+    output: {verdict_review, reason}
+    llm: true
+    independent_of: jev_extract
+    cannot: [flip_to_posted_without_hitl, write_saga, set_fiscal_class]
+    on_contest: interrupt recon_review_contest
+
+window:
+  thread: "recon:{tenant_cui}:{period}"
+  jobs_in: status >= bound
+  sink: 80_sink/normalized/sink_lines.json
+  sliding_until: close_lock | now
+  missing_sink: interrupt need_rj_export
+
+hitl_policy:
+  default: never
+  interrupt_when:
+    - verdict_det in [ambiguous, how_mismatch]
+    - verdict_review = contest
+  kinds: [recon_review_contest, recon_how_mismatch]
+  note: "confirm or abstain → det stands. llm_review cannot flip to posted."
+
+final:
+  review in [confirm, abstain] → det stands
+  review = contest → HITL recon_review_contest
+  pre + already_posted → ingest must not package
+  pre + absent → ingest may package
+  post + how_mismatch → HITL recon_how_mismatch
+  extras PDF is not keyed by date+gross on one Job — see catalog/60_harvest/ARTICOLE_EXTRAS_GRAIN_v1.yaml

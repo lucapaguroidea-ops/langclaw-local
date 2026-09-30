@@ -1,0 +1,106 @@
+# Example: synthesized Jev annex for two parent catalogs
+# Generated from ARTICOLE_SOURCE_DOC_v1 + ARTICOL_BON_v1 (status=draft still listed)
+# Jev sees only `choices`. Parent ids stay the law.
+
+annex_schema: "1"
+parent_versions:
+  ArticoleSourceDoc: "1"
+  ArticolBon: "1"
+prompt_hash: "jev-annex-ex-2026-03-30"
+model: "jev-classifier-v1"
+
+# ---------------------------------------------------------------------------
+# Attached to ArticoleSourceDoc — node folder_triage.sniff
+# ---------------------------------------------------------------------------
+decisions:
+- parent: ArticoleSourceDoc
+  decision_id: jev_source_doc
+  node: folder_triage.sniff
+  fills: source_doc_id
+  default_if_abstain: unknown
+  hitl_if: [unknown, off_list, confidence_lt_0.65]
+  hitl_kind: define_class
+  choices:
+    - id: ro_efactura_ubl
+      when: "CIUS-RO / UBL XML, Invoice/CreditNote, CUI RO"
+      not: "plain PDF that only looks like a RO invoice"
+    - id: ro_efactura_pdf
+      when: "RO invoice PDF/JPEG without UBL sibling yet"
+      not: "foreign invoice; do not mark primary"
+    - id: foreign_invoice
+      when: "non-RO issuer or no RO CUI-as-eFactura duty"
+    - id: bon_fiscal
+      when: "AMEF / receipt / till ticket"
+    - id: extras
+      when: "MT940 .sta .xlsx bank statement digital"
+    - id: extras_pdf
+      when: "bank statement as PDF scan"
+    - id: instructions
+      when: "email / letter telling the accountant what to do"
+    - id: recon_vendor
+      when: "supplier statement / solduri clienți-furnizori"
+    - id: workings
+      when: "internal spreadsheet workings"
+    - id: sink_rj
+      when: "Registru Jurnal or Cartea Mare export"
+    - id: unknown
+      when: "none of the above"
+  forbidden_outputs:
+    - fiscal_class          # derived from id by parent row
+    - posting_eligible
+    - articol_id
+
+# ---------------------------------------------------------------------------
+# Same parent — bon CUI fork only
+# ---------------------------------------------------------------------------
+- parent: ArticoleSourceDoc
+  decision_id: jev_bon_cui_present
+  node: folder_triage.bon_fork
+  only_if: {source_doc_id: bon_fiscal}
+  fills: bon.our_cui_on_doc
+  choices:
+    - id: "true"
+      when: "buyer CUI of tenant is printed on the ticket"
+    - id: "false"
+      when: "no buyer CUI"
+    - id: unclear
+      when: "unreadable / cropped"
+      hitl_kind: bon_cui_unclear
+  forbidden_outputs:
+    - tva_deducere
+    - nature_code
+
+# ---------------------------------------------------------------------------
+# Attached to ArticolBon — nature only (cell id is matches(), not Jev)
+# ---------------------------------------------------------------------------
+- parent: ArticolBon
+  decision_id: jev_nature
+  node: ingest.nature_bind
+  only_if: {job_kind: job_bon}
+  fills: bon.nature_code
+  hitl_if: [altele, confidence_lt_0.65]
+  hitl_kind: articol_bon
+  choices:
+    - id: combustibil
+      when: "fuel / peco pump line"
+    - id: peco_shop
+      when: "shop items on same ticket, not the pump"
+    - id: protocol
+      when: "business hospitality"
+    - id: restaurant
+      when: "meal; recast later to protocol / diurna / personal"
+    - id: cazare
+      when: "hotel"
+    - id: parcare
+      when: "parking"
+    - id: materiale
+      when: "office / consumables / hardware small"
+    - id: it_consumabile
+      when: "toner, cable, mouse"
+    - id: transport
+      when: "taxi / ticket travel"
+    - id: reparatie
+      when: "car or equipment repair"
+    - id: altele
+      when: "none of the above"
+  then: "graph runs ArticolBon.matches() — Jev does not pick bon_combustibil_50"

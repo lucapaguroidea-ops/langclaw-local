@@ -1,0 +1,325 @@
+# ARTICOLE_SOURCE_DOC_v1.yaml
+# Lane B draft.
+# Pack.fiscal_class + primary_kind + emit flags come from this catalog.
+# ArticoleFlux binds AFTER emit, on MatchContext built from this row + CO.DiT.
+# Jev may propose source_doc_id; the tree aisle is source of truth.
+
+file_schema: "1"
+catalog: ArticoleSourceDoc
+status: draft
+valid_from: "2026-01-01"
+
+enums:
+  source_doc_id: slug
+  fiscal_class:
+    [ro_efactura, foreign_invoice, bon, extras, instructions, recon, workings, unknown]
+  our_role: [inbound, outbound, n/a, either]
+  primary_kind:
+    [ubl_spv, pdf, xml, jpeg, png, xlsx, csv, mt940, sta, eml, unknown]
+  extract_backend: [none, ubl, mt940, document_ai, docling]
+  posting_eligible: bool
+
+row_schema:
+  source_doc_id: slug
+  schema_version: "1"
+  status: draft|active|deprecated|yanked
+  fiscal_class: enum
+  aisle: tree prefix
+  our_role_default: enum
+  posting_eligible: bool
+  emit_on_incomplete: bool
+  primary:
+    required_kinds: [primary_kind]
+    companions_are: additional|split
+    missing_aisle: path|null          # e.g. _incomplete_spv
+  pairing:
+    with: [source_doc_id]
+    key: [number, date, cui]
+  extract:
+    backend: extract_backend
+    skip_if: [has_text_layer, is_ubl]
+  identity:
+    needs_tenant_on_doc: bool         # extras
+    needs_counterparty_cui: bool      # ro_efactura
+    bon_cui_fork: bool
+  flux_candidates: [ArticoleFlux.articol_id]
+  note: str
+
+# ---------------------------------------------------------------------------
+rows:
+
+  - source_doc_id: ro_efactura_ubl
+    schema_version: "1"
+    status: draft
+    fiscal_class: ro_efactura
+    aisle: "10_ro_efactura/{inbound|outbound}/{cui}/"
+    our_role_default: either
+    posting_eligible: true
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [ubl_spv]
+      companions_are: additional
+      missing_aisle: "10_ro_efactura/_incomplete_spv/"
+    pairing:
+      with: [ro_efactura_pdf]
+      key: [number, date, cui]
+    extract:
+      backend: ubl
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: true
+      bon_cui_fork: false
+    flux_candidates: [ro_efactura_inbound, ro_efactura_outbound, storno_intrare, storno_iesire]
+    note: "Legal primary is CIUS-RO. PDF never primary."
+
+  - source_doc_id: ro_efactura_pdf
+    schema_version: "1"
+    status: draft
+    fiscal_class: ro_efactura
+    aisle: "10_ro_efactura/_incomplete_spv/"
+    our_role_default: either
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [ubl_spv]
+      companions_are: additional
+      missing_aisle: "10_ro_efactura/_incomplete_spv/"
+    pairing:
+      with: [ro_efactura_ubl]
+      key: [number, date, cui]
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "Second-class until paired with UBL and moved off _incomplete_spv."
+
+  - source_doc_id: foreign_invoice
+    schema_version: "1"
+    status: draft
+    fiscal_class: foreign_invoice
+    aisle: "20_foreign_invoice/{inbound|outbound}/{id}/"
+    our_role_default: either
+    posting_eligible: true
+    emit_on_incomplete: true
+    primary:
+      required_kinds: [pdf, xml, jpeg, png]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: [number, date]
+    extract:
+      backend: document_ai
+      skip_if: [has_text_layer]
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: [foreign_invoice_inbound, foreign_invoice_outbound]
+    note: "SPV not required. XML EU is primary if present, else scan."
+
+  - source_doc_id: bon_fiscal
+    schema_version: "1"
+    status: draft
+    fiscal_class: bon
+    aisle: "30_bon/{cu_cui|fara_cui}/"
+    our_role_default: n/a
+    posting_eligible: true
+    emit_on_incomplete: true
+    primary:
+      required_kinds: [jpeg, png, pdf]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: [date, gross]
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: true
+    flux_candidates: [bon_cu_cui, bon_fara_cui]
+    note: "CUI on ticket is precondition for Test A/B, not emit eligibility."
+
+  - source_doc_id: extras
+    schema_version: "1"
+    status: draft
+    fiscal_class: extras
+    aisle: "40_extras/{period}/"
+    our_role_default: n/a
+    posting_eligible: true
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [mt940, sta, xlsx, csv, pdf]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: [period]
+    extract:
+      backend: mt940
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: true
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: [extras_statement]
+    note: "If family=pdf → document_ai then same identity gate. emit only if identity_ok."
+
+  - source_doc_id: extras_pdf
+    schema_version: "1"
+    status: draft
+    fiscal_class: extras
+    aisle: "40_extras/{period}/"
+    our_role_default: n/a
+    posting_eligible: true
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [pdf]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: [extras]
+      key: [period]
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: true
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: [extras_statement]
+
+  - source_doc_id: instructions
+    schema_version: "1"
+    status: draft
+    fiscal_class: instructions
+    aisle: "00_instructions/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [eml, pdf, jpeg]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: []
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "emit_status=skipped."
+
+  - source_doc_id: recon_vendor
+    schema_version: "1"
+    status: draft
+    fiscal_class: recon
+    aisle: "60_reconcilieri/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [xlsx, pdf, csv]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: []
+    extract:
+      backend: document_ai
+      skip_if: [has_text_layer]
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "Evidence, not NIR. skipped."
+
+  - source_doc_id: workings
+    schema_version: "1"
+    status: draft
+    fiscal_class: workings
+    aisle: "70_workings/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [xlsx, csv, pdf]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: []
+    extract:
+      backend: none
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+
+  - source_doc_id: sink_rj
+    schema_version: "1"
+    status: draft
+    fiscal_class: recon
+    aisle: "80_sink/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [xlsx, csv, pdf]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: [period]
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "Registru Jurnal / Cartea Mare export → SinkLine[]. Not a Job."
+
+  - source_doc_id: unknown
+    schema_version: "1"
+    status: draft
+    fiscal_class: unknown
+    aisle: "90_unknown/"
+    our_role_default: n/a
+    posting_eligible: false
+    emit_on_incomplete: false
+    primary:
+      required_kinds: [unknown]
+      companions_are: additional
+      missing_aisle: null
+    pairing:
+      with: []
+      key: []
+    extract:
+      backend: document_ai
+      skip_if: []
+    identity:
+      needs_tenant_on_doc: false
+      needs_counterparty_cui: false
+      bon_cui_fork: false
+    flux_candidates: []
+    note: "HITL define_class → move aisle → rewrite source_doc_id."
+
+# class_gate(pack) := row.posting_eligible AND not (primary missing AND not emit_on_incomplete)
+# extract node := row.extract.backend (v1 default document_ai; later docling)

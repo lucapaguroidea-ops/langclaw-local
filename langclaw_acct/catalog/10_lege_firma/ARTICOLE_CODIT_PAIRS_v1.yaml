@@ -1,0 +1,128 @@
+# ARTICOLE_CODIT_PAIRS_v1.yaml
+# Lane B draft. Evaluated on every CoDit write after field defaults, before derive().
+# hard → ValidationError, document not saved
+# soft → saved + flags.soft[] + HITL kind
+# Order: T* then F5 F6 F1 F2 F4 F3 then F7 then A* R*
+
+file_schema: "1"
+catalog: ArticoleCoDitPairs
+status: draft
+valid_from: "2026-01-01"
+
+defaults_before_pairs:
+  - if tva=tva_platitor and exig omitted → exig=tva_exig_livrare
+  - if tva!=tva_platitor and exig omitted → exig=null
+  # do not wipe exig; T1 raises ValidationError on neplătitor + încasare
+
+hard:
+  - id: T1
+    code: exig_requires_platitor
+    if: {exig: tva_la_incasare}
+    and: {tva_ne: tva_platitor}
+    error: ValidationError
+    hitl_repair: "drop exig or register TVA"
+  - id: T2
+    code: exig_forbidden_for_tva
+    if: {tva_in: [tva_neplatitor, tva_scutire_mici, tva_091]}
+    and: {exig_ne: null}
+    fix: "exig=null"
+  - id: T3
+    code: exig_required_for_platitor
+    if: {tva: tva_platitor}
+    and: {exig: null}
+    fix: "set tva_exig_livrare or tva_la_incasare"
+  - id: F1
+    code: pfa_tax_needs_pfa
+    if: {impozit_in: [pfa_norma, pfa_real]}
+    and: {forma_ne: pfa}
+    fix: "forma=pfa or company impozit"
+  - id: F2
+    code: ong_tax_needs_ong
+    if: {impozit: ong_scutit}
+    and: {forma_ne: ong}
+    fix: "forma=ong or other impozit"
+  - id: F5
+    code: branch_not_micro
+    if: {forma: sucursala}
+    and: {impozit: micro_1}
+    fix: "impozit=profit_16 then F7.4"
+    before: F3
+  - id: F6
+    code: cabinet_not_micro
+    if: {forma: prof}
+    and: {impozit: micro_1}
+    fix: "not micro; F7.5 if profit_16"
+    before: F3
+  - id: F3
+    code: micro_needs_company
+    if: {impozit: micro_1}
+    and: {forma_not_in: [srl, sa]}
+    fix: "SRL/SA or drop micro"
+  - id: F4
+    code: pfa_not_profit_16
+    if: {forma: pfa}
+    and: {impozit: profit_16}
+    fix: "pfa_real / pfa_norma"
+  - id: R1
+    code: rol_not_self
+    if: {rol: mandat_contabil}
+    and: {used_as: batch.tenant_cui}
+    fix: "tenant CUI = client"
+    layer: identity_join
+
+soft:
+  - id: F7.1
+    code: ong_economic
+    if: {forma: ong, impozit: profit_16}
+    hitl: codit_combo
+    blocks_file: true
+  - id: F7.2
+    code: ong_tva_incasare
+    if: {forma: ong, exig: tva_la_incasare}
+    hitl: codit_combo
+    blocks_file: false
+  - id: F7.3
+    code: branch_tva
+    if: {forma: sucursala, tva: tva_platitor, parent_cui: missing}
+    hitl: codit_combo
+    blocks_file: false
+  - id: F7.4
+    code: branch_cit
+    if: {forma: sucursala, impozit: profit_16}
+    hitl: v4_codit
+    blocks_file: true
+  - id: F7.5
+    code: cabinet_srl
+    if: {forma: prof, impozit: profit_16}
+    hitl: codit_combo
+    blocks_file: true
+  - id: F7.6
+    code: ong_tva
+    if: {forma: ong, tva: tva_platitor}
+    hitl: codit_combo
+    blocks_file: false
+  - id: F7.7
+    code: saft_scutire
+    if: {tva: tva_scutire_mici, saf_t: true}
+    hitl: v4_codit
+    blocks_file: false
+  - id: F7.8
+    code: sa_micro
+    if: {forma: sa, impozit: micro_1}
+    hitl: codit_combo
+    blocks_file: false
+  - id: A1
+    code: auto_100_no_fleet
+    if: {auto: auto_economic_100, vehicle.count: 0}
+    hitl: v4_codit
+    blocks_file: false
+  - id: A2
+    code: auto_50_no_fleet
+    if: {auto: auto_mixed_50, vehicle.count: 0}
+    hitl: v4_codit
+    blocks_file: false
+
+never:
+  - silent_remap_any_pair
+  - encode F7 as ValidationError
+  - duplicate F* inside ArticoleFlux.require
