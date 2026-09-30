@@ -23,14 +23,15 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import PurePath
-from typing import Any, Protocol, TypedDict
+from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from langclaw.documents.efactura.ubl import UblError, parse_ubl
 from langclaw_acct.catalog import Catalog
+from langclaw_acct.jobs import JobStore
 from langclaw_acct.jsonlogic import check
 from langclaw_acct.types import JobRecord
 
@@ -56,24 +57,6 @@ Classifier = Callable[[DumpFile], str]
 
 def unknown_classifier(_: DumpFile) -> str:
     return "unknown"
-
-
-class JobStore(Protocol):
-    def add(self, job: JobRecord) -> bool:
-        """Store *job*; False when ``(tenant_cui, source_hash)`` is already there."""
-        ...
-
-
-@dataclass
-class MemoryJobStore:
-    jobs: dict[tuple[str, str], JobRecord] = field(default_factory=dict)
-
-    def add(self, job: JobRecord) -> bool:
-        key = (job.tenant_cui, job.source_hash)
-        if key in self.jobs:
-            return False
-        self.jobs[key] = job
-        return True
 
 
 def _sniff(f: DumpFile, classify: Classifier) -> dict[str, Any]:
@@ -152,7 +135,7 @@ def triage(files: list[DumpFile], *, tenant_cui: str, catalog: Catalog,
     return packs
 
 
-def emit_jobs(packs: list[dict[str, Any]], *, tenant_cui: str, catalog: Catalog,
+async def emit_jobs(packs: list[dict[str, Any]], *, tenant_cui: str, catalog: Catalog,
               store: JobStore, may_emit: bool = True) -> list[dict[str, Any]]:  # fmt: skip
     """Mint a Job per ``emit`` pack. With *may_emit* False (client mail) they
     wait for a person (``outcome = awaiting_approval``)."""
@@ -167,7 +150,7 @@ def emit_jobs(packs: list[dict[str, Any]], *, tenant_cui: str, catalog: Catalog,
                         tenant_cui=norm_cui(tenant_cui), source_hash=p["source_hash"],
                         articol_id=p["articol_id"],
                         schema_version=str(articol.get("schema_version", "1")))  # fmt: skip
-        if store.add(job):
+        if await store.add(job):
             p["job_id"] = job.job_id
         else:
             p.update(outcome="already_ingested", reason="this file was already a Job")
@@ -191,8 +174,8 @@ def folder_triage_graph(catalog: Catalog, store: JobStore,
         return {"packs": triage(files, tenant_cui=state["tenant_cui"],
                                 catalog=catalog, classify=classify)}  # fmt: skip
 
-    def emit(state: BatchState) -> BatchState:
-        return {"packs": emit_jobs(state["packs"], tenant_cui=state["tenant_cui"],
+    async def emit(state: BatchState) -> BatchState:
+        return {"packs": await emit_jobs(state["packs"], tenant_cui=state["tenant_cui"],
                                    catalog=catalog, store=store,
                                    may_emit=state.get("may_emit", True))}  # fmt: skip
 

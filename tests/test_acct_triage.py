@@ -8,8 +8,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langclaw.documents.efactura.samples import Party, make_invoice
 from langclaw_acct.catalog import load_catalog
 from langclaw_acct.intake.email import ClientMailbox, EmailMessage, FakeMailbox, MailRouter
+from langclaw_acct.jobs import MemoryJobStore
 from langclaw_acct.jsonlogic import check, evaluate
-from langclaw_acct.triage import DumpFile, MemoryJobStore, emit_jobs, folder_triage_graph, triage
+from langclaw_acct.triage import DumpFile, emit_jobs, folder_triage_graph, triage
 
 US = Party(name="Client Test SRL", cui="RO10000008")
 SUPPLIER = Party(name="Furnizor SRL", cui="RO20000004")
@@ -113,31 +114,31 @@ def test_a_classified_pdf_ro_invoice_without_ubl_never_emits(catalog) -> None:
     assert packs[0]["outcome"] == "hitl" and "not a primary document" in packs[0]["reason"]
 
 
-def test_jobs_are_unique_per_tenant_and_file(catalog) -> None:
+async def test_jobs_are_unique_per_tenant_and_file(catalog) -> None:
     store = MemoryJobStore()
     files = [DumpFile("A9.xml", "text/xml", _inv("A9", SUPPLIER, US))]
-    first = emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
+    first = await emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
                       tenant_cui="RO10000008", catalog=catalog, store=store)  # fmt: skip
-    again = emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
+    again = await emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
                       tenant_cui="RO10000008", catalog=catalog, store=store)  # fmt: skip
     assert first[0]["job_id"] and again[0]["outcome"] == "already_ingested"
     assert len(store.jobs) == 1
 
 
-def test_client_mail_waits_for_a_person(catalog) -> None:
+async def test_client_mail_waits_for_a_person(catalog) -> None:
     store = MemoryJobStore()
     files = [DumpFile("A9.xml", "text/xml", _inv("A9", SUPPLIER, US))]
-    packs = emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
+    packs = await emit_jobs(triage(files, tenant_cui="RO10000008", catalog=catalog),
                       tenant_cui="RO10000008", catalog=catalog, store=store,
                       may_emit=False)  # fmt: skip
     assert packs[0]["outcome"] == "awaiting_approval" and not store.jobs
 
 
-def test_folder_triage_graph_runs_on_a_batch_thread(catalog) -> None:
+async def test_folder_triage_graph_runs_on_a_batch_thread(catalog) -> None:
     store = MemoryJobStore()
     graph = folder_triage_graph(catalog, store).compile(checkpointer=MemorySaver())
     data = _inv("F7", US, SUPPLIER)
-    out = graph.invoke(
+    out = await graph.ainvoke(
         {"batch_id": "b1", "tenant_cui": "RO10000008", "may_emit": True,
          "files": [{"name": "F7.xml", "content_type": "text/xml", "data": data}]},
         {"configurable": {"thread_id": "batch:b1"}},
