@@ -18,8 +18,8 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 | WP-06 | todo | WP-03 | Windows agent pull / backup label / Import / `wait_validare` human |
 | WP-07 | todo | WP-06 | intent_check against SagaEye v1 (report pack / RJ-CM) |
 | WP-08 | done | WP-07 | ArticoleControls Layer 1 + PeriodDiff; `hard_failures` blocks package and file |
-| WP-09 | todo | WP-08 | `POST /rules` + HITL `explained_rule` + `control_disposition` |
-| WP-10 | todo | WP-09 | monthly_close + V2 pack; material cannot be cleared by Jev |
+| WP-09 | done | WP-08 | `POST /rules` + HITL `explained_rule` + `control_disposition` |
+| WP-10 | done | WP-09 | monthly_close + V2 pack; material cannot be cleared by Jev |
 | WP-11 | todo | WP-01 | CO.DiT seed from Pins + T* F* + additive axes; no silent `tva_platitor` |
 | WP-12 | todo | WP-10 | Filing items + `filing_receipt`; V2 `file` ≠ ANAF submit |
 | WP-13 | todo | WP-05 | `extras_statement_pdf` extract path (document_ai); no MT940-first |
@@ -84,10 +84,13 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 - Tests: unexplained inbound → file impossible; already_posted → no package.
 
 ### WP-09 Explained rules
+- Rules store done in `langclaw_acct/rules.py` (versioned, reason + who required; Postgres or memory); the `POST /rules` HTTP route comes with the agent API. Tests: `tests/test_acct_close.py`.
 - `POST /rules` versioned. HITL `explained_rule` and `control_disposition`.
 - Tests: rule tags sink lines to `explained_sink_only`; cannot hide unexplained without `rule_id`.
 
 ### WP-10 Close + V2
+- Done in `langclaw_acct/close.py` (lock → diff → `v2_close`; `file` on a material month is refused and asked again; naming a saved rule re-runs the diff). The Jev Layer-2 pack isn't called yet; it could never clear `material` anyway. `reconcile_sink` POST and `v4_codit` come later. Tests: `tests/test_acct_close.py`.
+- Pack inconsistency: `control_disposition` lists `monthly_close` in `graph_ids`, but the graph's `allowed_hitl` doesn't include it; left as shipped.
 - Thread `close:{cui}:{period}`. Layer 2 JSON only.
 - Tests: Jev action `file` with material=true is ignored.
 
