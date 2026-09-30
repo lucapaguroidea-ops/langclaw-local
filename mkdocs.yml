@@ -9,6 +9,7 @@ docs_dir: docs
 # Internal design doc for an unshipped feature — kept in-repo, not published.
 exclude_docs: |
   BUSINESS_WORKSPACES.md
+  harvest/
 
 theme:
   name: material
