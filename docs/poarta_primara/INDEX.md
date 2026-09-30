@@ -27,9 +27,9 @@ annex/                   superseded briefs and old contract — not SoT
 
 **Lege:** Documentul primar nu ia calea fără poartă.
 
-**Product face:** Poarta Primară.  
-**Method:** Catalog Cale.  
-**Machine:** Graful Primar (four compiled LangGraph graphs).  
+**Product face:** Poarta Primară.
+**Method:** Catalog Cale.
+**Machine:** Graful Primar (four compiled LangGraph graphs).
 **Code name until rename:** `langclaw_acct`.
 
 A Flux row in `ARTICOLE_FLUX_v1.yaml` *is* an articol de cale. The filename stays Flux so nothing is lost. Say **cale** / **articol de cale** in prose. Say `articol_id` in code.

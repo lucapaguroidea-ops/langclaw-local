@@ -1,7 +1,7 @@
 # 00 — Law
 
-Status: LOCKED for implementers.  
-Package working name: `langclaw_acct`.  
+Status: LOCKED for implementers.
+Package working name: `langclaw_acct`.
 Product face: Poarta Primară.
 
 ## 0. Unit
@@ -22,9 +22,9 @@ Graful Primar walks that catalog: more expandable than a frozen database applica
 
 ## 2. One-sentence statutory split
 
-SAGA C is the only statutory mouth.  
-Firebird replica / SAGA report pack is the only statutory eye.  
-Nothing in this system posts a *notă contabilă*.  
+SAGA C is the only statutory mouth.
+Firebird replica / SAGA report pack is the only statutory eye.
+Nothing in this system posts a *notă contabilă*.
 Mongo may hold an expected set and witness snapshots. Not a ledger.
 
 ## 3. Invariants (fail the build)

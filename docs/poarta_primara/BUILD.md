@@ -1,6 +1,6 @@
 # BUILD — work packages
 
-One WP per change. Status: `todo` | `in-progress` | `done` | `n-a` | `parked`.  
+One WP per change. Status: `todo` | `in-progress` | `done` | `n-a` | `parked`.
 Depends must be done. `decision` WPs need a human before code.
 
 Law values in tests are synthetic. Invented CUIs must pass the checksum if you validate checksums.

@@ -37,7 +37,7 @@ PDF RO without UBL is not primary.
 
 ```
 extract → v3_classify → match → v3_judge → checks
-  → interrupt v3_approve? 
+  → interrupt v3_approve?
   → PRE reconcile_sink
   → package WriteModule (blocked if ArticoleControls hard_failures)
   → interrupt wait_validare
@@ -51,9 +51,9 @@ Job unique on `(tenant_cui, source_hash)`.
 
 ### reconcile_sink
 
-PRE: already in RJ or SPV register → do not package.  
-POST: how vs expected accounts.  
-det first, llm_review cannot flip to posted. contest → HITL.  
+PRE: already in RJ or SPV register → do not package.
+POST: how vs expected accounts.
+det first, llm_review cannot flip to posted. contest → HITL.
 Matcher tolerance 0.05 on keys. Missing sink → `need_rj_export`.
 
 ### monthly_close
@@ -66,7 +66,7 @@ lock_expected_set → recon POST → pull report pack → PeriodDiff
   → v4_codit after file
 ```
 
-Buckets: expected | explained_sink_only | unexplained.  
+Buckets: expected | explained_sink_only | unexplained.
 material if outbound hole, unexplained inbound, watched |Δ| ≥ 0.01, lock mismatch, blocking control FAIL.
 
 ## 3. Types (minimum)
@@ -141,10 +141,10 @@ Watched v1: 401, 4111, 4426, 4427, 4428, 5121, 5311.
 
 ## 7. CO.DiT
 
-Write order: exig defaults → T* → F* → F7/A* → derive().  
-Hard pair → ValidationError, document not saved.  
-Axes in `catalog/10_lege_firma` plus additive `catalog/60_harvest/ARTICOLE_CODIT_AXES_v1.yaml`.  
-Empty profile must not default to `tva_platitor`.  
+Write order: exig defaults → T* → F* → F7/A* → derive().
+Hard pair → ValidationError, document not saved.
+Axes in `catalog/10_lege_firma` plus additive `catalog/60_harvest/ARTICOLE_CODIT_AXES_v1.yaml`.
+Empty profile must not default to `tva_platitor`.
 Period document, not a sticky tenant flag.
 
 ## 8. HITL
@@ -205,9 +205,9 @@ No ReAct supervisor. No `Journal.post`.
 
 ## 12. Jev packs
 
-`v3_classify` → `{doc_class, needs_ocr, needs_human, confidence}`  
-`v3_judge` → `{accounts_ok, risk, needs_human}`  
-`v2_declaration_gate` → `{books_support_declaration, gap_materiality, action}`  
+`v3_classify` → `{doc_class, needs_ocr, needs_human, confidence}`
+`v3_judge` → `{accounts_ok, risk, needs_human}`
+`v2_declaration_gate` → `{books_support_declaration, gap_materiality, action}`
 
 JSON only. Cache `{pack, input_hash}`. Layer 2 cannot clear `material`.
 
