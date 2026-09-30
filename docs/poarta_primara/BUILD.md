@@ -20,8 +20,8 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 | WP-08 | done | WP-07 | ArticoleControls Layer 1 + PeriodDiff; `hard_failures` blocks package and file |
 | WP-09 | done | WP-08 | `POST /rules` + HITL `explained_rule` + `control_disposition` |
 | WP-10 | done | WP-09 | monthly_close + V2 pack; material cannot be cleared by Jev |
-| WP-11 | todo | WP-01 | CO.DiT seed from Pins + T* F* + additive axes; no silent `tva_platitor` |
-| WP-12 | todo | WP-10 | Filing items + `filing_receipt`; V2 `file` ≠ ANAF submit |
+| WP-11 | done | WP-01 | CO.DiT seed from Pins + T* F* + additive axes; no silent `tva_platitor` |
+| WP-12 | done | WP-10 | Filing items + `filing_receipt`; V2 `file` ≠ ANAF submit |
 | WP-13 | todo | WP-05 | `extras_statement_pdf` extract path (document_ai); no MT940-first |
 | WP-14 | parked | — | ArticolBon / `bon_via_nota` |
 | WP-15 | parked | — | FDB SQL SagaEye |
@@ -95,10 +95,12 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 - Tests: Jev action `file` with material=true is ignored.
 
 ### WP-11 CO.DiT
+- Done in `langclaw_acct/codit.py`: defaults → hard pairs (T1–T3, F1–F6 raise, nothing saved) → soft pairs + `A_FLIP` / `A_CONTESTED` flags → the year's pins. Soft rows naming things not tracked yet (fleet, SAF-T, parent CUI) don't fire. In-memory; Postgres storage comes with the agent API. Tests: `tests/test_acct_codit_filings.py`.
 - Seed copies Pins. T1–T3 hard. New axes default null. Certainty required on write.
 - Tests: neplătitor + exig încasare → ValidationError; empty profile is not platitor.
 
 ### WP-12 Filings
+- Done in `langclaw_acct/filings.py`: items from `ArticoleFiling` × CO.DiT, working-day due dates (D394 on the 30th), no date when the frequency isn't known (D300/D394 without `tva_period`, D406), closed only by a receipt. In-memory register. Tests: `tests/test_acct_codit_filings.py`.
 - Rows from `ARTICOLE_FILING_v1.yaml`. Receipt closes item.
 - Tests: calendar date passing does not close; receipt does.
 
