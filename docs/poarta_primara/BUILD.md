@@ -17,7 +17,7 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 | WP-05 | todo | WP-04 | PRE recon: RJ or SPV register already has the doc → `already_in_sink`, no package |
 | WP-06 | todo | WP-03 | Windows agent pull / backup label / Import / `wait_validare` human |
 | WP-07 | todo | WP-06 | intent_check against SagaEye v1 (report pack / RJ-CM) |
-| WP-08 | todo | WP-07 | ArticoleControls Layer 1 + PeriodDiff; `hard_failures` blocks package and file |
+| WP-08 | done | WP-07 | ArticoleControls Layer 1 + PeriodDiff; `hard_failures` blocks package and file |
 | WP-09 | todo | WP-08 | `POST /rules` + HITL `explained_rule` + `control_disposition` |
 | WP-10 | todo | WP-09 | monthly_close + V2 pack; material cannot be cleared by Jev |
 | WP-11 | todo | WP-01 | CO.DiT seed from Pins + T* F* + additive axes; no silent `tva_platitor` |
@@ -78,6 +78,7 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 - Tests: fixture export (synthetic) → SinkDoc list.
 
 ### WP-08 Controls
+- Done in `langclaw_acct/controls.py`: buckets, every `ArticoleControls` row (a control whose inputs don't exist yet reports INFO with why, never PASS), `period_diff` + `may_file`. C0 needs the expected movement per account, which comes with the expected set of approved Jobs; until then it's INFO. `M1_8_4428_open` and `M1_9_4424_watched` have no check yet (INFO). Tests: `tests/test_acct_controls.py`.
 - Implement `catalog/60_harvest/ARTICOLE_CONTROLS_v1.yaml`.
 - `hard_failures > 0` ⇒ package refused and V2 `file` refused.
 - Tests: unexplained inbound → file impossible; already_posted → no package.
