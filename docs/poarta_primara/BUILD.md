@@ -11,7 +11,7 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 |---|---|---|---|
 | WP-00 | done | — | Scaffold `langclaw_acct` types + Mongo indexes + fake SagaEye |
 | WP-01 | done | WP-00 | Load Lane B YAML; fail closed on unknown articol / HITL kind |
-| WP-02 | todo | WP-01 | folder_triage + SourceDoc emit gates + Job unique `(cui, source_hash)` |
+| WP-02 | done | WP-01 | folder_triage + SourceDoc emit gates + Job unique `(cui, source_hash)` |
 | WP-03 | todo | WP-02 | `iesire_factura_xml` + `intrare_factura_xml` fixtures; human import on copy firm |
 | WP-04 | todo | WP-03 | ingest graph through `packaged` + `v3_approve` interrupt (no SAGA before interrupt) |
 | WP-05 | todo | WP-04 | PRE recon: RJ or SPV register already has the doc → `already_in_sink`, no package |
@@ -29,6 +29,7 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 | WP-17 | parked | — | Engagement backlog / OpenClaw `chat:` |
 | WP-18 | parked | — | Take-on / year-end / D406 producer / FX engine |
 | WP-01b | done | WP-00 | SagaEye protocol + Registru Jurnal witness (per-system readers, 00_LAW §8) |
+| WP-02b | done | WP-02 | Email intake: two addresses per client, routed by recipient; client mail held for a person |
 | WP-D3 | decision | WP-11 | Non-payer RC books: 4423 vs 446x on copy-firm note |
 
 ## WP details
@@ -47,6 +48,7 @@ Law values in tests are synthetic. Invented CUIs must pass the checksum if you v
 - Tests: load fixture pack; `define_articol` with invented id fails; Flux listing `nota_nc_dbf` without used_by_flux entry fails.
 
 ### WP-02 Triage + emit
+- Done in `langclaw_acct/triage.py` (+ `jsonlogic.py` runs the pack's `emit` rule as shipped). Job uniqueness is a `JobStore` protocol with an in-memory store; the Postgres store is next. Non-XML files go to an injectable classifier (Document AI + Jev later), default `unknown` → `define_class`. Tests: `tests/test_acct_triage.py`.
 - Implement class / identity / primary gates from SourceDoc + json-logic in `fixtures/architecture.jsonlogic.json`.
 - Unique Job index `(tenant_cui, source_hash)`.
 - Tests: PDF-only RO e-Factura does not emit; duplicate hash does not create a second job.
