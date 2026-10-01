@@ -2,14 +2,14 @@
 
 This repository ran on Railway until 2026-10-01. The project was then switched in place to
 PoartaContabila (a standalone LangGraph app), and the services below were replaced or removed.
-This file records what ran so the old setup can be rebuilt from git tag `railway-final-2026-10-01`.
+This file records what ran so the old setup can be rebuilt from commit `9441429` on `main`.
 Only structure is recorded: no variable values, secrets or client data. Database and bucket
 backups, if taken, are kept privately and never in this public repository.
 
 ## Code
 
-- Tag `railway-final-2026-10-01` is `main` at `9441429`. The `langclaw` service deployed from
-  `main`. Its latest deploy (2026-09-28) **failed**; the UI's latest deploy succeeded.
+- Commit `9441429` on `main` (optionally tag it `railway-final-2026-10-01`). The `langclaw`
+  service deployed from `main`. Its latest deploy (2026-09-28) **failed**; the UI's latest deploy succeeded.
 
 ## Project
 
@@ -48,6 +48,6 @@ applied: remove `MONGO_URL` from `langclaw`.
 
 ## To rebuild
 
-Create the services above from the tag, set the variables (new secrets, new Telegram token),
+Create the services above from commit `9441429`, set the variables (new secrets, new Telegram token),
 point `DATABASE_URL` and `DOCUMENTS_DATABASE_URL` at fresh Postgres instances, and restore a
 private dump if one was kept.
